@@ -37,6 +37,7 @@ import { DocumentWindow } from './apps/document-window';
 import { BankReconWindow } from './apps/bank-recon-window';
 import { EmployeeWindow } from './apps/employee-window';
 import { ClientWindow } from './apps/client-window';
+import { ProjectWindow } from './apps/project-window';
 import { VendorWindow } from './apps/vendor-window';
 import { AttendanceApp } from './apps/attendance-app';
 import { PerClientPnLWindow } from './apps/per-client-pnl-window';
@@ -434,7 +435,9 @@ function Desktop({ signOut }: { signOut: () => void }) {
       if (w.app === 'employees') {
         return <EmployeeWindow employeeId={w.entityId} />;
       }
-      // Projects window comes next.
+      if (w.app === 'projects') {
+        return <ProjectWindow projectId={w.entityId} />;
+      }
     }
 
     const entity = resolveEntity(w);

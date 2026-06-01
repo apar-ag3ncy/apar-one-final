@@ -295,7 +295,16 @@ function ProjectsBody({
                     key={p.id}
                     style={{
                       borderTop: '1px solid var(--border)',
+                      cursor: 'pointer',
                     }}
+                    onClick={() =>
+                      osActions.openWindow({
+                        app: 'projects',
+                        entityId: p.id,
+                        title: p.name,
+                        position: 'beside-focused',
+                      })
+                    }
                   >
                     <Td>
                       <div style={{ fontWeight: 600 }}>{p.name}</div>
