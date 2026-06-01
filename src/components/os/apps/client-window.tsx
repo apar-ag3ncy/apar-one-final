@@ -14,11 +14,22 @@ import { ClientTransactionsSection } from '@/components/entity/client-transactio
 import { ClientExpensesOnBehalfSection } from '@/components/entity/vendor-bills-section';
 import { ActivityFeed } from '@/components/entity/activity-feed';
 import { StatementOfAccount } from '@/components/entity/statement-of-account';
+import {
+  NewProjectDialog,
+  type EmployeeOption,
+  type UserOption,
+} from '@/components/projects/new-project-dialog';
+import type { Project, ProjectStatus } from '@/components/projects/types';
 import { useRealtimeActivity } from '@/lib/client/use-realtime-activity';
 import { getEntityActivity } from '@/lib/server/entities/activity';
 import { listContacts, type ContactRow } from '@/lib/server/entities/contacts';
 import { getClientStatement, type Statement } from '@/lib/server/ledger/statements';
-import { getClient } from '@/lib/server-stub/entity-actions';
+import {
+  getClient,
+  listEmployees,
+  listProjectsByClient,
+  listUsers,
+} from '@/lib/server-stub/entity-actions';
 import type { Client } from '@/components/clients/types';
 import { osActions } from '@/lib/os/store';
 import { navigateBesideFocused } from './navigate';
@@ -30,6 +41,7 @@ export type ClientWindowProps = {
 type ClientTab =
   | 'overview'
   | 'contacts'
+  | 'projects'
   | 'documents'
   | 'transactions'
   | 'expenses'
@@ -39,11 +51,20 @@ type ClientTab =
 const TAB_LABELS: Record<ClientTab, string> = {
   overview: 'Overview',
   contacts: 'Contacts',
+  projects: 'Projects',
   documents: 'Documents',
   transactions: 'Transactions',
   expenses: 'Expenses on behalf',
   ledger: 'Ledger',
   activity: 'Activity',
+};
+
+const PROJECT_STATUS_TONE: Record<ProjectStatus, { bg: string; fg: string; label: string }> = {
+  pitching: { bg: '#1a3b6e', fg: '#9ec2f0', label: 'Pitching' },
+  active: { bg: '#1f6b3b', fg: '#a4d8b3', label: 'Active' },
+  on_hold: { bg: '#7a5a17', fg: '#e7c980', label: 'On hold' },
+  delivered: { bg: '#3a3a78', fg: '#bdbdf5', label: 'Delivered' },
+  closed: { bg: '#3a3a3a', fg: '#bdbdbd', label: 'Closed' },
 };
 
 const STATUS_TONE: Record<string, { bg: string; fg: string }> = {
@@ -56,19 +77,33 @@ const STATUS_TONE: Record<string, { bg: string; fg: string }> = {
 type State =
   | { kind: 'loading' }
   | { kind: 'error'; message: string }
-  | { kind: 'ready'; client: Client; contacts: readonly ContactRow[] };
+  | {
+      kind: 'ready';
+      client: Client;
+      contacts: readonly ContactRow[];
+      projects: readonly Project[];
+      employees: readonly EmployeeOption[];
+      users: readonly UserOption[];
+    };
 
 export function ClientWindow({ clientId }: ClientWindowProps) {
   const [state, setState] = useState<State>({ kind: 'loading' });
   const [tab, setTab] = useState<ClientTab>('overview');
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
     queueMicrotask(() => {
       if (!cancelled) setState({ kind: 'loading' });
     });
-    Promise.all([getClient(clientId), listContacts({ entityType: 'client', entityId: clientId })])
-      .then(([client, contacts]) => {
+    Promise.all([
+      getClient(clientId),
+      listContacts({ entityType: 'client', entityId: clientId }),
+      listProjectsByClient(clientId),
+      listEmployees(),
+      listUsers(),
+    ])
+      .then(([client, contacts, projects, employees, users]) => {
         if (cancelled) return;
         if (!client) {
           setState({
@@ -77,7 +112,14 @@ export function ClientWindow({ clientId }: ClientWindowProps) {
           });
           return;
         }
-        setState({ kind: 'ready', client, contacts });
+        setState({
+          kind: 'ready',
+          client,
+          contacts,
+          projects,
+          employees: employees.map((e) => ({ id: e.id, name: e.fullName })),
+          users: users.map((u) => ({ id: u.id, name: u.fullName })),
+        });
       })
       .catch((e: unknown) => {
         if (cancelled) return;
@@ -89,7 +131,7 @@ export function ClientWindow({ clientId }: ClientWindowProps) {
     return () => {
       cancelled = true;
     };
-  }, [clientId]);
+  }, [clientId, reloadKey]);
 
   if (state.kind === 'loading') {
     return <div style={{ padding: 24, color: 'var(--text-muted)' }}>Loading client…</div>;
@@ -98,10 +140,11 @@ export function ClientWindow({ clientId }: ClientWindowProps) {
     return <div style={{ padding: 24, color: 'var(--text-error, #c33)' }}>{state.message}</div>;
   }
 
-  const { client, contacts } = state;
+  const { client, contacts, projects, employees, users } = state;
   const tabs: readonly ClientTab[] = [
     'overview',
     'contacts',
+    'projects',
     'documents',
     'transactions',
     'expenses',
@@ -116,6 +159,9 @@ export function ClientWindow({ clientId }: ClientWindowProps) {
         {tabs.map((t) => (
           <div key={t} className={`tab ${tab === t ? 'active' : ''}`} onClick={() => setTab(t)}>
             {TAB_LABELS[t]}
+            {t === 'projects' && projects.length > 0 ? (
+              <span style={{ marginLeft: 6, opacity: 0.7 }}>{projects.length}</span>
+            ) : null}
           </div>
         ))}
       </div>
@@ -127,6 +173,15 @@ export function ClientWindow({ clientId }: ClientWindowProps) {
             entityId={client.id}
             entityName={client.name}
             initial={contacts}
+          />
+        ) : null}
+        {tab === 'projects' ? (
+          <ProjectsBody
+            client={client}
+            projects={projects}
+            employees={employees}
+            users={users}
+            onProjectCreated={() => setReloadKey((k) => k + 1)}
           />
         ) : null}
         {tab === 'documents' ? (
@@ -143,6 +198,202 @@ export function ClientWindow({ clientId }: ClientWindowProps) {
       </div>
     </div>
   );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Projects (OS-styled list + "New Project" CTA)                              */
+/* -------------------------------------------------------------------------- */
+
+function ProjectsBody({
+  client,
+  projects,
+  employees,
+  users,
+  onProjectCreated,
+}: {
+  client: Client;
+  projects: readonly Project[];
+  employees: readonly EmployeeOption[];
+  users: readonly UserOption[];
+  onProjectCreated: () => void;
+}) {
+  const [dialogOpen, setDialogOpen] = useState(false);
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+        }}
+      >
+        <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>
+          {projects.length === 0
+            ? 'No projects yet'
+            : `${projects.length} project${projects.length === 1 ? '' : 's'} for ${client.name}`}
+        </div>
+        <button
+          type="button"
+          onClick={() => setDialogOpen(true)}
+          style={{
+            background: 'var(--accent, #4a72ff)',
+            color: '#fff',
+            border: 0,
+            borderRadius: 8,
+            padding: '8px 14px',
+            fontSize: 13,
+            fontWeight: 600,
+            cursor: 'pointer',
+          }}
+        >
+          New Project
+        </button>
+      </div>
+
+      {projects.length === 0 ? (
+        <div
+          style={{
+            background: 'var(--content-2)',
+            border: '1px dashed var(--border)',
+            borderRadius: 10,
+            padding: 32,
+            textAlign: 'center',
+            color: 'var(--text-muted)',
+            fontSize: 13,
+          }}
+        >
+          Create the first project for {client.name}. Pitches, active engagements, and closed work
+          all live here.
+        </div>
+      ) : (
+        <div
+          style={{
+            background: 'var(--content-2)',
+            border: '1px solid var(--border)',
+            borderRadius: 10,
+            overflow: 'hidden',
+          }}
+        >
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+            <thead>
+              <tr style={{ background: 'var(--content-1, rgba(0,0,0,0.15))' }}>
+                <Th>Project</Th>
+                <Th>Status</Th>
+                <Th>Lead</Th>
+                <Th>POC</Th>
+                <Th align="right">Fee</Th>
+                <Th>Started</Th>
+                <Th>Target end</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {projects.map((p) => {
+                const tone = PROJECT_STATUS_TONE[p.status];
+                return (
+                  <tr
+                    key={p.id}
+                    style={{
+                      borderTop: '1px solid var(--border)',
+                    }}
+                  >
+                    <Td>
+                      <div style={{ fontWeight: 600 }}>{p.name}</div>
+                      {p.code ? (
+                        <div
+                          style={{
+                            fontSize: 11,
+                            color: 'var(--text-muted)',
+                            fontFamily:
+                              'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+                          }}
+                        >
+                          {p.code}
+                        </div>
+                      ) : null}
+                    </Td>
+                    <Td>
+                      <span className="pill" style={{ background: tone.bg, color: tone.fg }}>
+                        <span className="dot" style={{ background: tone.fg }} />
+                        {tone.label}
+                      </span>
+                    </Td>
+                    <Td>{p.leadName}</Td>
+                    <Td>{p.accountManagerName}</Td>
+                    <Td align="right">
+                      <span style={{ fontVariantNumeric: 'tabular-nums' }}>
+                        {formatINRPaise(p.feePaise)}
+                      </span>
+                    </Td>
+                    <Td>{formatShortDate(p.startedAt)}</Td>
+                    <Td>{p.endsAt ? formatShortDate(p.endsAt) : 'Ongoing'}</Td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <NewProjectDialog
+        open={dialogOpen}
+        onOpenChange={(open) => {
+          setDialogOpen(open);
+          if (!open) onProjectCreated();
+        }}
+        clientId={client.id}
+        clientName={client.name}
+        employees={employees}
+        users={users}
+      />
+    </div>
+  );
+}
+
+function Th({ children, align = 'left' }: { children: React.ReactNode; align?: 'left' | 'right' }) {
+  return (
+    <th
+      style={{
+        padding: '10px 14px',
+        textAlign: align,
+        fontSize: 10,
+        textTransform: 'uppercase',
+        letterSpacing: '0.05em',
+        color: 'var(--text-muted)',
+        fontWeight: 600,
+      }}
+    >
+      {children}
+    </th>
+  );
+}
+
+function Td({ children, align = 'left' }: { children: React.ReactNode; align?: 'left' | 'right' }) {
+  return (
+    <td
+      style={{
+        padding: '10px 14px',
+        textAlign: align,
+        verticalAlign: 'top',
+      }}
+    >
+      {children}
+    </td>
+  );
+}
+
+function formatShortDate(d: Date): string {
+  return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: '2-digit' });
+}
+
+function formatINRPaise(paise: bigint): string {
+  const rupees = Number(paise) / 100;
+  return rupees.toLocaleString('en-IN', {
+    style: 'currency',
+    currency: 'INR',
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  });
 }
 
 /* -------------------------------------------------------------------------- */
