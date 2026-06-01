@@ -1,0 +1,202 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1779374267311,
+      "tag": "0000_init",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1779392400000,
+      "tag": "0001_rls_baseline",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1779392500000,
+      "tag": "0002_audit_log_append_only",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1779392600000,
+      "tag": "0003_entity_subgraph",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1779392700000,
+      "tag": "0004_polymorphic_check_trigger",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1779392800000,
+      "tag": "0005_phase2_rls",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1779392900000,
+      "tag": "0006_phase3_seeds_and_triggers",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1779393000000,
+      "tag": "0007_ledger",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1779393100000,
+      "tag": "0008_payroll",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1779393200000,
+      "tag": "0009_employee_portal_rls",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1779393300000,
+      "tag": "0010_interconnection_non_archived",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1779393400000,
+      "tag": "0011_primary_uniqueness",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1779393500000,
+      "tag": "0012_event_kind_enum_and_reimb_project_fk",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1779393600000,
+      "tag": "0013_attendance",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1779393700000,
+      "tag": "0014_dev_admin_user_seed",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1779393800000,
+      "tag": "0015_allow_draft_delete",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1779393900000,
+      "tag": "0016_projects_fee",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1779394000000,
+      "tag": "0017_office_expenses",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1779394100000,
+      "tag": "0018_office_expenses_vendor_fk",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1779394200000,
+      "tag": "0019_billing_phase1",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1779394300000,
+      "tag": "0020_billing_chart_accounts",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1779394400000,
+      "tag": "0021_billing_reference_seeds",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1779394500000,
+      "tag": "0022_billing_validation_rules",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1779394600000,
+      "tag": "0023_billing_role_capabilities",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1779394700000,
+      "tag": "0024_fix_service_items_shape",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1779394800000,
+      "tag": "0025_billing_event_kinds",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1779394900000,
+      "tag": "0026_billing_views",
+      "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1779395000000,
+      "tag": "0027_reminder_schedules",
+      "breakpoints": true
+    }
+  ]
+}

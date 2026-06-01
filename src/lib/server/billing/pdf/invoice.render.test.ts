@@ -1,0 +1,75 @@
+/**
+ * Integration-shape test: actually exercises @react-pdf/renderer's
+ * renderToBuffer with a small fixture so a malformed component tree
+ * or a future major bump that breaks our usage gets caught immediately.
+ *
+ * Light assertion only — we check the PDF magic header (%PDF-) and a
+ * minimum byte length. The visual layout is verified by eye when the
+ * dashboard renders an invoice.
+ */
+import { describe, expect, it } from 'vitest';
+
+import { type InvoicePdfData, renderInvoicePdf } from './invoice';
+
+const fixture: InvoicePdfData = {
+  supplier: {
+    name: 'Apār LLP',
+    address: 'Mumbai, MH 400013',
+    gstin: '27ABCDE1234F1Z5',
+    pan: 'ABCDE1234F',
+    stateCode: '27',
+    contactEmail: 'hello@apar.com',
+    contactPhone: '+91 22 1234 5678',
+    logoBucket: null,
+    logoStoragePath: null,
+  },
+  recipient: {
+    name: 'Lodha Group',
+    addressLines: ['Lower Parel', 'Mumbai 400013'],
+    gstin: '27LODHA1234A1Z3',
+    stateCode: '27',
+    contactEmail: 'accounts@lodha.com',
+  },
+  documentNumber: 'INV/2025-26/0001',
+  documentDate: '2025-06-15',
+  dueDate: '2025-07-15',
+  placeOfSupply: '27',
+  isReverseCharge: false,
+  lines: [
+    {
+      lineNo: 1,
+      description: 'Brand identity refresh',
+      sacCode: '998391',
+      unit: null,
+      qty: 1,
+      ratePaise: 100_000_00n,
+      capturedTaxableValuePaise: 100_000_00n,
+      capturedTaxRateBps: 1800,
+      capturedTaxAmountPaise: 18_000_00n,
+    },
+  ],
+  subtotalPaise: 100_000_00n,
+  capturedTaxSplit: {
+    cgstPaise: 9_000_00n,
+    sgstPaise: 9_000_00n,
+    igstPaise: 0n,
+    cessPaise: 0n,
+  },
+  capturedTaxTotalPaise: 18_000_00n,
+  capturedTotalPaise: 118_000_00n,
+  paymentLink: null,
+  terms: 'Net 30',
+  notes: 'Thank you for your business.',
+};
+
+describe('renderInvoicePdf', () => {
+  it('produces a valid PDF byte stream', async () => {
+    const bytes = await renderInvoicePdf(fixture);
+    expect(bytes.byteLength).toBeGreaterThan(1024); // a non-trivial doc
+    // %PDF- magic header (4 ASCII bytes: %, P, D, F)
+    expect(bytes[0]).toBe(0x25);
+    expect(bytes[1]).toBe(0x50);
+    expect(bytes[2]).toBe(0x44);
+    expect(bytes[3]).toBe(0x46);
+  }, 20_000); // @react-pdf/renderer first-call cold start is slow
+});

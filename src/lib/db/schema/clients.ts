@@ -1,0 +1,64 @@
+import { boolean, date, index, pgEnum, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
+
+import { auditColumns, timestamps } from './_shared';
+import { contractStatusEnum } from './_polymorphic';
+import { users } from './users';
+
+export const clientStatusEnum = pgEnum('client_status', ['prospect', 'active', 'inactive']);
+
+/**
+ * Clients — first principal entity. Polymorphic children
+ * (`entity_contacts`, `entity_addresses`, `entity_bank_accounts`,
+ * `entity_tax_identifiers`, `entity_documents`,
+ * `entity_relationships`, `entity_custom_values`,
+ * `entity_activity_log`) carry `entity_type='client'`.
+ *
+ * Contract gating: AUDIT-GAPS §1.3 + SPEC-AMENDMENT-001 — creation
+ * refuses to save without `contract_status='signed'` AND a
+ * `contract`-kind document, OR `contract_status='pending'` + a reason
+ * + `pending_until` ≤ +30 days, OR `contract_status='waived'` for
+ * legacy backfill only. Server-side Zod refinement enforces.
+ *
+ * Archive (SPEC-AMENDMENT-001 §2.3): `is_archived` is the soft-delete
+ * marker. Hard delete is partner-only + dependents check.
+ *
+ * GSTIN / PAN here are B2B counterparty values (industry-standard
+ * plaintext per BACKEND-AUDIT §4 #4); they are NOT employee KYC.
+ */
+export const clients = pgTable(
+  'clients',
+  {
+    ...timestamps(),
+    ...auditColumns(),
+    name: text().notNull(),
+    industry: text(),
+    status: clientStatusEnum().notNull().default('active'),
+    accountManagerId: uuid().references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    // Captured tax identifiers. Format validated in `src/lib/validators.ts`.
+    gstin: text(),
+    pan: text(),
+
+    // Contract gating (AUDIT-GAPS §1.3 + SPEC-AMENDMENT-001)
+    contractStatus: contractStatusEnum().notNull().default('pending'),
+    contractPendingReason: text(),
+    contractPendingUntil: date(),
+
+    // Archive
+    isArchived: boolean().notNull().default(false),
+    archivedAt: timestamp({ withTimezone: true }),
+    archivedBy: uuid().references(() => users.id, { onDelete: 'set null' }),
+
+    notes: text(),
+  },
+  (t) => [
+    index().on(t.status),
+    index().on(t.accountManagerId),
+    index().on(t.name),
+    index().on(t.isArchived),
+  ],
+);
+
+export type Client = typeof clients.$inferSelect;
+export type NewClient = typeof clients.$inferInsert;

@@ -1,0 +1,59 @@
+import { boolean, date, index, pgEnum, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
+
+import { auditColumns, timestamps } from './_shared';
+import { contractStatusEnum } from './_polymorphic';
+import { users } from './users';
+
+export const vendorStatusEnum = pgEnum('vendor_status', ['prospect', 'active', 'inactive']);
+
+/**
+ * Vendors — second principal entity. Polymorphic children (contacts,
+ * addresses, banks, tax IDs, documents) live in the `entity_*` tables
+ * with `entity_type='vendor'`.
+ *
+ * - `contractStatus` is the AUDIT-GAPS §1.3 + SPEC-AMENDMENT-001 gate.
+ *   New vendors require a signed MSA / PO unless explicitly waived
+ *   (legacy backfill, per AUDIT-GAPS §1.3) or `pending` with a reason +
+ *   pending_until ≤ +30 days. Server-side Zod refinement enforces this.
+ * - `isArchived` is the soft-delete pattern from SPEC-AMENDMENT-001 §2.3.
+ *   Hard delete is partner-only, gated by a dependents check (no posted
+ *   transactions referencing this vendor).
+ */
+export const vendors = pgTable(
+  'vendors',
+  {
+    ...timestamps(),
+    ...auditColumns(),
+    name: text().notNull(),
+    category: text(), // freeform tag: 'photographer', 'printer', 'freelancer', etc.
+    status: vendorStatusEnum().notNull().default('active'),
+    accountManagerId: uuid().references(() => users.id, { onDelete: 'set null' }),
+
+    // Tax / KYC — masked / captured-as-entered on this row; vault holds
+    // anything sensitive. Validators in `src/lib/validators.ts`.
+    gstin: text(),
+    pan: text(),
+    msmeUdyam: text(),
+
+    // Contract gating (AUDIT-GAPS §1.3)
+    contractStatus: contractStatusEnum().notNull().default('pending'),
+    contractPendingReason: text(),
+    contractPendingUntil: date(),
+
+    // Archive (SPEC-AMENDMENT-001 §2.3)
+    isArchived: boolean().notNull().default(false),
+    archivedAt: timestamp({ withTimezone: true }),
+    archivedBy: uuid().references(() => users.id, { onDelete: 'set null' }),
+
+    notes: text(),
+  },
+  (t) => [
+    index().on(t.status),
+    index().on(t.accountManagerId),
+    index().on(t.name),
+    index().on(t.isArchived),
+  ],
+);
+
+export type Vendor = typeof vendors.$inferSelect;
+export type NewVendor = typeof vendors.$inferInsert;
