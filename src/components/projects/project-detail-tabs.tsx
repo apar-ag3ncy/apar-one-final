@@ -8,7 +8,7 @@ import { UrlTabs, type UrlTab } from '@/components/shared/url-tabs';
 import { ActivityFeed } from '@/components/entity/activity-feed';
 import { DocumentList } from '@/components/entity/document-list';
 import { EntityRef } from '@/components/entity/entity-ref';
-import { TransactionList } from '@/components/entity/transaction-list';
+import { TransactionList, type Transaction } from '@/components/entity/transaction-list';
 import { useEntityNavigate } from '@/lib/client/use-navigate';
 import type { BillingModel, Project } from './types';
 
@@ -19,7 +19,19 @@ const BILLING_LABELS: Record<BillingModel, string> = {
   milestone: 'Milestone',
 };
 
-export function ProjectDetailTabs({ project }: { project: Project }) {
+export type ProjectTransactionFeedProp = {
+  transactions: readonly Transaction[];
+  incomePaise: bigint;
+  spendPaise: bigint;
+};
+
+export function ProjectDetailTabs({
+  project,
+  feed,
+}: {
+  project: Project;
+  feed: ProjectTransactionFeedProp;
+}) {
   const tabs: UrlTab[] = [
     { value: 'overview', label: 'Overview' },
     { value: 'team', label: 'Team' },
@@ -33,7 +45,7 @@ export function ProjectDetailTabs({ project }: { project: Project }) {
       label: 'Milestones',
       count: `${project.milestonesDone}/${project.milestonesTotal}`,
     },
-    { value: 'invoices', label: 'Invoices' },
+    { value: 'transactions', label: 'Transactions', count: feed.transactions.length },
     { value: 'documents', label: 'Documents', count: project.documentsCount },
     { value: 'activity', label: 'Activity' },
   ];
@@ -44,7 +56,7 @@ export function ProjectDetailTabs({ project }: { project: Project }) {
         team: <TeamTab project={project} />,
         deliverables: <DeliverablesTab project={project} />,
         milestones: <MilestonesTab project={project} />,
-        invoices: <InvoicesTab project={project} />,
+        transactions: <TransactionsTab project={project} feed={feed} />,
         documents: <DocumentsTab project={project} />,
         activity: <ActivityTab />,
       }}
@@ -140,9 +152,60 @@ function MilestonesTab({ project }: { project: Project }) {
   );
 }
 
-function InvoicesTab({ project }: { project: Project }) {
+function TransactionsTab({
+  project,
+  feed,
+}: {
+  project: Project;
+  feed: ProjectTransactionFeedProp;
+}) {
   const onNavigate = useEntityNavigate();
-  return <TransactionList transactions={[]} entityName={project.code} onNavigate={onNavigate} />;
+  const net = feed.incomePaise - feed.spendPaise;
+  return (
+    <div className="grid gap-4">
+      <div className="grid gap-3 sm:grid-cols-3">
+        <SummaryStat label="Income" valuePaise={feed.incomePaise} tone="success" />
+        <SummaryStat label="Spend" valuePaise={feed.spendPaise} tone="muted" />
+        <SummaryStat label="Net" valuePaise={net} tone={net >= 0n ? 'success' : 'danger'} />
+      </div>
+      <TransactionList
+        transactions={feed.transactions}
+        entityName={project.code || project.name}
+        onNavigate={onNavigate}
+      />
+    </div>
+  );
+}
+
+function SummaryStat({
+  label,
+  valuePaise,
+  tone,
+}: {
+  label: string;
+  valuePaise: bigint;
+  tone: 'success' | 'muted' | 'danger';
+}) {
+  const toneClass =
+    tone === 'success'
+      ? 'text-emerald-600 dark:text-emerald-400'
+      : tone === 'danger'
+        ? 'text-rose-600 dark:text-rose-400'
+        : 'text-foreground';
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-muted-foreground text-xs tracking-wide uppercase">
+          {label}
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className={`text-2xl font-semibold tabular-nums ${toneClass}`}>
+          {formatINR(valuePaise)}
+        </div>
+      </CardContent>
+    </Card>
+  );
 }
 
 function DocumentsTab({ project }: { project: Project }) {

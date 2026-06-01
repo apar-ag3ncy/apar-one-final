@@ -2,6 +2,7 @@ import { bigint, date, index, pgEnum, pgTable, text, uuid } from 'drizzle-orm/pg
 
 import { auditColumns, timestamps } from './_shared';
 import { employees } from './employees';
+import { projects } from './projects';
 import { vendors } from './vendors';
 
 /**
@@ -66,6 +67,14 @@ export const officeExpenses = pgTable(
     vendorName: text(),
     /** Set for category='reimbursement' — who paid out of pocket. */
     employeeId: uuid().references(() => employees.id, { onDelete: 'set null' }),
+    /**
+     * Optional project attribution — set when the expense was incurred for a
+     * specific project (props, location costs, travel for a shoot, …). Nullable
+     * because general office overhead (rent, utilities, stationary) has no
+     * single project. `set null` on project delete so historical expenses
+     * survive a project hard-delete.
+     */
+    projectId: uuid().references(() => projects.id, { onDelete: 'set null' }),
     /** Pre-tax amount captured from the bill. bigint paise (CLAUDE rule #1). */
     amountPaise: bigint({ mode: 'bigint' }).notNull(),
     /** GST captured from the bill — 0 if the seller didn't levy any. */
@@ -81,6 +90,7 @@ export const officeExpenses = pgTable(
     index().on(t.category),
     index().on(t.employeeId),
     index().on(t.vendorId),
+    index().on(t.projectId),
     index().on(t.status),
   ],
 );

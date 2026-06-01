@@ -3,6 +3,18 @@
 
 export type ProjectStatus = 'pitching' | 'active' | 'on_hold' | 'delivered' | 'closed';
 
+/** Raw DB enum values — used by the inline status changer. */
+export type ProjectDbStatus = 'pitch' | 'won' | 'active' | 'on_hold' | 'completed' | 'cancelled';
+
+export const PROJECT_DB_STATUS_LABELS: Record<ProjectDbStatus, string> = {
+  pitch: 'Pitch',
+  won: 'Won',
+  active: 'Active',
+  on_hold: 'On hold',
+  completed: 'Completed',
+  cancelled: 'Cancelled',
+};
+
 export type BillingModel = 'retainer' | 'fixed_fee' | 'time_and_materials' | 'milestone';
 
 export type Project = {
@@ -12,6 +24,9 @@ export type Project = {
   clientId: string;
   clientName: string;
   status: ProjectStatus;
+  /** Raw DB enum — fed to the inline status changer so the dropdown reflects
+   *  the underlying state rather than the collapsed UI label. */
+  dbStatus: ProjectDbStatus;
   billingModel: BillingModel;
   leadName: string;
   feePaise: bigint;

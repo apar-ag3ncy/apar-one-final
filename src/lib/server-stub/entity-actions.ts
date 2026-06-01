@@ -27,12 +27,15 @@ import { and, desc, eq, ilike, isNull, or, sql } from 'drizzle-orm';
 import { maybeCurrentUser } from '@/lib/auth';
 import { db } from '@/lib/db/client';
 import {
+  bills,
   clients,
   employees,
   entityActivityLog,
   entityBankAccounts,
   entityContacts,
   entityTaxIdentifiers,
+  invoices,
+  officeExpenses,
   projects,
   users,
   vendors,
@@ -40,6 +43,7 @@ import {
 import { AppError } from '@/lib/errors';
 import { getActorContext } from '@/lib/server/actor';
 import { getDocumentSignedUrl } from '@/lib/server/entities/documents';
+import { updateProject as updateProjectAction } from '@/lib/server/entities/projects';
 import { revealBank as revealBankFromVault, revealKyc as revealKycFromVault } from '@/lib/storage';
 import type { Client, ClientPoc, ClientPriority, ClientStatus } from '@/components/clients/types';
 import type { Vendor, VendorCategory, VendorStatus, TdsSection } from '@/components/vendors/types';
@@ -49,7 +53,13 @@ import type {
   EmploymentType,
   Department,
 } from '@/components/employees/types';
-import type { Project, ProjectStatus, BillingModel } from '@/components/projects/types';
+import type {
+  Project,
+  ProjectStatus,
+  ProjectDbStatus,
+  BillingModel,
+} from '@/components/projects/types';
+import type { Transaction, TransactionStatus } from '@/components/entity/transaction-list';
 
 /* -------------------------------------------------------------------------- */
 /* Clients                                                                     */
@@ -365,6 +375,7 @@ export async function listProjects(): Promise<readonly Project[]> {
       clientId: projects.clientId,
       clientName: clients.name,
       status: projects.status,
+      feePaise: projects.feePaise,
       isArchived: projects.isArchived,
       startedOn: projects.startedOn,
       targetEndOn: projects.targetEndOn,
@@ -387,9 +398,10 @@ export async function listProjects(): Promise<readonly Project[]> {
       clientId: r.clientId,
       clientName: r.clientName ?? '—',
       status: mapProjectStatus(r.status, r.isArchived),
+      dbStatus: r.status,
       billingModel: FALLBACK_BILLING,
       leadName: r.leadEmployeeName ?? '—',
-      feePaise: 0n,
+      feePaise: r.feePaise,
       startedAt: r.startedOn ? new Date(r.startedOn) : new Date(),
       endsAt: r.targetEndOn ? new Date(r.targetEndOn) : null,
       deliverablesTotal: 0,
@@ -405,6 +417,174 @@ export async function listProjects(): Promise<readonly Project[]> {
 export async function getProject(id: string): Promise<Project | null> {
   const all = await listProjects();
   return all.find((p) => p.id === id) ?? null;
+}
+
+/**
+ * Inline status change from the project detail header. Wraps `updateProject`
+ * from `@/lib/server/entities/projects` so the capability gate and audit log
+ * stay in one place.
+ */
+export async function setProjectStatus(projectId: string, status: ProjectDbStatus): Promise<void> {
+  await updateProjectAction(projectId, { status });
+}
+
+/**
+ * Roll up every captured transaction tied to a project — client invoices
+ * (income), vendor bills (spend), and office expenses (spend) — into a
+ * single feed for the Transactions tab.
+ *
+ * Returns `incomePaise` and `spendPaise` as captured-not-computed sums of
+ * `capturedTotalPaise` (or `amountPaise + gstPaise` for office expenses),
+ * skipping void / draft rows so the totals match what a partner would
+ * recognise as "committed money". Drafts still show in the list.
+ */
+export type ProjectTransactionFeed = {
+  transactions: readonly Transaction[];
+  incomePaise: bigint;
+  spendPaise: bigint;
+};
+
+export async function listProjectTransactions(projectId: string): Promise<ProjectTransactionFeed> {
+  await getActorContext();
+
+  const [invoiceRows, billRows, expenseRows] = await Promise.all([
+    db
+      .select({
+        id: invoices.id,
+        documentNumber: invoices.documentNumber,
+        documentDate: invoices.documentDate,
+        capturedTotalPaise: invoices.capturedTotalPaise,
+        state: invoices.state,
+        clientId: invoices.clientId,
+        clientName: clients.name,
+        notes: invoices.notes,
+      })
+      .from(invoices)
+      .leftJoin(clients, eq(clients.id, invoices.clientId))
+      .where(and(eq(invoices.projectId, projectId), isNull(invoices.deletedAt)))
+      .orderBy(desc(invoices.documentDate)),
+    db
+      .select({
+        id: bills.id,
+        documentNumber: bills.documentNumber,
+        documentDate: bills.documentDate,
+        capturedTotalPaise: bills.capturedTotalPaise,
+        state: bills.state,
+        vendorId: bills.vendorId,
+        vendorName: vendors.name,
+        notes: bills.notes,
+      })
+      .from(bills)
+      .leftJoin(vendors, eq(vendors.id, bills.vendorId))
+      .where(and(eq(bills.projectId, projectId), isNull(bills.deletedAt)))
+      .orderBy(desc(bills.documentDate)),
+    db
+      .select({
+        id: officeExpenses.id,
+        description: officeExpenses.description,
+        expenseDate: officeExpenses.expenseDate,
+        amountPaise: officeExpenses.amountPaise,
+        gstPaise: officeExpenses.gstPaise,
+        status: officeExpenses.status,
+        vendorId: officeExpenses.vendorId,
+        vendorName: officeExpenses.vendorName,
+        vendorDirectoryName: vendors.name,
+      })
+      .from(officeExpenses)
+      .leftJoin(vendors, eq(vendors.id, officeExpenses.vendorId))
+      .where(and(eq(officeExpenses.projectId, projectId), isNull(officeExpenses.deletedAt)))
+      .orderBy(desc(officeExpenses.expenseDate)),
+  ]);
+
+  const invoiceTxns: Transaction[] = invoiceRows.map((r) => ({
+    id: r.id,
+    reference: r.documentNumber,
+    kind: 'client_invoice' as const,
+    date: r.documentDate,
+    amount: r.capturedTotalPaise,
+    status: mapInvoiceState(r.state),
+    counterparty: r.clientName
+      ? { type: 'client' as const, id: r.clientId, label: r.clientName }
+      : null,
+    memo: r.notes,
+  }));
+
+  const billTxns: Transaction[] = billRows.map((r) => ({
+    id: r.id,
+    reference: r.documentNumber,
+    kind: 'vendor_bill' as const,
+    date: r.documentDate,
+    amount: r.capturedTotalPaise,
+    status: mapBillState(r.state),
+    counterparty: r.vendorName
+      ? { type: 'vendor' as const, id: r.vendorId, label: r.vendorName }
+      : null,
+    memo: r.notes,
+  }));
+
+  const expenseTxns: Transaction[] = expenseRows.map((r) => ({
+    id: r.id,
+    reference: `EXP-${r.id.slice(0, 8)}`,
+    kind: 'office_expense' as const,
+    date: r.expenseDate,
+    amount: r.amountPaise + r.gstPaise,
+    status: mapOfficeExpenseStatus(r.status),
+    counterparty:
+      r.vendorId && r.vendorDirectoryName
+        ? { type: 'vendor' as const, id: r.vendorId, label: r.vendorDirectoryName }
+        : null,
+    memo: r.vendorName ? `${r.description} · ${r.vendorName}` : r.description,
+  }));
+
+  // Sum totals — exclude draft (not yet committed) and void (reversed) rows.
+  // The list keeps drafts visible; the headline totals reflect "real money".
+  let incomePaise = 0n;
+  for (const r of invoiceRows) {
+    if (r.state !== 'draft' && r.state !== 'void') incomePaise += r.capturedTotalPaise;
+  }
+  let spendPaise = 0n;
+  for (const r of billRows) {
+    if (r.state !== 'draft' && r.state !== 'void') spendPaise += r.capturedTotalPaise;
+  }
+  for (const r of expenseRows) {
+    if (r.status !== 'rejected') spendPaise += r.amountPaise + r.gstPaise;
+  }
+
+  // Merge + sort by date desc, then by reference for stability.
+  const all: Transaction[] = [...invoiceTxns, ...billTxns, ...expenseTxns];
+  all.sort((a, b) => {
+    const ad = new Date(a.date).getTime();
+    const bd = new Date(b.date).getTime();
+    if (ad !== bd) return bd - ad;
+    return a.reference.localeCompare(b.reference);
+  });
+
+  return { transactions: all, incomePaise, spendPaise };
+}
+
+function mapInvoiceState(
+  state: 'draft' | 'sent' | 'partially_paid' | 'paid' | 'void',
+): TransactionStatus {
+  if (state === 'paid' || state === 'partially_paid') return 'posted';
+  if (state === 'void') return 'void';
+  if (state === 'sent') return 'pending_approval';
+  return 'draft';
+}
+
+function mapBillState(
+  state: 'draft' | 'recorded' | 'partially_paid' | 'paid' | 'void',
+): TransactionStatus {
+  if (state === 'paid' || state === 'partially_paid' || state === 'recorded') return 'posted';
+  if (state === 'void') return 'void';
+  return 'draft';
+}
+
+function mapOfficeExpenseStatus(
+  status: 'pending' | 'approved' | 'reimbursed' | 'rejected',
+): TransactionStatus {
+  if (status === 'approved' || status === 'reimbursed') return 'posted';
+  if (status === 'rejected') return 'reversed';
+  return 'pending_approval';
 }
 
 /* -------------------------------------------------------------------------- */

@@ -1,9 +1,9 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { Button } from '@/components/ui/button';
 import { ProjectDetailTabs } from '@/components/projects/project-detail-tabs';
-import { getProject } from '@/lib/server-stub/entity-actions';
+import { ProjectStatusChanger } from '@/components/projects/project-status-changer';
+import { getProject, listProjectTransactions } from '@/lib/server-stub/entity-actions';
 import type { ProjectStatus } from '@/types/api';
 import { ProfileHeader } from '@/components/entity/profile-header';
 import type { StatusTone } from '@/components/shared/status-badge';
@@ -38,8 +38,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
 export default async function ProjectDetailPage({ params }: Props) {
   const { id } = await params;
-  // TODO(backend): swap for getProject(id) once Backend ships the query helper.
-  const project = await getProject(id);
+  const [project, feed] = await Promise.all([getProject(id), listProjectTransactions(id)]);
   if (!project) notFound();
 
   return (
@@ -60,23 +59,9 @@ export default async function ProjectDetailPage({ params }: Props) {
           label: STATUS_LABELS[project.status],
         }}
         back={{ href: '/projects', label: 'All projects' }}
-        actions={
-          <>
-            <Button
-              size="sm"
-              variant="outline"
-              disabled
-              title="Server action pending (Backend agent)."
-            >
-              Edit
-            </Button>
-            <Button size="sm" disabled title="Server action pending (Backend agent).">
-              New deliverable
-            </Button>
-          </>
-        }
+        actions={<ProjectStatusChanger projectId={project.id} value={project.dbStatus} />}
       />
-      <ProjectDetailTabs project={project} />
+      <ProjectDetailTabs project={project} feed={feed} />
     </>
   );
 }
