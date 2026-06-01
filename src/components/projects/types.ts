@@ -28,7 +28,10 @@ export type Project = {
    *  the underlying state rather than the collapsed UI label. */
   dbStatus: ProjectDbStatus;
   billingModel: BillingModel;
+  leadEmployeeId: string | null;
   leadName: string;
+  accountManagerId: string | null;
+  accountManagerName: string;
   feePaise: bigint;
   startedAt: Date;
   endsAt: Date | null;

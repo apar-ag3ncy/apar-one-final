@@ -1,7 +1,12 @@
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import { ClientDetailTabs } from '@/components/clients/client-detail-tabs';
-import { getClient } from '@/lib/server-stub/entity-actions';
+import {
+  getClient,
+  listEmployees,
+  listProjectsByClient,
+  listUsers,
+} from '@/lib/server-stub/entity-actions';
 import { listContacts } from '@/lib/server/entities/contacts';
 import { getActorContext } from '@/lib/server/actor';
 import type { ClientStatus } from '@/types/api';
@@ -35,14 +40,20 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
 export default async function ClientDetailPage({ params }: Props) {
   const { id } = await params;
-  const [client, contacts, actor] = await Promise.all([
+  const [client, contacts, projects, employees, users, actor] = await Promise.all([
     getClient(id),
     listContacts({ entityType: 'client', entityId: id }),
+    listProjectsByClient(id),
+    listEmployees(),
+    listUsers(),
     getActorContext(),
   ]);
   if (!client) notFound();
 
   const canHardDelete = actor.role === 'partner';
+
+  const employeeOptions = employees.map((e) => ({ id: e.id, name: e.fullName }));
+  const userOptions = users.map((u) => ({ id: u.id, name: u.fullName }));
 
   return (
     <>
@@ -74,7 +85,14 @@ export default async function ClientDetailPage({ params }: Props) {
           </>
         }
       />
-      <ClientDetailTabs client={client} contacts={contacts} canHardDeleteContacts={canHardDelete} />
+      <ClientDetailTabs
+        client={client}
+        contacts={contacts}
+        projects={projects}
+        employees={employeeOptions}
+        users={userOptions}
+        canHardDeleteContacts={canHardDelete}
+      />
     </>
   );
 }

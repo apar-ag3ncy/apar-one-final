@@ -199,6 +199,7 @@ export type ProjectStatus = z.infer<typeof ProjectStatusEnum>;
 const CreateProjectSchema = z.object({
   clientId: z.string().uuid(),
   leadEmployeeId: z.string().uuid().nullable().optional(),
+  accountManagerId: z.string().uuid().nullable().optional(),
   name: z.string().min(1).max(200),
   code: z.string().max(60).nullable().optional(),
   status: ProjectStatusEnum.default('pitch'),
@@ -221,6 +222,7 @@ export async function createProject(input: CreateProjectInput): Promise<{ id: st
     .values({
       clientId: parsed.clientId,
       leadEmployeeId: parsed.leadEmployeeId ?? null,
+      accountManagerId: parsed.accountManagerId ?? null,
       name: parsed.name,
       code: parsed.code ?? null,
       status: parsed.status,
@@ -244,6 +246,7 @@ export async function createProject(input: CreateProjectInput): Promise<{ id: st
       project_id: row.id,
       client_id: parsed.clientId,
       lead_employee_id: parsed.leadEmployeeId ?? null,
+      account_manager_id: parsed.accountManagerId ?? null,
       mentions: [
         { entityType: 'client', entityId: parsed.clientId },
         ...(parsed.leadEmployeeId
@@ -259,6 +262,7 @@ export async function createProject(input: CreateProjectInput): Promise<{ id: st
 const UpdateProjectSchema = z.object({
   clientId: z.string().uuid().optional(),
   leadEmployeeId: z.string().uuid().nullable().optional(),
+  accountManagerId: z.string().uuid().nullable().optional(),
   name: z.string().min(1).max(200).optional(),
   code: z.string().max(60).nullable().optional(),
   status: ProjectStatusEnum.optional(),
@@ -280,6 +284,9 @@ export async function updateProject(id: string, patch: UpdateProjectInput): Prom
     .set({
       ...(parsed.clientId !== undefined ? { clientId: parsed.clientId } : {}),
       ...(parsed.leadEmployeeId !== undefined ? { leadEmployeeId: parsed.leadEmployeeId } : {}),
+      ...(parsed.accountManagerId !== undefined
+        ? { accountManagerId: parsed.accountManagerId }
+        : {}),
       ...(parsed.name !== undefined ? { name: parsed.name } : {}),
       ...(parsed.code !== undefined ? { code: parsed.code } : {}),
       ...(parsed.status !== undefined ? { status: parsed.status } : {}),

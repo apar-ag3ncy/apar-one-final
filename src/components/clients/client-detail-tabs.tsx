@@ -14,9 +14,20 @@ import {
   ScrollTextIcon,
   SettingsIcon,
 } from 'lucide-react';
+import { useState } from 'react';
+import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
 import { EmptyState } from '@/components/shared/empty-state';
-import { StatusBadge } from '@/components/shared/status-badge';
+import { StatusBadge, type StatusTone } from '@/components/shared/status-badge';
+import { formatINR } from '@/components/shared/format-inr';
 import { UrlTabs, type UrlTab } from '@/components/shared/url-tabs';
 import { ActivityFeed } from '@/components/entity/activity-feed';
 import { AddressList } from '@/components/entity/address-list';
@@ -27,6 +38,12 @@ import { ContactsSection } from '@/components/entity/contacts-section';
 import { DocumentsSection } from '@/components/entity/documents-section';
 import { LazyTab } from '@/components/entity/lazy-tab';
 import { TaxIdentifierList, type TaxIdentifier } from '@/components/entity/tax-identifier-list';
+import {
+  NewProjectDialog,
+  type EmployeeOption,
+  type UserOption,
+} from '@/components/projects/new-project-dialog';
+import type { Project, ProjectStatus } from '@/components/projects/types';
 import { useEntityNavigate } from '@/lib/client/use-navigate';
 import { useRealtimeActivity } from '@/lib/client/use-realtime-activity';
 import { getEntityActivity } from '@/lib/server/entities/activity';
@@ -39,6 +56,9 @@ import type { Client } from './types';
 export type ClientDetailTabsProps = {
   client: Client;
   contacts: readonly ContactRow[];
+  projects: readonly Project[];
+  employees: readonly EmployeeOption[];
+  users: readonly UserOption[];
   canHardDeleteContacts?: boolean;
 };
 
@@ -57,6 +77,9 @@ export type ClientDetailTabsProps = {
 export function ClientDetailTabs({
   client,
   contacts,
+  projects,
+  employees,
+  users,
   canHardDeleteContacts = false,
 }: ClientDetailTabsProps) {
   const tabs: UrlTab[] = [
@@ -65,7 +88,7 @@ export function ClientDetailTabs({
     { value: 'addresses', label: 'Addresses' },
     { value: 'bank-tax', label: 'Bank & Tax' },
     { value: 'documents', label: 'Documents', count: client.documentsCount },
-    { value: 'projects', label: 'Projects', count: client.projectsCount },
+    { value: 'projects', label: 'Projects', count: projects.length },
     { value: 'transactions', label: 'Transactions' },
     { value: 'expenses-on-behalf', label: 'Expenses on behalf' },
     { value: 'ledger', label: 'Ledger' },
@@ -93,7 +116,9 @@ export function ClientDetailTabs({
         documents: (
           <DocumentsSection entityType="client" entityId={client.id} entityName={client.name} />
         ),
-        projects: <ProjectsTab client={client} />,
+        projects: (
+          <ProjectsTab client={client} projects={projects} employees={employees} users={users} />
+        ),
         transactions: <ClientTransactionsSection clientId={client.id} clientName={client.name} />,
         'expenses-on-behalf': (
           <ClientExpensesOnBehalfSection clientId={client.id} clientName={client.name} />
@@ -264,18 +289,119 @@ function BankTaxTab({ entityId, entityName }: { entityId: string; entityName: st
 /* Projects                                                                    */
 /* -------------------------------------------------------------------------- */
 
-function ProjectsTab({ client }: { client: Client }) {
+const PROJECT_STATUS_TONES: Record<ProjectStatus, StatusTone> = {
+  pitching: 'info',
+  active: 'success',
+  on_hold: 'warning',
+  delivered: 'accent',
+  closed: 'neutral',
+};
+
+const PROJECT_STATUS_LABELS: Record<ProjectStatus, string> = {
+  pitching: 'Pitching',
+  active: 'Active',
+  on_hold: 'On hold',
+  delivered: 'Delivered',
+  closed: 'Closed',
+};
+
+function ProjectsTab({
+  client,
+  projects,
+  employees,
+  users,
+}: {
+  client: Client;
+  projects: readonly Project[];
+  employees: readonly EmployeeOption[];
+  users: readonly UserOption[];
+}) {
+  const [dialogOpen, setDialogOpen] = useState(false);
   return (
-    <EmptyState
-      icon={FolderKanbanIcon}
-      title={
-        client.projectsCount === 0
-          ? 'No projects yet'
-          : `${client.projectsCount} project${client.projectsCount === 1 ? '' : 's'} under this client`
-      }
-      description="Project rows land here once the per-entity projects query ships. Each row will deep-link to the project window (OS) or page (Dashboard)."
-    />
+    <>
+      <Card>
+        <CardHeader className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+          <CardTitle className="text-base">
+            Projects
+            <span className="text-muted-foreground ml-2 text-sm font-normal">
+              {projects.length}
+            </span>
+          </CardTitle>
+          <Button size="sm" onClick={() => setDialogOpen(true)}>
+            New Project
+          </Button>
+        </CardHeader>
+        <CardContent className="p-0">
+          {projects.length === 0 ? (
+            <div className="px-6 py-10">
+              <EmptyState
+                icon={FolderKanbanIcon}
+                title="No projects yet"
+                description={`Create the first project for ${client.name}. Pitches, active engagements, and closed work all live here.`}
+              />
+            </div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow className="bg-muted/40 hover:bg-muted/40">
+                  <TableHead className="px-4">Project</TableHead>
+                  <TableHead className="px-4">Status</TableHead>
+                  <TableHead className="px-4">Lead</TableHead>
+                  <TableHead className="px-4">POC (manager)</TableHead>
+                  <TableHead className="px-4 text-right">Fee</TableHead>
+                  <TableHead className="px-4">Started</TableHead>
+                  <TableHead className="px-4">Target end</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {projects.map((p) => (
+                  <TableRow key={p.id}>
+                    <TableCell className="px-4">
+                      <a href={`/projects/${p.id}`} className="font-medium hover:underline">
+                        {p.name}
+                      </a>
+                      {p.code ? (
+                        <div className="text-muted-foreground font-mono text-xs">{p.code}</div>
+                      ) : null}
+                    </TableCell>
+                    <TableCell className="px-4">
+                      <StatusBadge
+                        tone={PROJECT_STATUS_TONES[p.status]}
+                        label={PROJECT_STATUS_LABELS[p.status]}
+                      />
+                    </TableCell>
+                    <TableCell className="px-4 text-sm">{p.leadName}</TableCell>
+                    <TableCell className="px-4 text-sm">{p.accountManagerName}</TableCell>
+                    <TableCell className="px-4 text-right font-mono text-sm tabular-nums">
+                      {formatINR(p.feePaise)}
+                    </TableCell>
+                    <TableCell className="text-muted-foreground px-4 text-xs whitespace-nowrap">
+                      {formatProjectDate(p.startedAt)}
+                    </TableCell>
+                    <TableCell className="text-muted-foreground px-4 text-xs whitespace-nowrap">
+                      {p.endsAt ? formatProjectDate(p.endsAt) : 'Ongoing'}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+      <NewProjectDialog
+        open={dialogOpen}
+        onOpenChange={setDialogOpen}
+        clientId={client.id}
+        clientName={client.name}
+        employees={employees}
+        users={users}
+      />
+    </>
   );
+}
+
+function formatProjectDate(d: Date): string {
+  return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: '2-digit' });
 }
 
 /* -------------------------------------------------------------------------- */

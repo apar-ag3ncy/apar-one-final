@@ -366,57 +366,118 @@ function mapProjectStatus(
 
 const FALLBACK_BILLING: BillingModel = 'fixed_fee';
 
+const PROJECT_LIST_COLUMNS = {
+  id: projects.id,
+  name: projects.name,
+  code: projects.code,
+  clientId: projects.clientId,
+  clientName: clients.name,
+  status: projects.status,
+  feePaise: projects.feePaise,
+  isArchived: projects.isArchived,
+  startedOn: projects.startedOn,
+  targetEndOn: projects.targetEndOn,
+  notes: projects.notes,
+  leadEmployeeId: projects.leadEmployeeId,
+  leadEmployeeName: sql<
+    string | null
+  >`(select full_name from employees where id = ${projects.leadEmployeeId})`,
+  accountManagerId: projects.accountManagerId,
+  accountManagerName: sql<
+    string | null
+  >`(select full_name from users where id = ${projects.accountManagerId})`,
+  documentsCount: sql<number>`(select count(*)::int from entity_documents where entity_type = 'project' and entity_id = ${projects.id})`,
+} as const;
+
+type ProjectListRowResult = {
+  id: string;
+  name: string;
+  code: string | null;
+  clientId: string;
+  clientName: string | null;
+  status: 'pitch' | 'won' | 'active' | 'on_hold' | 'completed' | 'cancelled';
+  feePaise: bigint;
+  isArchived: boolean;
+  startedOn: string | null;
+  targetEndOn: string | null;
+  notes: string | null;
+  leadEmployeeId: string | null;
+  leadEmployeeName: string | null;
+  accountManagerId: string | null;
+  accountManagerName: string | null;
+  documentsCount: number;
+};
+
+function rowToProject(r: ProjectListRowResult): Project {
+  return {
+    id: r.id,
+    code: r.code ?? '',
+    name: r.name,
+    clientId: r.clientId,
+    clientName: r.clientName ?? '—',
+    status: mapProjectStatus(r.status, r.isArchived),
+    dbStatus: r.status,
+    billingModel: FALLBACK_BILLING,
+    leadEmployeeId: r.leadEmployeeId,
+    leadName: r.leadEmployeeName ?? '—',
+    accountManagerId: r.accountManagerId,
+    accountManagerName: r.accountManagerName ?? '—',
+    feePaise: r.feePaise,
+    startedAt: r.startedOn ? new Date(r.startedOn) : new Date(),
+    endsAt: r.targetEndOn ? new Date(r.targetEndOn) : null,
+    deliverablesTotal: 0,
+    deliverablesDone: 0,
+    milestonesTotal: 0,
+    milestonesDone: 0,
+    documentsCount: r.documentsCount,
+    notes: r.notes,
+  };
+}
+
 export async function listProjects(): Promise<readonly Project[]> {
   const rows = await db
-    .select({
-      id: projects.id,
-      name: projects.name,
-      code: projects.code,
-      clientId: projects.clientId,
-      clientName: clients.name,
-      status: projects.status,
-      feePaise: projects.feePaise,
-      isArchived: projects.isArchived,
-      startedOn: projects.startedOn,
-      targetEndOn: projects.targetEndOn,
-      notes: projects.notes,
-      leadEmployeeName: sql<
-        string | null
-      >`(select full_name from employees where id = ${projects.leadEmployeeId})`,
-      documentsCount: sql<number>`(select count(*)::int from entity_documents where entity_type = 'project' and entity_id = ${projects.id})`,
-    })
+    .select(PROJECT_LIST_COLUMNS)
     .from(projects)
     .leftJoin(clients, eq(projects.clientId, clients.id))
     .where(isNull(projects.deletedAt))
     .orderBy(desc(projects.updatedAt));
+  return rows.map(rowToProject);
+}
 
-  return rows.map(
-    (r): Project => ({
-      id: r.id,
-      code: r.code ?? '',
-      name: r.name,
-      clientId: r.clientId,
-      clientName: r.clientName ?? '—',
-      status: mapProjectStatus(r.status, r.isArchived),
-      dbStatus: r.status,
-      billingModel: FALLBACK_BILLING,
-      leadName: r.leadEmployeeName ?? '—',
-      feePaise: r.feePaise,
-      startedAt: r.startedOn ? new Date(r.startedOn) : new Date(),
-      endsAt: r.targetEndOn ? new Date(r.targetEndOn) : null,
-      deliverablesTotal: 0,
-      deliverablesDone: 0,
-      milestonesTotal: 0,
-      milestonesDone: 0,
-      documentsCount: r.documentsCount,
-      notes: r.notes,
-    }),
-  );
+export async function listProjectsByClient(clientId: string): Promise<readonly Project[]> {
+  const rows = await db
+    .select(PROJECT_LIST_COLUMNS)
+    .from(projects)
+    .leftJoin(clients, eq(projects.clientId, clients.id))
+    .where(and(eq(projects.clientId, clientId), isNull(projects.deletedAt)))
+    .orderBy(desc(projects.updatedAt));
+  return rows.map(rowToProject);
 }
 
 export async function getProject(id: string): Promise<Project | null> {
   const all = await listProjects();
   return all.find((p) => p.id === id) ?? null;
+}
+
+export type TeamUser = {
+  id: string;
+  fullName: string;
+  email: string;
+};
+
+/**
+ * List system users — the team members who can own client/project relationships.
+ * Used to populate the "account manager / POC" dropdown on the create-project
+ * form. Filters to non-deleted, active users.
+ */
+export async function listUsers(): Promise<readonly TeamUser[]> {
+  await getActorContext();
+  const rows = await db
+    .select({ id: users.id, fullName: users.fullName, email: users.email })
+    .from(users)
+    .where(isNull(users.deletedAt))
+    .orderBy(users.fullName);
+  return rows;
 }
 
 /**
