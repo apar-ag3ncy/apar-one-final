@@ -313,8 +313,9 @@ function ProjectsBody({
                           style={{
                             fontSize: 11,
                             color: 'var(--text-muted)',
-                            fontFamily:
-                              'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+                            fontFamily: 'var(--os-font)',
+                            fontVariantNumeric: 'tabular-nums',
+                            letterSpacing: '0.02em',
                           }}
                         >
                           {p.code}

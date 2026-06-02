@@ -11,6 +11,17 @@
   --apar-red-deep: #b82f19;
   --apar-red-soft: #fce6df;
 
+  /* Single OS typeface — SF UI Display via the Apple system stack.
+     The legacy `--font-inter`, `--font-khand`, `--font-jetbrains-mono`
+     vars are overridden to the same stack so every existing reference
+     (CSS rules + inline `style.fontFamily` in JSX) resolves here. */
+  --os-font: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF UI Display',
+    'Helvetica Neue', system-ui, sans-serif;
+  --font-inter: var(--os-font);
+  --font-khand: var(--os-font);
+  --font-jetbrains-mono: var(--os-font);
+  --font-mono: var(--os-font);
+
   /* Light theme — warm chrome, paper content. */
   --bg-desktop-1: #2e211e;
   --bg-desktop-2: #543a35;
@@ -44,9 +55,9 @@
   position: fixed;
   inset: 0;
   overflow: hidden;
-  font-family: var(--font-inter), 'Inter', system-ui, -apple-system, sans-serif;
-  font-feature-settings: 'cv11', 'ss01', 'ss03';
+  font-family: var(--os-font);
   font-size: 13px;
+  font-weight: 400;
   color: var(--text);
   background:
     radial-gradient(120% 100% at 80% -10%, color-mix(in oklab, var(--apar-red) 18%, transparent), transparent 55%),
@@ -86,15 +97,20 @@
   box-sizing: border-box;
 }
 
+/* Display headings — same SF stack, lighter weight + slight negative tracking
+   so big titles read with the elegant Apple display look. */
 .os-root .font-display {
-  font-family: var(--font-khand), 'Khand', var(--font-inter), 'Inter', sans-serif;
-  font-weight: 600;
-  letter-spacing: 0.01em;
+  font-family: var(--os-font);
+  font-weight: 500;
+  letter-spacing: -0.012em;
 }
 
+/* "Mono" no longer means a different typeface — we stay on SF UI Display
+   everywhere and use `tabular-nums` for column-aligned numerics. */
 .os-root .font-mono {
-  font-family: var(--font-jetbrains-mono), 'JetBrains Mono', ui-monospace, SFMono-Regular,
-    Menlo, monospace;
+  font-family: var(--os-font);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
 }
 
 /* Smooth theme transition — only on specific elements to avoid var() repaint bugs */
@@ -167,10 +183,10 @@
   user-select: none;
 }
 .os-root .menubar .wordmark {
-  font-family: var(--font-khand), 'Khand', sans-serif;
-  font-weight: 700;
-  font-size: 16px;
-  letter-spacing: 0.04em;
+  font-family: var(--os-font);
+  font-weight: 600;
+  font-size: 15px;
+  letter-spacing: 0.08em;
   color: var(--apar-red);
   text-transform: uppercase;
   line-height: 1;
@@ -636,10 +652,10 @@
 }
 .os-root .main-header h2 {
   margin: 0;
-  font-family: var(--font-khand), 'Khand', sans-serif;
-  font-weight: 600;
-  font-size: 22px;
-  letter-spacing: 0.01em;
+  font-family: var(--os-font);
+  font-weight: 500;
+  font-size: 21px;
+  letter-spacing: -0.014em;
   color: var(--text);
 }
 .os-root .main-header .sub {
@@ -855,8 +871,10 @@
   border-color: var(--border-strong);
 }
 .os-root .proj-card .code {
-  font-family: var(--font-jetbrains-mono), 'JetBrains Mono', monospace;
+  font-family: var(--os-font);
+  font-variant-numeric: tabular-nums;
   font-size: 10.5px;
+  letter-spacing: 0.02em;
   color: var(--text-muted);
 }
 .os-root .proj-card .name {
@@ -927,10 +945,12 @@
   font-weight: 600;
 }
 .os-root .report-tile .value {
-  font-family: var(--font-khand), 'Khand', sans-serif;
-  font-size: 26px;
+  font-family: var(--os-font);
+  font-variant-numeric: tabular-nums;
+  font-size: 28px;
   line-height: 1;
-  font-weight: 600;
+  font-weight: 300;
+  letter-spacing: -0.02em;
   color: var(--text);
 }
 .os-root .report-tile .trend {
@@ -964,10 +984,11 @@
   position: absolute;
   bottom: 3px;
   right: 4px;
-  font-family: var(--font-jetbrains-mono), 'JetBrains Mono', monospace;
+  font-family: var(--os-font);
   font-size: 8px;
+  letter-spacing: 0.04em;
   color: var(--apar-red);
-  font-weight: 700;
+  font-weight: 600;
 }
 .os-root .pdf-thumb .line {
   position: absolute;
@@ -1067,14 +1088,16 @@
   animation: os-fadeout 5s 2s forwards;
 }
 .os-root .welcome-hint .big {
-  font-family: var(--font-khand), 'Khand', sans-serif;
-  font-weight: 600;
+  font-family: var(--os-font);
+  font-weight: 500;
   font-size: 26px;
+  letter-spacing: -0.018em;
   margin-bottom: 6px;
   color: #fff;
 }
 .os-root .welcome-hint kbd {
-  font-family: var(--font-jetbrains-mono), 'JetBrains Mono', monospace;
+  font-family: var(--os-font);
+  font-variant-numeric: tabular-nums;
   background: rgba(255, 255, 255, 0.14);
   padding: 1px 6px;
   border-radius: 4px;
@@ -1143,12 +1166,12 @@
   max-width: 340px;
 }
 .os-root .mobile-fallback h1 {
-  font-family: var(--font-khand), 'Khand', sans-serif;
-  font-weight: 700;
+  font-family: var(--os-font);
+  font-weight: 500;
   font-size: 56px;
   color: var(--apar-red);
   margin: 0 0 10px;
-  letter-spacing: 0.04em;
+  letter-spacing: -0.02em;
 }
 .os-root .mobile-fallback p {
   color: #bfb1a8;
@@ -1320,7 +1343,8 @@
 }
 .os-root .os-form input.font-mono,
 .os-root .os-form textarea.font-mono {
-  font-family: var(--font-jetbrains-mono), 'JetBrains Mono', monospace;
+  font-family: var(--os-font);
+  font-variant-numeric: tabular-nums;
   letter-spacing: 0.02em;
 }
 .os-root .os-form input[type='file'] {
@@ -1396,11 +1420,11 @@
   opacity: 0.9;
 }
 .os-root .lock-screen__time {
-  font-family: var(--font-khand), 'Khand', sans-serif;
-  font-weight: 600;
-  font-size: 84px;
+  font-family: var(--os-font);
+  font-weight: 200;
+  font-size: 96px;
   line-height: 1;
-  letter-spacing: 0.02em;
+  letter-spacing: -0.04em;
   margin-top: 4px;
   font-variant-numeric: tabular-nums;
 }
@@ -1484,10 +1508,11 @@
 }
 
 .os-root .lock-screen__greeting {
-  font-family: var(--font-khand), 'Khand', sans-serif;
-  font-weight: 600;
-  font-size: 30px;
+  font-family: var(--os-font);
+  font-weight: 400;
+  font-size: 28px;
   line-height: 1.1;
+  letter-spacing: -0.018em;
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
   margin-top: 6px;
 }

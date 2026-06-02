@@ -604,7 +604,8 @@ export function AttendanceApp() {
                   <span
                     style={{
                       color: 'var(--text-dim)',
-                      fontFamily: "var(--font-jetbrains-mono), 'JetBrains Mono', monospace",
+                      fontFamily: 'var(--os-font)',
+                      fontVariantNumeric: 'tabular-nums',
                       fontSize: 11,
                     }}
                   >
@@ -627,7 +628,8 @@ export function AttendanceApp() {
                 <span
                   style={{
                     color: 'var(--text-dim)',
-                    fontFamily: "var(--font-jetbrains-mono), 'JetBrains Mono', monospace",
+                    fontFamily: 'var(--os-font)',
+                    fontVariantNumeric: 'tabular-nums',
                     fontSize: 11,
                   }}
                 >
