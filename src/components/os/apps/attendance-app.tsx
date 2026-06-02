@@ -496,6 +496,9 @@ export function AttendanceApp() {
                     return (
                       <td
                         key={d}
+                        className={`att-cell ${isOverride ? 'is-override' : 'is-default'}${
+                          isOpen ? ' is-open' : ''
+                        }`}
                         onClick={(e) =>
                           openPicker(e, r.employeeId, r.fullName, iso, status, isOverride)
                         }
@@ -510,7 +513,7 @@ export function AttendanceApp() {
                             day: '2-digit',
                             month: 'short',
                           },
-                        )}${isToday ? ' (today)' : ''}\n${STATUS_LABEL[status]}${isOverride ? ' (override)' : ' (default)'}`}
+                        )}${isToday ? ' (today)' : ''}\n${STATUS_LABEL[status]}${isOverride ? ' (override)' : ' (default)'}${busy ? '' : ' — click to change'}`}
                         style={{
                           width: 30,
                           height: 28,
@@ -521,14 +524,11 @@ export function AttendanceApp() {
                           color: '#fff',
                           fontWeight: 600,
                           fontSize: 10,
-                          opacity: isOverride ? 1 : 0.55,
                           borderRight: isToday
                             ? '2px solid var(--apar-red)'
                             : '1px solid var(--border)',
                           borderLeft: isToday ? '2px solid var(--apar-red)' : undefined,
                           borderBottom: '1px solid var(--border)',
-                          outline: isOpen ? '2px solid var(--apar-red)' : undefined,
-                          outlineOffset: isOpen ? -2 : undefined,
                         }}
                       >
                         {STATUS_SHORT[status]}
