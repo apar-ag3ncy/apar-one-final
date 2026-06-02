@@ -155,7 +155,16 @@ function Header({ project }: { project: Project }) {
         <div style={{ color: 'var(--text-muted)', fontSize: 13, marginTop: 4 }}>
           {project.code ? (
             <>
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>{project.code}</span>
+              <span
+                style={{
+                  fontFamily: 'var(--os-font)',
+                  fontVariantNumeric: 'tabular-nums',
+                  letterSpacing: '0.02em',
+                  fontSize: 12,
+                }}
+              >
+                {project.code}
+              </span>
               {' · '}
             </>
           ) : null}

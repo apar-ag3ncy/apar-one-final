@@ -1,4 +1,15 @@
-import { boolean, date, index, pgEnum, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
+import {
+  boolean,
+  date,
+  index,
+  pgEnum,
+  pgTable,
+  text,
+  timestamp,
+  uniqueIndex,
+  uuid,
+} from 'drizzle-orm/pg-core';
 
 import { auditColumns, timestamps } from './_shared';
 import { contractStatusEnum } from './_polymorphic';
@@ -57,6 +68,12 @@ export const clients = pgTable(
     index().on(t.accountManagerId),
     index().on(t.name),
     index().on(t.isArchived),
+    // Partial unique on lower(name) — active rows only. Backed by
+    // migration 0029_clients_name_unique_active. Archived/soft-deleted
+    // rows are exempt so a freed name is reusable.
+    uniqueIndex('clients_name_unique_active')
+      .on(sql`lower(${t.name})`)
+      .where(sql`${t.deletedAt} IS NULL AND ${t.isArchived} = false`),
   ],
 );
 

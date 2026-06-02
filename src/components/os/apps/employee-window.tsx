@@ -326,7 +326,9 @@ function ProjectsLedBody({ projects }: { projects: EmployeeSummary['projectsLed'
           {p.code ? (
             <span
               style={{
-                fontFamily: 'var(--font-mono)',
+                fontFamily: 'var(--os-font)',
+                fontVariantNumeric: 'tabular-nums',
+                letterSpacing: '0.02em',
                 fontSize: 11,
                 color: 'var(--text-muted)',
               }}
