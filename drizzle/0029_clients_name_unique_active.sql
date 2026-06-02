@@ -1,24 +1,54 @@
 -- Enforce: two active clients can't share a name.
 --
--- The OS quick-create modal had no busy guard and the server action had no
--- de-dup check, so a double-submit (or two operators racing) could insert
--- two clients with the same name. The app-side fix prevents the common
--- case; this index closes the race window at the database.
+-- Step 1: clean up existing duplicates. Inside each set of active
+--   clients sharing a lower(name), keep the oldest row (smallest
+--   `created_at`; tie-break on `id`) and archive every other. We use
+--   the regular soft-archive path (`is_archived = true`, `archived_at`
+--   set, `archived_by` left NULL to mark "system / migration") so the
+--   rows stay recoverable — to find what this migration touched:
 --
--- Partial on (lower(name)) so:
---   - matches the app-side check, which compares with `lower(name)`
---   - only active rows are constrained (archived + soft-deleted rows can
---     keep the name they had, and a freed name is reusable)
+--     SELECT id, name, archived_at FROM clients
+--     WHERE archived_by IS NULL
+--       AND archived_at >= '2026-06-02'::date;
 --
--- If this migration fails with "could not create unique index ... contains
--- duplicate values", surface the offenders with:
---
---   SELECT lower(name) AS n, array_agg(id) AS ids, count(*) AS c
---   FROM clients
---   WHERE deleted_at IS NULL AND is_archived = false
---   GROUP BY 1 HAVING count(*) > 1;
---
--- …then archive or rename one of each pair before re-running.
+-- Step 2: create the partial unique index. lower(name) so the check
+--   matches the app-side de-dup in `createClient`; partial on
+--   active-only rows so archived/deleted clients can keep their names
+--   and a freed name remains reusable.
+
+DO $$
+DECLARE
+  archived_count integer;
+BEGIN
+  WITH ranked AS (
+    SELECT
+      id,
+      row_number() OVER (
+        PARTITION BY lower(name)
+        ORDER BY created_at ASC, id ASC
+      ) AS rn
+    FROM clients
+    WHERE deleted_at IS NULL AND is_archived = false
+  ),
+  to_archive AS (
+    SELECT id FROM ranked WHERE rn > 1
+  )
+  UPDATE clients c
+  SET
+    is_archived = true,
+    archived_at = now(),
+    updated_at = now()
+  FROM to_archive
+  WHERE c.id = to_archive.id;
+
+  GET DIAGNOSTICS archived_count = ROW_COUNT;
+  IF archived_count > 0 THEN
+    RAISE NOTICE
+      'clients_name_unique_active: auto-archived % duplicate active client(s); kept the oldest in each group',
+      archived_count;
+  END IF;
+END $$;
+--> statement-breakpoint
 
 CREATE UNIQUE INDEX IF NOT EXISTS clients_name_unique_active
   ON clients (lower(name))
