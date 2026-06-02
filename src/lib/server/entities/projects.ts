@@ -318,6 +318,10 @@ export type ProjectListRow = {
   name: string;
   clientId: string;
   clientName: string;
+  /** True when the linked client is archived or soft-deleted. UI uses this
+   * to append an "(ex-client)" suffix so the rendered project list still
+   * works even after the client is gone from the active directory. */
+  clientArchived: boolean;
   leadEmployeeId: string | null;
   leadName: string | null;
   status: ProjectStatus;
@@ -336,6 +340,8 @@ export async function listAllProjects(): Promise<readonly ProjectListRow[]> {
       name: projects.name,
       clientId: projects.clientId,
       clientName: clients.name,
+      clientIsArchived: clients.isArchived,
+      clientDeletedAt: clients.deletedAt,
       leadEmployeeId: projects.leadEmployeeId,
       leadName: sql<
         string | null
@@ -359,6 +365,7 @@ export async function listAllProjects(): Promise<readonly ProjectListRow[]> {
       name: r.name,
       clientId: r.clientId,
       clientName: r.clientName ?? '—',
+      clientArchived: Boolean(r.clientIsArchived) || r.clientDeletedAt !== null,
       leadEmployeeId: r.leadEmployeeId,
       leadName: r.leadName,
       status: r.status,

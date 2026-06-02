@@ -23,6 +23,8 @@ export type Project = {
   name: string;
   clientId: string;
   clientName: string;
+  /** Linked client is archived or soft-deleted. UI suffixes "(ex-client)". */
+  clientArchived?: boolean;
   status: ProjectStatus;
   /** Raw DB enum — fed to the inline status changer so the dropdown reflects
    *  the underlying state rather than the collapsed UI label. */

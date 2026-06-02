@@ -518,6 +518,8 @@ export async function listProjectTransactions(projectId: string): Promise<Projec
         state: invoices.state,
         clientId: invoices.clientId,
         clientName: clients.name,
+        clientArchived: clients.isArchived,
+        clientDeletedAt: clients.deletedAt,
         notes: invoices.notes,
       })
       .from(invoices)
@@ -533,6 +535,8 @@ export async function listProjectTransactions(projectId: string): Promise<Projec
         state: bills.state,
         vendorId: bills.vendorId,
         vendorName: vendors.name,
+        vendorArchived: vendors.isArchived,
+        vendorDeletedAt: vendors.deletedAt,
         notes: bills.notes,
       })
       .from(bills)
@@ -550,6 +554,8 @@ export async function listProjectTransactions(projectId: string): Promise<Projec
         vendorId: officeExpenses.vendorId,
         vendorName: officeExpenses.vendorName,
         vendorDirectoryName: vendors.name,
+        vendorArchived: vendors.isArchived,
+        vendorDeletedAt: vendors.deletedAt,
       })
       .from(officeExpenses)
       .leftJoin(vendors, eq(vendors.id, officeExpenses.vendorId))
@@ -565,7 +571,12 @@ export async function listProjectTransactions(projectId: string): Promise<Projec
     amount: r.capturedTotalPaise,
     status: mapInvoiceState(r.state),
     counterparty: r.clientName
-      ? { type: 'client' as const, id: r.clientId, label: r.clientName }
+      ? {
+          type: 'client' as const,
+          id: r.clientId,
+          label: r.clientName,
+          archived: Boolean(r.clientArchived) || r.clientDeletedAt !== null,
+        }
       : null,
     memo: r.notes,
   }));
@@ -578,7 +589,12 @@ export async function listProjectTransactions(projectId: string): Promise<Projec
     amount: r.capturedTotalPaise,
     status: mapBillState(r.state),
     counterparty: r.vendorName
-      ? { type: 'vendor' as const, id: r.vendorId, label: r.vendorName }
+      ? {
+          type: 'vendor' as const,
+          id: r.vendorId,
+          label: r.vendorName,
+          archived: Boolean(r.vendorArchived) || r.vendorDeletedAt !== null,
+        }
       : null,
     memo: r.notes,
   }));
@@ -592,7 +608,12 @@ export async function listProjectTransactions(projectId: string): Promise<Projec
     status: mapOfficeExpenseStatus(r.status),
     counterparty:
       r.vendorId && r.vendorDirectoryName
-        ? { type: 'vendor' as const, id: r.vendorId, label: r.vendorDirectoryName }
+        ? {
+            type: 'vendor' as const,
+            id: r.vendorId,
+            label: r.vendorDirectoryName,
+            archived: Boolean(r.vendorArchived) || r.vendorDeletedAt !== null,
+          }
         : null,
     memo: r.vendorName ? `${r.description} · ${r.vendorName}` : r.description,
   }));

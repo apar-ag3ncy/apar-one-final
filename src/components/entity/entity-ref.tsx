@@ -29,6 +29,13 @@ export type EntityRefProps = {
   /** Hide the leading icon. */
   hideIcon?: boolean;
   /**
+   * The referenced entity has been archived or soft-deleted. When true we
+   * append an "(ex-{type})" suffix in muted text so the row keeps reading
+   * cleanly. The link itself stays clickable — the entity record still
+   * exists, just not in the active directory.
+   */
+  archived?: boolean;
+  /**
    * Navigation callback. If omitted, the component renders a non-interactive
    * span (read-only reference). Dashboard passes `(t) => router.push(...)`;
    * OS passes `(t) => openWindow(t)`.
@@ -37,6 +44,15 @@ export type EntityRefProps = {
   /** Provide a hover-card body (e.g. <EntityHoverCard />). */
   hoverBody?: React.ReactNode;
   className?: string;
+};
+
+const EX_SUFFIX: Record<EntityType, string> = {
+  client: '(ex-client)',
+  vendor: '(ex-vendor)',
+  employee: '(former employee)',
+  project: '(archived project)',
+  transaction: '(reversed)',
+  document: '(archived)',
 };
 
 /**
@@ -55,6 +71,7 @@ export function EntityRef({
   label,
   tab,
   hideIcon,
+  archived,
   onNavigate,
   className,
 }: EntityRefProps) {
@@ -63,7 +80,10 @@ export function EntityRef({
   const inner = (
     <>
       {!hideIcon ? <Icon className="size-3.5 shrink-0 opacity-70" aria-hidden /> : null}
-      <span className="truncate">{label}</span>
+      <span className="truncate">
+        {label}
+        {archived ? <span className="text-muted-foreground ml-1">{EX_SUFFIX[type]}</span> : null}
+      </span>
     </>
   );
   const base = 'inline-flex items-center gap-1.5 text-sm';

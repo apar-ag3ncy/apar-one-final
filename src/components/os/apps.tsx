@@ -48,7 +48,7 @@ import {
   type ProjectListRow,
 } from '@/lib/server/entities/projects';
 import { createVendor } from '@/lib/server/entities/vendors';
-import { createClient } from '@/lib/server/entities/clients';
+import { archiveClient, createClient } from '@/lib/server/entities/clients';
 import { createEmployee } from '@/lib/server/entities/employees';
 import { listEmployeeOptions, type EntityOption } from '@/lib/server/entities/options';
 import {
@@ -196,7 +196,7 @@ export function ClientsApp({
   canEdit?: boolean;
   canDelete?: boolean;
 }) {
-  const { updateClient, removeClient } = useBusinessData();
+  const { updateClient } = useBusinessData();
   const [search, setSearch] = useState('');
   const [showNew, setShowNew] = useState(false);
   const [editing, setEditing] = useState<Client | null>(null);
@@ -212,23 +212,28 @@ export function ClientsApp({
 
   async function fetchClientList(): Promise<readonly Client[]> {
     const rows = await listDbClients();
-    return rows.map(
-      (r): Client => ({
-        id: r.id,
-        name: r.name,
-        industry: r.industry || '—',
-        status: DB_TO_OS_CLIENT_STATUS[r.status] ?? 'Active',
-        manager: r.accountManager || '—',
-        activity: r.lastActivityAt
-          ? new Date(r.lastActivityAt).toLocaleDateString('en-IN', {
-              day: '2-digit',
-              month: 'short',
-            })
-          : '—',
-        logo: logoForName(r.name),
-        tone: toneForName(r.name),
-      }),
-    );
+    return rows
+      // Archived clients drop out of the active directory but stay
+      // queryable from anywhere they're referenced (projects, txns,
+      // invoices) where the UI renders them as "<name> (ex-client)".
+      .filter((r) => r.status !== 'archived')
+      .map(
+        (r): Client => ({
+          id: r.id,
+          name: r.name,
+          industry: r.industry || '—',
+          status: DB_TO_OS_CLIENT_STATUS[r.status] ?? 'Active',
+          manager: r.accountManager || '—',
+          activity: r.lastActivityAt
+            ? new Date(r.lastActivityAt).toLocaleDateString('en-IN', {
+                day: '2-digit',
+                month: 'short',
+              })
+            : '—',
+          logo: logoForName(r.name),
+          tone: toneForName(r.name),
+        }),
+      );
   }
 
   useEffect(() => {
@@ -344,8 +349,11 @@ export function ClientsApp({
                       <button
                         className="btn row-action row-delete"
                         type="button"
-                        title="Delete client"
-                        onClick={() => setConfirmDel(c)}
+                        title="Archive client"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setConfirmDel(c);
+                        }}
                       >
                         <Icon name="trash" size={12} />
                       </button>
@@ -407,14 +415,22 @@ export function ClientsApp({
       )}
       {confirmDel && (
         <ConfirmDialog
-          title={`Delete ${confirmDel.name}?`}
-          message={`This removes the client from the directory. Projects and ledger entries that reference "${confirmDel.name}" stay intact but become orphaned.`}
+          title={`Archive ${confirmDel.name}?`}
+          message={`Hides "${confirmDel.name}" from the active directory. Projects, transactions, and invoices that reference this client are kept intact and will display "${confirmDel.name} (ex-client)". A partner can restore the client later.`}
           destructive
-          confirmLabel="Delete client"
+          confirmLabel="Archive client"
           onCancel={() => setConfirmDel(null)}
-          onConfirm={() => {
-            removeClient(confirmDel.id);
+          onConfirm={async () => {
+            const target = confirmDel;
             setConfirmDel(null);
+            try {
+              await archiveClient(target.id);
+              const next = await fetchClientList().catch(() => null);
+              if (next) setDbClients(next);
+              toast.success(`Archived "${target.name}".`);
+            } catch (e) {
+              toast.error(e instanceof Error ? e.message : 'Could not archive the client.');
+            }
           }}
         />
       )}
@@ -588,7 +604,7 @@ export function ClientDetail({
   canDelete?: boolean;
   onCloseWindow?: () => void;
 }) {
-  const { data, updateClient, removeClient, addProject } = useBusinessData();
+  const { data, updateClient, addProject } = useBusinessData();
   // Prefer the live store entry so edits reflect immediately.
   const client = data.clients.find((c) => c.id === clientProp.id) ?? clientProp;
   const [tab, setTab] = useState<ClientTab>('Overview');
@@ -669,10 +685,10 @@ export function ClientDetail({
               className="btn"
               type="button"
               onClick={() => setConfirmDel(true)}
-              title="Delete client"
+              title="Archive client"
             >
               <Icon name="trash" size={13} />
-              Delete
+              Archive
             </button>
           )}
           {canEdit && tab === 'Contacts' && (
@@ -959,15 +975,20 @@ export function ClientDetail({
       )}
       {confirmDel && (
         <ConfirmDialog
-          title={`Delete ${client.name}?`}
-          message="Removes the client from the directory. This window will close. Linked projects and ledger entries are kept but become orphaned."
+          title={`Archive ${client.name}?`}
+          message={`Hides "${client.name}" from the active directory and closes this window. Projects, transactions, and invoices that reference this client are kept intact and will display "${client.name} (ex-client)". A partner can restore the client later.`}
           destructive
-          confirmLabel="Delete client"
+          confirmLabel="Archive client"
           onCancel={() => setConfirmDel(false)}
-          onConfirm={() => {
-            removeClient(client.id);
+          onConfirm={async () => {
             setConfirmDel(false);
-            onCloseWindow?.();
+            try {
+              await archiveClient(client.id);
+              toast.success(`Archived "${client.name}".`);
+              onCloseWindow?.();
+            } catch (e) {
+              toast.error(e instanceof Error ? e.message : 'Could not archive the client.');
+            }
           }}
         />
       )}
@@ -2409,6 +2430,7 @@ export function ProjectsApp({
       code: r.code ?? r.id.slice(0, 8),
       name: r.name,
       client: r.clientName,
+      clientArchived: r.clientArchived,
       lead: r.leadName ? initials(r.leadName) : '—',
       col: dbStatusToCol(r.status),
       fee: r.feePaise,
@@ -2626,7 +2648,12 @@ export function ProjectsApp({
                     >
                       {p.lead}
                     </div>
-                    <span>{p.client.split(' ').slice(0, 2).join(' ')}</span>
+                    <span>
+                      {p.client.split(' ').slice(0, 2).join(' ')}
+                      {p.clientArchived ? (
+                        <span style={{ color: 'var(--text-dim)', marginLeft: 4 }}>(ex-client)</span>
+                      ) : null}
+                    </span>
                     <div className="grow" />
                     <span style={{ fontVariantNumeric: 'tabular-nums', color: 'var(--text)' }}>
                       {formatINR(p.fee)}
