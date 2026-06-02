@@ -515,6 +515,19 @@ export async function createClient(input: CreateClientInput): Promise<CreateClie
 
     return { ok: true, id: newId };
   } catch (e) {
+    // Unique violation on the partial index `clients_name_unique_active`
+    // (migration 0029). Reached only when two concurrent inserts both
+    // pass the app-side pre-check; surface it as a `name` field error
+    // so the form highlights the right input.
+    const code =
+      typeof e === 'object' && e !== null && 'code' in e ? (e as { code?: unknown }).code : null;
+    if (code === '23505') {
+      return {
+        ok: false,
+        message: `A client named "${v.name}" already exists.`,
+        errors: { name: 'A client with this name already exists.' },
+      };
+    }
     const message =
       e instanceof AppError
         ? e.message
