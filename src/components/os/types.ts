@@ -121,6 +121,9 @@ export type Project = {
   code: string;
   name: string;
   client: string;
+  /** True when the linked client is archived / soft-deleted. UI appends
+   *  "(ex-client)" so a removed client doesn't break the project view. */
+  clientArchived?: boolean;
   lead: string;
   col: 'Proposed' | 'Active' | 'Review' | 'Completed';
   fee: Paise;

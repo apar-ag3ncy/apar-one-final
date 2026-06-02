@@ -61,6 +61,9 @@ export const projectColumns: ColumnDef<Project>[] = [
     cell: ({ row }) => (
       <Link href={`/clients/${row.original.clientId}`} className="hover:underline">
         {row.original.clientName}
+        {row.original.clientArchived ? (
+          <span className="text-muted-foreground ml-1">(ex-client)</span>
+        ) : null}
       </Link>
     ),
   },

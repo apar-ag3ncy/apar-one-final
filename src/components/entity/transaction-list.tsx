@@ -64,6 +64,10 @@ export type TransactionCounterparty = {
   type: 'client' | 'vendor' | 'employee' | 'project';
   id: string;
   label: string;
+  /** True when the referenced entity has been archived or soft-deleted.
+   *  EntityRef appends an "(ex-{type})" suffix so the row keeps reading
+   *  cleanly even after the counterparty is gone from the active list. */
+  archived?: boolean;
 };
 
 export type Transaction = {
@@ -315,6 +319,7 @@ export function TransactionList({
                         type={t.counterparty.type}
                         id={t.counterparty.id}
                         label={t.counterparty.label}
+                        archived={t.counterparty.archived}
                         onNavigate={onNavigate}
                       />
                     ) : (
