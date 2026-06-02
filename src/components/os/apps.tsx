@@ -439,7 +439,7 @@ function ClientFormModal({
   mode: 'create' | 'edit';
   initial?: Partial<Client>;
   onClose: () => void;
-  onSubmit: (input: ClientFormValues) => void;
+  onSubmit: (input: ClientFormValues) => void | Promise<void>;
 }) {
   const [name, setName] = useState(initial?.name ?? '');
   const [industry, setIndustry] = useState(initial?.industry ?? '');
@@ -447,6 +447,7 @@ function ClientFormModal({
   const [status, setStatus] = useState(initial?.status ?? CLIENT_STATUSES[0]!);
   const [logo, setLogo] = useState(initial?.logo ?? '');
   const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
   const nameRef = useRef<HTMLInputElement | null>(null);
 
   // Real team members for the Account-manager picker (was a static seed).
@@ -468,18 +469,25 @@ function ClientFormModal({
     };
   }, []);
 
-  const submit = (e: FormEvent) => {
+  const submit = async (e: FormEvent) => {
     e.preventDefault();
+    if (busy) return;
     const n = name.trim();
     if (!n) return setErr('Client name is required.');
     if (!industry.trim()) return setErr('Industry is required.');
-    onSubmit({
-      name: n,
-      industry: industry.trim(),
-      manager: manager.trim() || 'Unassigned',
-      status,
-      logo: logo.trim() || undefined,
-    });
+    setErr(null);
+    setBusy(true);
+    try {
+      await onSubmit({
+        name: n,
+        industry: industry.trim(),
+        manager: manager.trim() || 'Unassigned',
+        status,
+        logo: logo.trim() || undefined,
+      });
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -533,12 +541,12 @@ function ClientFormModal({
         </Field>
         {err && <div className="os-form-error">{err}</div>}
         <div className="os-form-actions">
-          <button type="button" className="btn" onClick={onClose}>
+          <button type="button" className="btn" onClick={onClose} disabled={busy}>
             Cancel
           </button>
-          <button type="submit" className="btn primary">
+          <button type="submit" className="btn primary" disabled={busy}>
             <Icon name="check" size={13} />
-            {mode === 'create' ? 'Create client' : 'Save changes'}
+            {busy ? 'Saving…' : mode === 'create' ? 'Create client' : 'Save changes'}
           </button>
         </div>
       </form>
