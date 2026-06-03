@@ -182,17 +182,33 @@
   border-bottom: 1px solid var(--menubar-border);
   user-select: none;
 }
+/* The wordmark is now an inline brand image — both variants ship
+   and we toggle them based on `data-theme` so the SVG always
+   contrasts with the menubar surface. */
 .os-root .menubar .wordmark {
-  font-family: var(--os-font);
-  font-weight: 600;
-  font-size: 15px;
-  letter-spacing: 0.08em;
-  color: var(--apar-red);
-  text-transform: uppercase;
-  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  height: 16px;
   padding-right: 14px;
   margin-right: 10px;
   border-right: 1px solid var(--menubar-border);
+  line-height: 1;
+}
+.os-root .menubar .wordmark-img {
+  display: block;
+  height: 16px;
+  width: auto;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+.os-root .menubar .wordmark-img--dark {
+  display: none;
+}
+.os-root[data-theme='dark'] .menubar .wordmark-img--light {
+  display: none;
+}
+.os-root[data-theme='dark'] .menubar .wordmark-img--dark {
+  display: block;
 }
 .os-root .menubar .active-app {
   font-weight: 600;
@@ -271,6 +287,22 @@
   font-size: 10px;
   color: #fff;
   letter-spacing: 0.02em;
+}
+/* Admin / super-admin avatars render the red-bg brand mark instead of
+   coloured initials. Image fills the circle, sized off the parent so
+   the same rule works in the menubar (22px) and anywhere else. */
+.os-root .avatar.avatar-mark {
+  background: var(--apar-red);
+  overflow: hidden;
+  padding: 0;
+}
+.os-root .avatar.avatar-mark img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+  user-select: none;
+  -webkit-user-drag: none;
 }
 
 /* Desktop icons */
@@ -1094,6 +1126,19 @@
   letter-spacing: -0.018em;
   margin-bottom: 6px;
   color: #fff;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.os-root .welcome-hint-wordmark {
+  display: inline-block;
+  height: 0.85em;
+  width: auto;
+  vertical-align: -0.05em;
+  user-select: none;
+  -webkit-user-drag: none;
 }
 .os-root .welcome-hint kbd {
   font-family: var(--os-font);
@@ -1165,13 +1210,13 @@
 .os-root .mobile-fallback .inner {
   max-width: 340px;
 }
-.os-root .mobile-fallback h1 {
-  font-family: var(--os-font);
-  font-weight: 500;
-  font-size: 56px;
-  color: var(--apar-red);
-  margin: 0 0 10px;
-  letter-spacing: -0.02em;
+.os-root .mobile-fallback-logo {
+  display: block;
+  width: min(220px, 70vw);
+  height: auto;
+  margin: 0 auto 18px;
+  user-select: none;
+  -webkit-user-drag: none;
 }
 .os-root .mobile-fallback p {
   color: #bfb1a8;
@@ -1504,6 +1549,18 @@
   letter-spacing: 0.02em;
   box-shadow: 0 10px 28px -8px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.35);
   border: 1px solid rgba(255, 255, 255, 0.18);
+  overflow: hidden;
+}
+.os-root .lock-screen__user-avatar.is-mark {
+  background: var(--apar-red);
+}
+.os-root .lock-screen__user-avatar.is-mark img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+  user-select: none;
+  -webkit-user-drag: none;
 }
 .os-root .lock-screen__user.is-selected .lock-screen__user-avatar {
   outline: 2px solid rgba(255, 255, 255, 0.9);
@@ -1537,6 +1594,18 @@
   box-shadow:
     0 28px 60px -16px rgba(0, 0, 0, 0.7),
     inset 0 1px 0 rgba(255, 255, 255, 0.32);
+  overflow: hidden;
+}
+.os-root .lock-screen__avatar.is-mark {
+  background: var(--apar-red);
+}
+.os-root .lock-screen__avatar.is-mark img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+  user-select: none;
+  -webkit-user-drag: none;
 }
 
 .os-root .lock-screen__greeting {

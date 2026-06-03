@@ -92,7 +92,12 @@ export function OsRoot() {
       <div className="os-root">
         <div className="mobile-fallback">
           <div className="inner">
-            <h1>अपār</h1>
+            <img
+              src="/brand/apar-white.svg"
+              alt="Apār"
+              className="mobile-fallback-logo"
+              draggable={false}
+            />
             <p>
               Apār One is a desktop workspace. Please open this on a screen at least 1024px wide for
               the full experience.
@@ -699,7 +704,16 @@ function Desktop({ signOut }: { signOut: () => void }) {
       {/* Welcome hint — shows only on first paint after a clean sign-in. */}
       {showHint && windows.length === 0 && (
         <div className="welcome-hint">
-          <div className="big">Welcome to अपār ONE</div>
+          <div className="big">
+            Welcome to{' '}
+            <img
+              src="/brand/apar-white.svg"
+              alt="Apār"
+              className="welcome-hint-wordmark"
+              draggable={false}
+            />{' '}
+            One
+          </div>
           <div>
             {visibleApps.length === 0 ? (
               <>You don&apos;t have access to any apps yet — ask the operator for permission.</>

@@ -109,7 +109,23 @@ export function MenuBar({
 
   return (
     <div className="menubar">
-      <div className="wordmark">अपār</div>
+      <div className="wordmark" aria-label="Apār">
+        {/* Both wordmark variants are shipped; os.css toggles them on
+            `.os-root[data-theme='dark']`. */}
+        <img
+          src="/brand/apar-orange.svg"
+          alt="Apār"
+          className="wordmark-img wordmark-img--light"
+          draggable={false}
+        />
+        <img
+          src="/brand/apar-white.svg"
+          alt=""
+          aria-hidden
+          className="wordmark-img wordmark-img--dark"
+          draggable={false}
+        />
+      </div>
       <span className="active-app">{activeApp?.name ?? 'Finder'}</span>
       {Object.keys(items).map((k) => (
         <div
@@ -190,9 +206,15 @@ export function MenuBar({
             setOpen(null);
           }}
         >
-          <div className="avatar" style={{ background: user.tone }}>
-            {initials(user.fullName)}
-          </div>
+          {user.role === 'super_admin' || user.role === 'admin' ? (
+            <div className="avatar avatar-mark" aria-label={user.fullName}>
+              <img src="/brand/apar-mark.png" alt="" draggable={false} />
+            </div>
+          ) : (
+            <div className="avatar" style={{ background: user.tone }}>
+              {initials(user.fullName)}
+            </div>
+          )}
           <span>{user.fullName.split(' ')[0]}</span>
           {userMenuOpen && (
             <div className="mb-dropdown menubar-user-dropdown" onClick={(e) => e.stopPropagation()}>
