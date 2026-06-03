@@ -165,6 +165,22 @@ export function VendorBillForm({ vendors, clients, projects }: VendorBillFormPro
 
   return (
     <div className="space-y-4">
+      <Card className="border-amber-200 bg-amber-50/40 dark:border-amber-900 dark:bg-amber-950/30">
+        <CardContent className="py-3 text-sm">
+          <p className="font-medium">Typed vendor-bill form coming in a follow-up</p>
+          <p className="text-muted-foreground mt-1 text-xs">
+            The real backend needs a per-kind typed input with attribution (client / opex / asset),
+            line items with paise bigints + GST captured per line, optional TDS section, and an
+            attached source document. The typed form ships in a follow-up. To record a vendor bill
+            now, use the{' '}
+            <a className="underline" href="/ledger/new/journal-voucher">
+              Journal Voucher
+            </a>{' '}
+            — it accepts any debit/credit pair against the real chart of accounts and posts to the
+            live ledger immediately.
+          </p>
+        </CardContent>
+      </Card>
       {/* Step 1: Vendor */}
       <Card>
         <CardHeader>

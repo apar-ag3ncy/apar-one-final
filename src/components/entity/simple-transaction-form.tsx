@@ -167,6 +167,22 @@ export function SimpleTransactionForm({
 
   return (
     <div className="space-y-4">
+      <Card className="border-amber-200 bg-amber-50/40 dark:border-amber-900 dark:bg-amber-950/30">
+        <CardContent className="py-3 text-sm">
+          <p className="font-medium">Typed-input form coming in a follow-up</p>
+          <p className="text-muted-foreground mt-1 text-xs">
+            This form still uses the legacy flat-payload shape — the real backend needs a per-kind
+            typed input (line items with paise bigints, real entity UUIDs for clients / vendors /
+            bank accounts, an attached source document). The typed form ships in a follow-up. To
+            record this transaction now, use the{' '}
+            <a className="underline" href="/ledger/new/journal-voucher">
+              Journal Voucher
+            </a>{' '}
+            — it accepts any debit/credit pair against the real chart of accounts and posts to the
+            live ledger immediately.
+          </p>
+        </CardContent>
+      </Card>
       <Card>
         <CardHeader>
           {title ? <CardTitle className="text-base">{title}</CardTitle> : null}

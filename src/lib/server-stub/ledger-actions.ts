@@ -383,11 +383,12 @@ export async function createDraftTransaction(input: {
     {
       id: 'f0',
       severity: 'block',
-      code: 'legacy_form_shape',
+      code: 'typed_form_pending',
       message:
-        'This form still uses the legacy flat-payload shape. The real backend expects ' +
-        'a per-kind discriminated union; the form rewrite ships in P1.1b. ' +
-        'Posting is blocked until then.',
+        'The typed-input form for this transaction kind hasn’t shipped yet. To record this ' +
+        'transaction today, use the Journal Voucher (/ledger/new/journal-voucher) — it accepts ' +
+        'any debit/credit pair against the real chart of accounts and posts to the live ledger. ' +
+        'The typed form will ship in a follow-up that replaces this banner with the proper UI.',
     },
   ];
   // Keep the original demo-time block flags so the existing flag-display

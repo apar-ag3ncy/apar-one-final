@@ -19,7 +19,7 @@ import { StatusBadge } from '@/components/shared/status-badge';
 import { CurrencyInput } from '@/components/shared/currency-input';
 import { formatINR } from '@/components/shared/format-inr';
 import {
-  createDraftTransaction,
+  createDraftTransactionTyped,
   getChartOfAccounts,
   postTransaction,
 } from '@/lib/server-stub/ledger-actions';
@@ -75,18 +75,32 @@ export function JournalVoucherForm() {
     setAcked(new Set());
     setPostMessage(null);
     startTransition(async () => {
-      const result = await createDraftTransaction({
-        kind: 'journal_voucher',
-        reason,
-        lines: lines
-          .filter((l) => l.accountCode)
-          .map((l) => ({
-            description: l.description,
-            quantity: 1,
-            unitPricePaise: l.debit > 0n ? l.debit : l.credit,
-          })),
-      });
-      setDraft({ id: result.draftId, flags: result.flags });
+      try {
+        // Generate an externalRef from the date — JV-YYYY-MM-DD-XXXX —
+        // which the `external_ref_clash` validation will block if a
+        // duplicate already exists for that day.
+        const externalRef = `JV-${date}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+        const result = await createDraftTransactionTyped({
+          kind: 'journal',
+          input: {
+            externalRef,
+            txnDate: date,
+            journalReason: reason,
+            legs: lines
+              .filter((l) => l.accountCode && (l.debit > 0n || l.credit > 0n))
+              .map((l) => ({
+                accountCode: l.accountCode,
+                side: l.debit > 0n ? ('debit' as const) : ('credit' as const),
+                amountPaise: l.debit > 0n ? l.debit : l.credit,
+              })),
+            isOpeningBalance: false,
+            notes: null,
+          },
+        });
+        setDraft({ id: result.transactionId, flags: result.flags });
+      } catch (e) {
+        setPostMessage(e instanceof Error ? e.message : 'Could not create draft.');
+      }
     });
   }
 
