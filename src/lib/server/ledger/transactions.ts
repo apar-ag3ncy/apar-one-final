@@ -6,9 +6,10 @@ import { logActivity } from '@/lib/activity';
 import { logAudit } from '@/lib/audit';
 import { db, type DbClient } from '@/lib/db/client';
 import { accounts } from '@/lib/db/schema/accounts';
+import { periods } from '@/lib/db/schema/periods';
 import { postings, transactions } from '@/lib/db/schema/transactions';
 import { AppError } from '@/lib/errors';
-import { requireCapability, type CurrentUserContext } from '@/lib/rbac';
+import { hasCapability, requireCapability, type CurrentUserContext } from '@/lib/rbac';
 
 import { runValidations } from './validation';
 import type { PostingTemplateResult } from './types';
@@ -188,6 +189,7 @@ export async function postTransaction(
         kind: transactions.kind,
         onBehalfOfClientId: transactions.onBehalfOfClientId,
         paidToVendorId: transactions.paidToVendorId,
+        periodId: transactions.periodId,
       })
       .from(transactions)
       .where(eq(transactions.id, args.transactionId))
@@ -199,6 +201,44 @@ export async function postTransaction(
       throw new AppError(
         'ledger.posted_immutable',
         `transaction ${args.transactionId} is ${row.status}, not draft`,
+      );
+    }
+
+    // P1.2 — period close enforcement. `period_id` is populated by the
+    // tg_assign_transaction_period trigger on insert (drizzle/0007). A
+    // missing period_id means the trigger refused — surface that, but
+    // it should never happen because the trigger raises on insert.
+    if (!row.periodId) {
+      throw new AppError(
+        'ledger.period_closed',
+        `transaction ${args.transactionId} has no period assigned`,
+      );
+    }
+    const [period] = await tx
+      .select({ id: periods.id, status: periods.status, fiscalYear: periods.fiscalYear, month: periods.month })
+      .from(periods)
+      .where(eq(periods.id, row.periodId))
+      .limit(1);
+    if (!period) {
+      throw new AppError(
+        'ledger.period_closed',
+        `period ${row.periodId} not found for transaction ${args.transactionId}`,
+      );
+    }
+    if (period.status === 'closed') {
+      throw new AppError(
+        'ledger.period_closed',
+        `Period FY${period.fiscalYear}-${String(period.month).padStart(2, '0')} is hard-closed; ` +
+          `reopen it before posting into it.`,
+        { detail: { periodId: period.id, status: period.status } },
+      );
+    }
+    if (period.status === 'soft_closed' && !hasCapability(ctx, 'close_period')) {
+      throw new AppError(
+        'ledger.period_closed',
+        `Period FY${period.fiscalYear}-${String(period.month).padStart(2, '0')} is soft-closed; ` +
+          `posting into it requires the close_period capability (admins/partners).`,
+        { detail: { periodId: period.id, status: period.status } },
       );
     }
 

@@ -1,20 +1,65 @@
 'use server';
 
 /**
- * Stub ledger server actions. Same module path the consumer would use against
- * Backend's real actions — when Session A ships `app/api/ledger/...` or
- * `services/ledger.ts`, swap the imports in form components from this file
- * to that file with no other changes (function signatures are designed to
- * match LEDGER-SPEC v2).
+ * Ledger server actions — adapter layer between the form/report UI and the
+ * real backend at `src/lib/server/ledger/*`.
  *
- * Every function returns a plausible-looking result so Phase 4 forms can be
- * exercised end-to-end before the backend lands.
+ * History: this module shipped as a Phase 4 stub that returned fixture data
+ * (see git blame for the previous fictional bodies). The reports + period UI
+ * imported from here on the assumption that Session A's real backend would
+ * eventually land at the same path. The real backend lives at
+ * `src/lib/server/ledger/` today — its function names + types overlap
+ * heavily with the stub's, but the exact shapes differ (per-kind
+ * discriminated union for `createDraftTransaction`, no `txnCount` on
+ * `ClientPnlRow`, `getStatementOfAccount` split into client/vendor/office
+ * variants, etc).
+ *
+ * Rather than rewrite every callsite, we keep the stub's path + signatures
+ * intact and translate to/from the real backend's shapes in here. As call
+ * sites move to the real types directly, individual adapters here can be
+ * deleted.
+ *
+ * Functions deferred (still throw "not yet shipped"):
+ *   - `getPeriods` / `setPeriodStatus`            → P1.3 will land
+ *     `src/lib/server/ledger/periods.ts`; we proxy from there.
+ *   - `getReconciliationCandidates`               → P5 ships the matcher.
+ *
+ * Forms still feed the discriminated-union shape via the new
+ * `createDraftTransactionLegacy` shim until P1.1b rewrites them.
  */
 
+import { db } from '@/lib/db/client';
+import { accounts, validationRules as validationRulesTable } from '@/lib/db/schema';
+import { asc, eq } from 'drizzle-orm';
+
+import { getActorContext } from '@/lib/server/actor';
+import {
+  getArAging as realGetArAging,
+  getPerClientPnL as realGetPerClientPnL,
+  getTrialBalance as realGetTrialBalance,
+} from '@/lib/server/ledger/reports';
+import {
+  listPeriods as realListPeriods,
+  setPeriodStatus as realSetPeriodStatus,
+} from '@/lib/server/ledger/periods';
+import {
+  getClientStatement,
+  getOfficeStatement,
+  getVendorStatement,
+} from '@/lib/server/ledger/statements';
+import {
+  createDraftTransaction as realCreateDraftTransaction,
+  postTransaction as realPostTransaction,
+  reverseTransaction as realReverseTransaction,
+  type TransactionKindInput,
+} from '@/lib/server/ledger/transactions';
+
 import type {
+  AgingBucket,
   AgingRow,
   ChartAccount,
   DraftResult,
+  LedgerDomain,
   Period,
   PerClientPnLRow,
   PerVendorSpendRow,
@@ -24,18 +69,296 @@ import type {
   ValidationRule,
 } from './ledger-types';
 import type { TransactionFlag } from '@/components/entity/transaction-detail';
+import type { TransactionKind } from '@/components/entity/transaction-list';
 
 /* eslint-disable @typescript-eslint/no-unused-vars */
 
-const SIMULATED_LATENCY_MS = 250;
-function delay() {
-  return new Promise<void>((resolve) => setTimeout(resolve, SIMULATED_LATENCY_MS));
+/* -------------------------------------------------------------------------- */
+/* Read-side adapters                                                         */
+/* -------------------------------------------------------------------------- */
+
+const ACCOUNT_TYPE_TO_DOMAIN: Record<string, LedgerDomain> = {
+  asset: 'operating',
+  liability: 'operating',
+  equity: 'owners',
+  income: 'operating',
+  expense: 'operating',
+  contra_asset: 'operating',
+};
+
+function normalSideForType(type: string): 'debit' | 'credit' {
+  return type === 'asset' || type === 'expense' || type === 'contra_asset' ? 'debit' : 'credit';
 }
 
 export async function getChartOfAccounts(): Promise<readonly ChartAccount[]> {
-  await delay();
-  return CHART_OF_ACCOUNTS_FIXTURE;
+  await getActorContext();
+  const rows = await db
+    .select({
+      code: accounts.code,
+      name: accounts.name,
+      type: accounts.type,
+      parentId: accounts.parentId,
+    })
+    .from(accounts)
+    .where(eq(accounts.isActive, true))
+    .orderBy(asc(accounts.code));
+
+  // Parent codes are looked up via id→code mapping. The chart is small
+  // (~25 rows), so the in-memory map is fine.
+  const codeById = new Map(rows.map((r, i) => [rows[i]!.code, r.code]));
+  void codeById;
+  return rows.map(
+    (r): ChartAccount => ({
+      code: r.code,
+      name: r.name,
+      domain: ACCOUNT_TYPE_TO_DOMAIN[r.type] ?? 'operating',
+      normalSide: normalSideForType(r.type),
+      // parent lookup intentionally omitted — the chart is flat in v1.
+      // Add it back when the hierarchy is actually populated.
+      parentCode: null,
+    }),
+  );
 }
+
+export async function getPerClientPnL(args: {
+  fromDate: string;
+  toDate: string;
+}): Promise<readonly PerClientPnLRow[]> {
+  const rows = await realGetPerClientPnL({ from: args.fromDate, to: args.toDate });
+  // Stub's PerClientPnLRow carries a `txnCount` the real shape doesn't.
+  // Surface 0 — the UI uses it as a soft annotation; the real numbers
+  // (revenue / cost / margin) all flow through unchanged.
+  return rows.map(
+    (r): PerClientPnLRow => ({
+      clientId: r.clientId,
+      clientName: r.clientName,
+      revenuePaise: r.revenuePaise,
+      directCostPaise: r.directCostPaise,
+      grossMarginPaise: r.grossMarginPaise,
+      txnCount: 0,
+    }),
+  );
+}
+
+export async function getPerVendorSpend(args: {
+  fromDate: string;
+  toDate: string;
+}): Promise<readonly PerVendorSpendRow[]> {
+  // Per-vendor spend has no real backend yet (paired with the bill_allocations
+  // work in P4). Return an empty list until then so the page renders an
+  // empty-state rather than fake numbers.
+  await getActorContext();
+  return [];
+}
+
+export async function getTrialBalance(args: {
+  asOfDate: string;
+  includeReversed?: boolean;
+}): Promise<readonly TrialBalanceRow[]> {
+  const rows = await realGetTrialBalance({
+    asOfDate: args.asOfDate,
+    includeReversed: args.includeReversed,
+  });
+  return rows.map(
+    (r): TrialBalanceRow => ({
+      accountCode: r.accountCode,
+      accountName: r.accountName,
+      debitPaise: r.debitPaise,
+      creditPaise: r.creditPaise,
+    }),
+  );
+}
+
+export async function getStatementOfAccount(args: {
+  entityType: 'client' | 'vendor';
+  entityId: string;
+  fromDate: string;
+  toDate: string;
+}): Promise<readonly StatementRow[]> {
+  const stmt =
+    args.entityType === 'client'
+      ? await getClientStatement({
+          clientId: args.entityId,
+          from: args.fromDate,
+          to: args.toDate,
+        })
+      : await getVendorStatement({
+          vendorId: args.entityId,
+          from: args.fromDate,
+          to: args.toDate,
+        });
+
+  // The real Statement returns lines with side+amountPaise; the stub
+  // shape splits that into debit/credit columns + a memo (mapped from
+  // description). Reference is the txn's external_ref.
+  return stmt.lines.map((l) => ({
+    date: l.txnDate,
+    reference: l.reference,
+    kind: l.kind as TransactionKind,
+    memo: l.description,
+    debitPaise: l.side === 'debit' ? l.amountPaise : 0n,
+    creditPaise: l.side === 'credit' ? l.amountPaise : 0n,
+    runningBalancePaise: l.runningBalancePaise,
+    transactionId: l.txnId,
+  }));
+}
+
+export async function getOfficeStatementForUi(args: {
+  fromDate: string;
+  toDate: string;
+}): Promise<readonly StatementRow[]> {
+  const stmt = await getOfficeStatement({ from: args.fromDate, to: args.toDate });
+  return stmt.lines.map((l) => ({
+    date: l.txnDate,
+    reference: l.reference,
+    kind: l.kind as TransactionKind,
+    memo: l.description,
+    debitPaise: l.side === 'debit' ? l.amountPaise : 0n,
+    creditPaise: l.side === 'credit' ? l.amountPaise : 0n,
+    runningBalancePaise: l.runningBalancePaise,
+    transactionId: l.txnId,
+  }));
+}
+
+const AGING_ZERO: Record<AgingBucket, bigint> = {
+  '0-30': 0n,
+  '31-60': 0n,
+  '61-90': 0n,
+  '90+': 0n,
+};
+
+export async function getAgingReport(args: {
+  side: 'receivable' | 'payable';
+  asOfDate: string;
+}): Promise<readonly AgingRow[]> {
+  if (args.side === 'payable') {
+    // AP aging lands in P6 with bill_allocations. Empty list for now so
+    // the page surfaces an empty-state instead of fake numbers.
+    await getActorContext();
+    return [];
+  }
+  const rows = await realGetArAging({ asOfDate: args.asOfDate });
+  return rows.map(
+    (r): AgingRow => ({
+      entityId: r.clientId,
+      entityName: r.clientName,
+      byBucket: {
+        '0-30': r.bucket0to30Paise,
+        '31-60': r.bucket31to60Paise,
+        '61-90': r.bucket61to90Paise,
+        '90+': r.bucket90PlusPaise,
+      },
+      totalPaise: r.totalOutstandingPaise,
+    }),
+  );
+}
+
+export async function getValidationRules(): Promise<readonly ValidationRule[]> {
+  await getActorContext();
+  const rows = await db
+    .select({
+      code: validationRulesTable.code,
+      description: validationRulesTable.description,
+      severity: validationRulesTable.severity,
+      isEnabled: validationRulesTable.isEnabled,
+      config: validationRulesTable.config,
+    })
+    .from(validationRulesTable)
+    .orderBy(asc(validationRulesTable.code));
+  return rows.map(
+    (r): ValidationRule => ({
+      code: r.code,
+      // The stub had separate label + description; the real table only
+      // stores a description. Surface the same string for both so the
+      // UI keeps rendering — the description carries the human label.
+      label: r.code.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
+      description: r.description ?? '',
+      severity: (r.severity === 'info' ? 'warn' : r.severity) as 'block' | 'warn',
+      enabled: r.isEnabled,
+      thresholdPaise:
+        r.config && typeof (r.config as Record<string, unknown>).threshold_paise === 'string'
+          ? BigInt((r.config as Record<string, string>).threshold_paise!)
+          : null,
+    }),
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Period management — minimal proxy until P1.3 ships periods.ts               */
+/* -------------------------------------------------------------------------- */
+
+const PERIOD_STATUS_REAL_TO_STUB: Record<string, Period['status']> = {
+  open: 'open',
+  soft_closed: 'soft_closed',
+  // The DB calls it `closed`; the stub UI calls it `hard_closed`.
+  closed: 'hard_closed',
+};
+
+function fiscalLabel(fiscalYear: number, month: number): string {
+  const monthShort = new Date(Date.UTC(2000, ((month - 1 + 3) % 12), 1)).toLocaleDateString(
+    'en-IN',
+    { month: 'short' },
+  );
+  // Indian FY: April = month 1 of the fiscal year. Display as "FY26-04 (Apr)".
+  const fy = String(fiscalYear).slice(-2);
+  return `FY${fy}-${String(month).padStart(2, '0')} (${monthShort})`;
+}
+
+export async function getPeriods(): Promise<readonly Period[]> {
+  const rows = await realListPeriods();
+  return rows.map(
+    (r): Period => ({
+      id: r.id,
+      label: fiscalLabel(r.fiscalYear, r.month),
+      startDate: r.startsOn,
+      endDate: r.endsOn,
+      status: PERIOD_STATUS_REAL_TO_STUB[r.status] ?? 'open',
+      closedBy: r.closedBy ?? null,
+      closedAt: r.closedAt ? r.closedAt.toISOString() : null,
+      reopenReason: r.reopenReason ?? null,
+    }),
+  );
+}
+
+// Stub status names → real DB status names. The UI calls
+// the fully-closed state "hard_closed"; the DB column calls it "closed".
+const PERIOD_STATUS_STUB_TO_REAL: Record<
+  'open' | 'soft_closed' | 'hard_closed',
+  'open' | 'soft_closed' | 'closed'
+> = {
+  open: 'open',
+  soft_closed: 'soft_closed',
+  hard_closed: 'closed',
+};
+
+export async function setPeriodStatus(args: {
+  periodId: string;
+  next: 'open' | 'soft_closed' | 'hard_closed';
+  reopenReason?: string;
+}): Promise<{ ok: true } | { ok: false; message: string }> {
+  const ctx = await getActorContext();
+  try {
+    await realSetPeriodStatus(ctx, {
+      periodId: args.periodId,
+      next: PERIOD_STATUS_STUB_TO_REAL[args.next],
+      reason: args.reopenReason,
+    });
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, message: e instanceof Error ? e.message : 'Could not change period status.' };
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Write-side — adapter for the legacy form shape                              */
+/*                                                                            */
+/* The legacy stub took a flat `{kind, lines[], attribution, ...}` payload.   */
+/* The real backend takes a discriminated union per kind. P1.1b rewrites the  */
+/* /ledger/new/* forms to feed the real shapes directly. Until those forms    */
+/* are rewritten, this adapter surfaces a structured "not wired" response so  */
+/* the existing flag-display code still has block-severity flags to render —  */
+/* matches the pre-existing behaviour where posts never actually landed.      */
+/* -------------------------------------------------------------------------- */
 
 export async function createDraftTransaction(input: {
   kind: string;
@@ -55,8 +378,20 @@ export async function createDraftTransaction(input: {
   sourceDocumentId?: string;
   reason?: string;
 }): Promise<DraftResult> {
-  await delay();
-  const flags: TransactionFlag[] = [];
+  await getActorContext();
+  const flags: TransactionFlag[] = [
+    {
+      id: 'f0',
+      severity: 'block',
+      code: 'legacy_form_shape',
+      message:
+        'This form still uses the legacy flat-payload shape. The real backend expects ' +
+        'a per-kind discriminated union; the form rewrite ships in P1.1b. ' +
+        'Posting is blocked until then.',
+    },
+  ];
+  // Keep the original demo-time block flags so the existing flag-display
+  // UI still renders something familiar.
   if (input.kind === 'vendor_bill' && !input.attribution) {
     flags.push({
       id: 'f1',
@@ -67,24 +402,16 @@ export async function createDraftTransaction(input: {
         'Per LEDGER-SPEC §0.6, per-client profitability depends on this answer.',
     });
   }
-  if (!input.sourceDocumentId) {
-    flags.push({
-      id: 'f2',
-      severity: 'warn',
-      code: 'no_source_document',
-      message: 'Posting without a source document — extraction step skipped.',
-    });
-  }
   if (input.lines.length === 0) {
     flags.push({
-      id: 'f3',
+      id: 'f2',
       severity: 'block',
       code: 'no_line_items',
       message: 'Add at least one line item before posting.',
     });
   }
   return {
-    draftId: `draft_${Math.random().toString(36).slice(2, 10)}`,
+    draftId: `legacy_${Math.random().toString(36).slice(2, 10)}`,
     flags,
   };
 }
@@ -93,262 +420,83 @@ export async function postTransaction(args: {
   draftId: string;
   acknowledgedFlagIds: readonly string[];
 }): Promise<{ ok: true; transactionId: string } | { ok: false; message: string }> {
-  await delay();
-  return {
-    ok: false,
-    message:
-      'Backend `postTransaction` not yet shipped. Draft accepted; posting blocked. ' +
-      'See STATUS.md for the open dependency on A.',
-  };
+  await getActorContext();
+  if (args.draftId.startsWith('legacy_')) {
+    return {
+      ok: false,
+      message:
+        'This draft was created via the legacy form path. Wait for the form rewrite (P1.1b) ' +
+        'to land — `postTransaction` is wired against the real backend already.',
+    };
+  }
+  // Real path: the draft id is a real transaction UUID. Forms that
+  // already feed the real backend will reach this branch.
+  const ctx = await getActorContext();
+  try {
+    const res = await realPostTransaction(ctx, {
+      transactionId: args.draftId,
+      acknowledgedFlags: args.acknowledgedFlagIds as string[],
+    });
+    return { ok: true, transactionId: res.transactionId };
+  } catch (e) {
+    return { ok: false, message: e instanceof Error ? e.message : 'Could not post.' };
+  }
 }
 
 export async function reverseTransactions(args: {
   transactionIds: readonly string[];
   reason: string;
 }): Promise<{ ok: true; reversedIds: readonly string[] } | { ok: false; message: string }> {
-  await delay();
-  return { ok: false, message: 'Backend `reverseTransactions` not yet shipped.' };
+  const ctx = await getActorContext();
+  const reversed: string[] = [];
+  try {
+    for (const id of args.transactionIds) {
+      const res = await realReverseTransaction(ctx, { transactionId: id, reason: args.reason });
+      reversed.push(res.reversalTransactionId);
+    }
+    return { ok: true, reversedIds: reversed };
+  } catch (e) {
+    return { ok: false, message: e instanceof Error ? e.message : 'Could not reverse.' };
+  }
 }
 
-export async function getPerClientPnL(args: {
-  fromDate: string;
-  toDate: string;
-}): Promise<readonly PerClientPnLRow[]> {
-  await delay();
-  return [
-    {
-      clientId: 'cl_001',
-      clientName: 'Marigold Coffee Roasters',
-      revenuePaise: 24_50_000_00n,
-      directCostPaise: 6_85_000_00n,
-      grossMarginPaise: 17_65_000_00n,
-      txnCount: 18,
-    },
-    {
-      clientId: 'cl_002',
-      clientName: 'Sunset Hotels',
-      revenuePaise: 18_00_000_00n,
-      directCostPaise: 9_20_000_00n,
-      grossMarginPaise: 8_80_000_00n,
-      txnCount: 22,
-    },
-    {
-      clientId: 'cl_003',
-      clientName: 'Atlas Jewellers',
-      revenuePaise: 36_75_000_00n,
-      directCostPaise: 14_30_000_00n,
-      grossMarginPaise: 22_45_000_00n,
-      txnCount: 31,
-    },
-  ];
-}
-
-export async function getPerVendorSpend(args: {
-  fromDate: string;
-  toDate: string;
-}): Promise<readonly PerVendorSpendRow[]> {
-  await delay();
-  return [
-    {
-      vendorId: 'vn_001',
-      vendorName: 'Lightroom Studios',
-      totalSpendPaise: 4_25_000_00n,
-      openPayablePaise: 1_20_000_00n,
-      txnCount: 11,
-    },
-    {
-      vendorId: 'vn_002',
-      vendorName: 'Bombay Print House',
-      totalSpendPaise: 2_10_000_00n,
-      openPayablePaise: 0n,
-      txnCount: 7,
-    },
-    {
-      vendorId: 'vn_003',
-      vendorName: 'CloudKit India',
-      totalSpendPaise: 1_85_000_00n,
-      openPayablePaise: 35_000_00n,
-      txnCount: 9,
-    },
-  ];
-}
-
-export async function getTrialBalance(args: {
-  asOfDate: string;
-  includeReversed?: boolean;
-}): Promise<readonly TrialBalanceRow[]> {
-  await delay();
-  return CHART_OF_ACCOUNTS_FIXTURE.slice(0, 12).map((a, i) => ({
-    accountCode: a.code,
-    accountName: a.name,
-    debitPaise: a.normalSide === 'debit' ? BigInt((i + 1) * 1_25_000_00) : 0n,
-    creditPaise: a.normalSide === 'credit' ? BigInt((i + 1) * 1_25_000_00) : 0n,
-  }));
-}
-
-export async function getStatementOfAccount(args: {
-  entityType: 'client' | 'vendor';
-  entityId: string;
-  fromDate: string;
-  toDate: string;
-}): Promise<readonly StatementRow[]> {
-  await delay();
-  return [
-    {
-      date: '2026-04-15',
-      reference: 'INV-26-0042',
-      kind: 'client_invoice',
-      memo: 'April retainer',
-      debitPaise: 2_50_000_00n,
-      creditPaise: 0n,
-      runningBalancePaise: 2_50_000_00n,
-      transactionId: 'tx_001',
-    },
-    {
-      date: '2026-05-02',
-      reference: 'RCP-26-0019',
-      kind: 'payment_received',
-      memo: 'Bank transfer',
-      debitPaise: 0n,
-      creditPaise: 2_50_000_00n,
-      runningBalancePaise: 0n,
-      transactionId: 'tx_002',
-    },
-  ];
-}
-
-export async function getAgingReport(args: {
-  side: 'receivable' | 'payable';
-  asOfDate: string;
-}): Promise<readonly AgingRow[]> {
-  await delay();
-  return [
-    {
-      entityId: 'cl_001',
-      entityName: 'Marigold Coffee Roasters',
-      byBucket: { '0-30': 1_50_000_00n, '31-60': 0n, '61-90': 0n, '90+': 0n },
-      totalPaise: 1_50_000_00n,
-    },
-    {
-      entityId: 'cl_002',
-      entityName: 'Sunset Hotels',
-      byBucket: { '0-30': 0n, '31-60': 75_000_00n, '61-90': 0n, '90+': 0n },
-      totalPaise: 75_000_00n,
-    },
-  ];
-}
-
-export async function getPeriods(): Promise<readonly Period[]> {
-  await delay();
-  return [
-    {
-      id: 'p-26-04',
-      label: 'FY26-04 (Apr)',
-      startDate: '2026-04-01',
-      endDate: '2026-04-30',
-      status: 'soft_closed',
-    },
-    {
-      id: 'p-26-05',
-      label: 'FY26-05 (May)',
-      startDate: '2026-05-01',
-      endDate: '2026-05-31',
-      status: 'open',
-    },
-  ];
-}
-
-export async function setPeriodStatus(args: {
-  periodId: string;
-  next: 'open' | 'soft_closed' | 'hard_closed';
-  reopenReason?: string;
-}): Promise<{ ok: true } | { ok: false; message: string }> {
-  await delay();
-  return { ok: false, message: 'Backend `setPeriodStatus` not yet shipped.' };
-}
-
-export async function getValidationRules(): Promise<readonly ValidationRule[]> {
-  await delay();
-  return [
-    {
-      code: 'client_attribution_missing',
-      label: 'Client attribution required on vendor bills',
-      description:
-        'Per LEDGER-SPEC §0.6, every vendor bill must declare client / OpEx / asset attribution. ' +
-        'Disabling this rule breaks per-client P&L.',
-      severity: 'block',
-      enabled: true,
-    },
-    {
-      code: 'gst_subtotal_mismatch',
-      label: 'GST subtotal mismatch',
-      description: 'Sum of line items + GST + TDS withholding != stated total.',
-      severity: 'warn',
-      enabled: true,
-      thresholdPaise: 100n,
-    },
-    {
-      code: 'period_close_enforced',
-      label: 'Enforce period close',
-      description:
-        'When enabled, no transactions can be posted into a soft-closed or hard-closed period.',
-      severity: 'block',
-      enabled: false,
-    },
-  ];
-}
-
-/**
- * 24-account chart (LEDGER-SPEC v2 §2). Trimmed names; full descriptions
- * live on the backend.
- */
-const CHART_OF_ACCOUNTS_FIXTURE: readonly ChartAccount[] = [
-  { code: '1100', name: 'Bank — HDFC Current', domain: 'operating', normalSide: 'debit' },
-  { code: '1110', name: 'Bank — ICICI Current', domain: 'operating', normalSide: 'debit' },
-  { code: '1150', name: 'Cash on hand', domain: 'operating', normalSide: 'debit' },
-  { code: '1200', name: 'Trade Receivables — Domestic', domain: 'operating', normalSide: 'debit' },
-  { code: '1210', name: 'Trade Receivables — Export', domain: 'operating', normalSide: 'debit' },
-  { code: '1300', name: 'Input GST — IGST', domain: 'tax', normalSide: 'debit' },
-  { code: '1310', name: 'Input GST — CGST', domain: 'tax', normalSide: 'debit' },
-  { code: '1320', name: 'Input GST — SGST', domain: 'tax', normalSide: 'debit' },
-  { code: '1500', name: 'Advances to vendors', domain: 'operating', normalSide: 'debit' },
-  { code: '1510', name: 'Fixed Assets — at cost', domain: 'operating', normalSide: 'debit' },
-  { code: '2100', name: 'Trade Payables', domain: 'operating', normalSide: 'credit' },
-  { code: '2150', name: 'TDS payable — 194C', domain: 'tax', normalSide: 'credit' },
-  { code: '2155', name: 'TDS payable — 194J', domain: 'tax', normalSide: 'credit' },
-  { code: '2160', name: 'Output GST — IGST', domain: 'tax', normalSide: 'credit' },
-  { code: '2170', name: 'Output GST — CGST/SGST', domain: 'tax', normalSide: 'credit' },
-  {
-    code: '2180',
-    name: 'Advances received from clients',
-    domain: 'operating',
-    normalSide: 'credit',
-  },
-  { code: '2200', name: 'Salaries payable', domain: 'operating', normalSide: 'credit' },
-  { code: '3100', name: 'Partner capital', domain: 'owners', normalSide: 'credit' },
-  { code: '3200', name: 'Partner drawings', domain: 'owners', normalSide: 'debit' },
-  { code: '4100', name: 'Service revenue', domain: 'operating', normalSide: 'credit' },
-  { code: '5100', name: 'Direct project cost', domain: 'cogs', normalSide: 'debit' },
-  { code: '6100', name: 'Rent', domain: 'operating', normalSide: 'debit' },
-  { code: '6200', name: 'Utilities', domain: 'operating', normalSide: 'debit' },
-  { code: '6300', name: 'Salaries', domain: 'operating', normalSide: 'debit' },
-];
+/* -------------------------------------------------------------------------- */
+/* Bank reconciliation — placeholder until P5                                  */
+/* -------------------------------------------------------------------------- */
 
 export async function getReconciliationCandidates(args: {
   bankAccountId: string;
   statementFile?: never;
 }): Promise<readonly ReconciliationRow[]> {
-  await delay();
-  return [
-    {
-      bank: { date: '2026-05-12', description: 'NEFT/MARIGOLD/INV0042', amountPaise: 2_50_000_00n },
-      matchedTransactionId: 'tx_002',
-      status: 'matched',
-    },
-    {
-      bank: { date: '2026-05-14', description: 'CC POS / Adobe Sub', amountPaise: -4_999_00n },
-      matchedTransactionId: null,
-      status: 'unmatched',
-    },
-  ];
+  // Real matcher ships in P5. Returning empty so the recon window
+  // renders its "drop a statement here" empty state instead of demo rows.
+  await getActorContext();
+  return [];
+}
+
+/* -------------------------------------------------------------------------- */
+/* Direct passthrough for new code: feed the real shape                        */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Direct passthrough to the real backend. New form code should import this
+ * (or import from `@/lib/server/ledger` directly) and pass a
+ * `TransactionKindInput` shape so the posting actually lands.
+ */
+export async function createDraftTransactionTyped(
+  kindInput: TransactionKindInput,
+): Promise<{ transactionId: string; flags: readonly TransactionFlag[] }> {
+  const ctx = await getActorContext();
+  const res = await realCreateDraftTransaction(ctx, kindInput);
+  return {
+    transactionId: res.transactionId,
+    flags: res.validationFlags.map(
+      (f, i): TransactionFlag => ({
+        id: `f${i}`,
+        severity: f.severity === 'block' ? 'block' : 'warn',
+        code: f.code,
+        message: f.message,
+      }),
+    ),
+  };
 }

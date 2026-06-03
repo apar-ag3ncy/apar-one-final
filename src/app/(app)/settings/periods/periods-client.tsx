@@ -28,15 +28,19 @@ import { StatusBadge } from '@/components/shared/status-badge';
 import { setPeriodStatus } from '@/lib/server-stub/ledger-actions';
 import type { Period } from '@/lib/server-stub/ledger-types';
 
-export function PeriodsClient({ initialPeriods }: { initialPeriods: readonly Period[] }) {
+export function PeriodsClient({
+  initialPeriods,
+  enforceClose,
+}: {
+  initialPeriods: readonly Period[];
+  /** Read server-side from `settings.enforce_period_close` and passed in. */
+  enforceClose: boolean;
+}) {
   const [periods, setPeriods] = useState<Period[]>(() => initialPeriods.map((p) => ({ ...p })));
   const [reopenTarget, setReopenTarget] = useState<Period | null>(null);
   const [reopenReason, setReopenReason] = useState('');
   const [pending, startTransition] = useTransition();
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-
-  // TODO(backend): read settings.enforce_period_close.
-  const enforceClose = false;
 
   function transition(periodId: string, next: Period['status'], reason?: string) {
     setErrorMessage(null);
@@ -70,11 +74,12 @@ export function PeriodsClient({ initialPeriods }: { initialPeriods: readonly Per
           <CardContent className="flex items-start gap-2 py-3 text-sm">
             <AlertTriangleIcon className="mt-0.5 size-4 shrink-0 text-amber-500" aria-hidden />
             <div>
-              <p className="font-medium">Period-close enforcement is OFF</p>
+              <p className="font-medium">Soft-close enforcement is advisory only</p>
               <p className="text-muted-foreground text-xs">
-                <span className="font-mono">settings.enforce_period_close = false</span>. Closed
-                periods are advisory only — transactions can still post into them. Turn it on under{' '}
-                <span className="font-mono">Settings → Validation rules</span>.
+                <span className="font-mono">settings.enforce_period_close = false</span>. Hard-closed
+                periods still block all postings — that's enforced server-side in <span className="font-mono">postTransaction</span>{' '}
+                regardless of this flag. Toggle this on to additionally have the UI warn on drafts
+                that target a soft-closed period.
               </p>
             </div>
           </CardContent>
