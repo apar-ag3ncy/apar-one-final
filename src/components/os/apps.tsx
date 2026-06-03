@@ -47,7 +47,7 @@ import {
   updateProject,
   type ProjectListRow,
 } from '@/lib/server/entities/projects';
-import { createVendor } from '@/lib/server/entities/vendors';
+import { archiveVendor, createVendor, updateVendor } from '@/lib/server/entities/vendors';
 import { archiveClient, createClient } from '@/lib/server/entities/clients';
 import { createEmployee } from '@/lib/server/entities/employees';
 import { listEmployeeOptions, type EntityOption } from '@/lib/server/entities/options';
@@ -1037,23 +1037,28 @@ export function VendorsApp({
 
   async function fetchVendorList(): Promise<readonly Vendor[]> {
     const rows = await listDbVendors();
-    return rows.map(
-      (r): Vendor => ({
-        id: r.id,
-        name: r.name,
-        cat: r.category ? r.category.charAt(0).toUpperCase() + r.category.slice(1) : 'Other',
-        outstanding: r.outstandingPaise,
-        last: r.lastTxnAt
-          ? new Date(r.lastTxnAt).toLocaleDateString('en-IN', {
-              day: '2-digit',
-              month: 'short',
-            })
-          : '—',
-        gstin: r.gstin ?? undefined,
-        pan: r.pan ?? undefined,
-        notes: r.notes ?? undefined,
-      }),
-    );
+    return rows
+      // Archived vendors drop out of the active directory. Bills,
+      // expenses, and documents that reference them still resolve the
+      // name and show an "(ex-vendor)" suffix.
+      .filter((r) => !r.isArchived)
+      .map(
+        (r): Vendor => ({
+          id: r.id,
+          name: r.name,
+          cat: r.category ? r.category.charAt(0).toUpperCase() + r.category.slice(1) : 'Other',
+          outstanding: r.outstandingPaise,
+          last: r.lastTxnAt
+            ? new Date(r.lastTxnAt).toLocaleDateString('en-IN', {
+                day: '2-digit',
+                month: 'short',
+              })
+            : '—',
+          gstin: r.gstin ?? undefined,
+          pan: r.pan ?? undefined,
+          notes: r.notes ?? undefined,
+        }),
+      );
   }
 
   useEffect(() => {
@@ -1159,7 +1164,10 @@ export function VendorsApp({
                         className="btn row-action"
                         type="button"
                         title="Edit vendor"
-                        onClick={() => setEditing(v)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setEditing(v);
+                        }}
                       >
                         <Icon name="edit" size={12} />
                       </button>
@@ -1168,8 +1176,11 @@ export function VendorsApp({
                       <button
                         className="btn row-action row-delete"
                         type="button"
-                        title="Delete vendor"
-                        onClick={() => setConfirmDel(v)}
+                        title="Archive vendor"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setConfirmDel(v);
+                        }}
                       >
                         <Icon name="trash" size={12} />
                       </button>
@@ -1227,22 +1238,45 @@ export function VendorsApp({
           mode="edit"
           initial={editing}
           onClose={() => setEditing(null)}
-          onSubmit={(input) => {
-            store.updateVendor(editing.id, input);
+          onSubmit={async (input) => {
+            const target = editing;
+            const result = await updateVendor({
+              id: target.id,
+              name: input.name,
+              category: input.cat || null,
+              gstin: input.gstin || null,
+              pan: input.pan || null,
+              notes: input.notes || null,
+            });
+            if (!result.ok) {
+              toast.error(result.message);
+              return;
+            }
             setEditing(null);
+            const next = await fetchVendorList().catch(() => null);
+            if (next) setDbVendors(next);
+            toast.success(`Updated "${input.name}".`);
           }}
         />
       )}
       {confirmDel && (
         <ConfirmDialog
-          title={`Delete ${confirmDel.name}?`}
-          message="All invoices and documents attached to this vendor will also be removed. This can't be undone."
+          title={`Archive ${confirmDel.name}?`}
+          message={`Hides "${confirmDel.name}" from the active vendor directory. Bills, expenses, and documents that reference this vendor are kept intact and will display "${confirmDel.name} (ex-vendor)". A partner can restore the vendor later.`}
           destructive
-          confirmLabel="Delete vendor"
+          confirmLabel="Archive vendor"
           onCancel={() => setConfirmDel(null)}
-          onConfirm={() => {
-            store.removeVendor(confirmDel.id);
+          onConfirm={async () => {
+            const target = confirmDel;
             setConfirmDel(null);
+            try {
+              await archiveVendor(target.id);
+              const next = await fetchVendorList().catch(() => null);
+              if (next) setDbVendors(next);
+              toast.success(`Archived "${target.name}".`);
+            } catch (e) {
+              toast.error(e instanceof Error ? e.message : 'Could not archive the vendor.');
+            }
           }}
         />
       )}
@@ -1359,10 +1393,10 @@ export function VendorDetail({
               className="btn"
               type="button"
               onClick={() => setConfirmDelVendor(true)}
-              title="Delete vendor"
+              title="Archive vendor"
             >
               <Icon name="trash" size={13} />
-              Delete
+              Archive
             </button>
           )}
           {/* Tab-aware primary action. */}
@@ -1718,23 +1752,44 @@ export function VendorDetail({
           mode="edit"
           initial={vendor}
           onClose={() => setEditVendor(false)}
-          onSubmit={(input) => {
+          onSubmit={async (input) => {
+            const result = await updateVendor({
+              id: vendor.id,
+              name: input.name,
+              category: input.cat || null,
+              gstin: input.gstin || null,
+              pan: input.pan || null,
+              notes: input.notes || null,
+            });
+            if (!result.ok) {
+              toast.error(result.message);
+              return;
+            }
+            // Keep the localStorage `VendorStore` in sync so the rest
+            // of this window (Overview tags, etc) reflects the edit
+            // until the next page load reads from the DB.
             store.updateVendor(vendor.id, input);
             setEditVendor(false);
+            toast.success(`Updated "${input.name}".`);
           }}
         />
       )}
       {confirmDelVendor && (
         <ConfirmDialog
-          title={`Delete ${vendor.name}?`}
-          message={`Removes the vendor along with ${invoices.length} invoice${invoices.length === 1 ? '' : 's'} and ${documents.length} document${documents.length === 1 ? '' : 's'}. This window will close.`}
+          title={`Archive ${vendor.name}?`}
+          message={`Hides "${vendor.name}" from the active vendor directory and closes this window. Bills, expenses, and documents referencing this vendor are kept intact and will render as "${vendor.name} (ex-vendor)". A partner can restore later.`}
           destructive
-          confirmLabel="Delete vendor"
+          confirmLabel="Archive vendor"
           onCancel={() => setConfirmDelVendor(false)}
-          onConfirm={() => {
-            store.removeVendor(vendor.id);
+          onConfirm={async () => {
             setConfirmDelVendor(false);
-            onCloseWindow?.();
+            try {
+              await archiveVendor(vendor.id);
+              toast.success(`Archived "${vendor.name}".`);
+              onCloseWindow?.();
+            } catch (e) {
+              toast.error(e instanceof Error ? e.message : 'Could not archive the vendor.');
+            }
           }}
         />
       )}

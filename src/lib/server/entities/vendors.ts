@@ -549,3 +549,128 @@ export async function createVendor(input: CreateVendorInput): Promise<CreateVend
     return { ok: false, message, errors: {} };
   }
 }
+
+/* -------------------------------------------------------------------------- */
+/* updateVendor — backs the OS "Edit Vendor" modal                            */
+/* -------------------------------------------------------------------------- */
+
+const UpdateVendorSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string().trim().min(1, 'Vendor name is required').optional(),
+  category: z.string().trim().max(80).nullable().optional(),
+  gstin: z.string().trim().toUpperCase().nullable().optional(),
+  pan: z.string().trim().toUpperCase().nullable().optional(),
+  notes: z.string().trim().max(2000).nullable().optional(),
+});
+
+export type UpdateVendorInput = z.input<typeof UpdateVendorSchema>;
+
+export type UpdateVendorResult =
+  | { ok: true }
+  | { ok: false; message: string; errors: Record<string, string> };
+
+/**
+ * Patch the parent `vendors` row. Polymorphic children (contacts /
+ * addresses / banking) are out of scope here — the dashboard's deeper
+ * editors handle those; this is the OS quick-edit modal's path.
+ *
+ * Format-check identifiers; refuse the update with a `name` field
+ * error if a different active vendor already holds the same name
+ * (case-insensitive), matching the `clients` pattern from PR #1.
+ */
+export async function updateVendor(input: UpdateVendorInput): Promise<UpdateVendorResult> {
+  const ctx = await getActorContext();
+  requireCapability(ctx, 'update_vendor');
+
+  const parsed = UpdateVendorSchema.safeParse(input);
+  if (!parsed.success) {
+    const errors: Record<string, string> = {};
+    for (const issue of parsed.error.issues) {
+      const path = issue.path.join('.');
+      if (!errors[path]) errors[path] = issue.message;
+    }
+    return { ok: false, message: 'Please fix the highlighted fields.', errors };
+  }
+  const v = parsed.data;
+
+  const fieldErrors: Record<string, string> = {};
+  if (v.gstin && !GSTIN_RE.test(v.gstin)) {
+    fieldErrors.gstin = 'GSTIN must be 15 characters like 27ABCDE1234F1Z5.';
+  }
+  if (v.pan && !PAN_RE.test(v.pan)) {
+    fieldErrors.pan = 'PAN must look like ABCDE1234F.';
+  }
+  if (Object.keys(fieldErrors).length > 0) {
+    return { ok: false, message: 'Please fix the highlighted fields.', errors: fieldErrors };
+  }
+
+  // Refuse a rename that would collide with another active vendor.
+  if (v.name) {
+    const dup = await db
+      .select({ id: vendors.id })
+      .from(vendors)
+      .where(
+        and(
+          ne(vendors.id, v.id),
+          eq(vendors.isArchived, false),
+          isNull(vendors.deletedAt),
+          eq(vendors.name, v.name),
+        ),
+      )
+      .limit(1);
+    if (dup.length > 0) {
+      return {
+        ok: false,
+        message: `A vendor named "${v.name}" already exists.`,
+        errors: { name: 'A vendor with this name already exists.' },
+      };
+    }
+  }
+
+  // Build the partial update. `null` clears the column; `undefined`
+  // leaves it untouched. The form passes `undefined` for empty fields.
+  const patch: Partial<typeof vendors.$inferInsert> = { updatedBy: ctx.userId };
+  if (v.name !== undefined) patch.name = v.name;
+  if (v.category !== undefined) patch.category = v.category;
+  if (v.gstin !== undefined) patch.gstin = v.gstin;
+  if (v.pan !== undefined) patch.pan = v.pan;
+  if (v.notes !== undefined) patch.notes = v.notes;
+
+  try {
+    const result = await db
+      .update(vendors)
+      .set(patch)
+      .where(and(eq(vendors.id, v.id), isNull(vendors.deletedAt)))
+      .returning({ id: vendors.id });
+    if (result.length === 0) {
+      return { ok: false, message: 'Vendor not found.', errors: {} };
+    }
+
+    await logAudit({
+      actorId: ctx.userId,
+      entityType: 'vendor',
+      entityId: v.id,
+      action: 'update',
+      changes: Object.fromEntries(
+        Object.entries(patch)
+          .filter(([k]) => k !== 'updatedBy')
+          .map(([k, val]) => [k, { before: null, after: val }]),
+      ),
+    });
+    await logActivity({
+      entityType: 'vendor',
+      entityId: v.id,
+      actorId: ctx.userId,
+      kind: 'entity.updated',
+      summary: `Vendor "${v.name ?? v.id}" updated`,
+    });
+
+    return { ok: true };
+  } catch (e) {
+    return {
+      ok: false,
+      message: e instanceof Error ? e.message : 'Could not update the vendor.',
+      errors: {},
+    };
+  }
+}

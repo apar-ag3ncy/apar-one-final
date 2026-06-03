@@ -240,6 +240,7 @@ export async function listVendors(): Promise<readonly Vendor[]> {
       name: r.name,
       category: mapVendorCategory(r.category),
       status: mapVendorStatus(r.status, r.isArchived),
+      isArchived: r.isArchived,
       gstin: r.gstin,
       pan: r.pan,
       tdsSection: 'none' as TdsSection,
