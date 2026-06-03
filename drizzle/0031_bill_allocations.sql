@@ -120,10 +120,12 @@ CREATE TRIGGER tg_bill_allocation_sum_upd
   FOR EACH STATEMENT EXECUTE FUNCTION tg_bill_allocation_sum_check_upd();
 --> statement-breakpoint
 
--- RLS: read everyone, write capability-gated. Mirror the
--- payment_allocations pattern (which trusts the application server to
--- run as a privileged role).
+-- RLS: mirror the payment_allocations pattern from 0019. The app runs
+-- as service_role, which gets full access; non-service callers (RLS-
+-- authenticated user JWTs in the future) see nothing until a more
+-- granular policy ships.
 ALTER TABLE bill_allocations ENABLE ROW LEVEL SECURITY;
 --> statement-breakpoint
-CREATE POLICY bill_allocations_select ON bill_allocations FOR SELECT USING (true);
+CREATE POLICY "service_role all" ON bill_allocations
+  AS PERMISSIVE FOR ALL TO service_role USING (true) WITH CHECK (true);
 --> statement-breakpoint
