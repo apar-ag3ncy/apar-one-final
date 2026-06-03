@@ -30,14 +30,19 @@ const STATUS_LABEL: Record<AttendanceStatus, string> = {
   holiday: 'Holiday',
 };
 
+// Punchier palette — the previous one read as "disabled grey" once
+// you put seven of them in a row. Each colour now carries enough
+// saturation to feel alive on the white cell background, weekly_off
+// gets a blue-leaning slate so it stops reading like a dead cell,
+// and holiday picks up a warm terracotta with proper hue.
 const STATUS_COLOR: Record<AttendanceStatus, string> = {
-  present: '#2e8f5a',
-  work_from_home: '#3f6fb0',
-  absent: '#c34a2c',
-  half_day: '#c98a2e',
-  on_leave: '#7a4eaf',
-  weekly_off: '#5a5a5a',
-  holiday: '#8a6a2d',
+  present: '#1fa564',
+  work_from_home: '#3b82d9',
+  absent: '#e2543f',
+  half_day: '#e6a51c',
+  on_leave: '#8b5ad6',
+  weekly_off: '#7d8aa0',
+  holiday: '#cc7a3a',
 };
 
 const STATUS_SHORT: Record<AttendanceStatus, string> = {
