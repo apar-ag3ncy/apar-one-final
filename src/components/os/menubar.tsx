@@ -33,9 +33,14 @@ export function MenuBar({
 }: Props) {
   const [open, setOpen] = useState<string | null>(null);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
-  const [now, setNow] = useState(() => new Date());
+  // `now` stays `null` on the server + first client paint so the rendered
+  // clock matches across hydration. The effect sets it on mount and then
+  // polls every 30s. Without this, `useState(() => new Date())` produces a
+  // different string between SSR and CSR and trips React error #418.
+  const [now, setNow] = useState<Date | null>(null);
 
   useEffect(() => {
+    setNow(new Date());
     const t = setInterval(() => setNow(new Date()), 1000 * 30);
     return () => clearInterval(t);
   }, []);
@@ -50,12 +55,14 @@ export function MenuBar({
     return () => document.removeEventListener('click', click);
   }, [open, userMenuOpen]);
 
-  const time = now.toLocaleTimeString('en-IN', {
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  });
-  const date = now.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' });
+  const time = now
+    ? now.toLocaleTimeString('en-IN', {
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+      })
+    : '';
+  const date = now ? now.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : '';
 
   const items: Record<string, MenuItem[]> = {
     File: [
@@ -194,8 +201,8 @@ export function MenuBar({
           <Icon name="search" size={13} />
           <Icon name="bell" size={13} />
         </div>
-        <div className="clock">
-          {date} · {time}
+        <div className="clock" suppressHydrationWarning>
+          {now ? `${date} · ${time}` : ''}
         </div>
         {/* User chip — clickable, opens a small dropdown with sign out. */}
         <div

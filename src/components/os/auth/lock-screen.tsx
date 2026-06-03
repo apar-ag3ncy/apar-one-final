@@ -24,7 +24,9 @@ export function LockScreen() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
-  const [now, setNow] = useState(() => new Date());
+  // See menubar.tsx — `now` stays null on the server + first paint so
+  // hydration matches; the effect sets it on mount.
+  const [now, setNow] = useState<Date | null>(null);
 
   const selected: User = useMemo(
     () => allUsers.find((u) => u.id === selectedId) ?? allUsers[0]!,
@@ -33,20 +35,25 @@ export function LockScreen() {
 
   // Live clock.
   useEffect(() => {
+    setNow(new Date());
     const t = setInterval(() => setNow(new Date()), 1000 * 15);
     return () => clearInterval(t);
   }, []);
 
-  const time = now.toLocaleTimeString('en-IN', {
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  });
-  const date = now.toLocaleDateString('en-IN', {
-    weekday: 'long',
-    day: 'numeric',
-    month: 'long',
-  });
+  const time = now
+    ? now.toLocaleTimeString('en-IN', {
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+      })
+    : '';
+  const date = now
+    ? now.toLocaleDateString('en-IN', {
+        weekday: 'long',
+        day: 'numeric',
+        month: 'long',
+      })
+    : '';
 
   const submit = (e?: React.FormEvent) => {
     e?.preventDefault();
@@ -68,7 +75,7 @@ export function LockScreen() {
     <div className="lock-screen">
       <div aria-hidden className="lock-screen__noise" />
 
-      <div className="lock-screen__clock">
+      <div className="lock-screen__clock" suppressHydrationWarning>
         <div className="lock-screen__date">{date}</div>
         <div className="lock-screen__time">{time}</div>
       </div>
