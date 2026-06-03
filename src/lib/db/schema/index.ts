@@ -76,6 +76,7 @@ export * from './bills';
 export * from './bill_lines';
 export * from './receipts';
 export * from './payment_allocations';
+export * from './bill_allocations';
 export * from './receipt_vouchers';
 export * from './customer_advances';
 export * from './advance_allocations';
