@@ -146,9 +146,116 @@ async function runOne(
       return null;
     }
 
-    // gst_rate_mismatch / tds_missing / tds_threshold_crossed /
-    // subledger_entity_archived land when enabled — handlers will be
-    // added in their own follow-up commits.
+    case 'gst_rate_mismatch': {
+      // Walks line_items on the 4100 / 5100 credit/debit posting's
+      // metadata (stashed by `clientInvoice` / `vendorBill` posting
+      // templates) and compares the captured GST rate against
+      // tax_reference_rates for kind='gst' active at the txn date.
+      // Tolerance: 1 basis point. Warn-severity only.
+      for (const p of template.postings) {
+        const metaItems = (p.metadata as { line_items?: Array<{ gst_rate_bps?: number }> } | undefined)
+          ?.line_items;
+        if (!metaItems) continue;
+        for (const it of metaItems) {
+          if (typeof it.gst_rate_bps !== 'number') continue;
+          const ref = await client.execute<{ rate_bps: number }>(sql`
+            SELECT rate_bps FROM tax_reference_rates
+            WHERE kind = 'gst'
+              AND is_enabled = true
+              AND ${template.txnDate}::date >= effective_from
+              AND (effective_to IS NULL OR ${template.txnDate}::date < effective_to)
+            ORDER BY effective_from DESC
+            LIMIT 1
+          `);
+          const refBps = Array.isArray(ref) ? ref[0]?.rate_bps : undefined;
+          if (refBps !== undefined && Math.abs(it.gst_rate_bps - refBps) > 1) {
+            return {
+              code: 'gst_rate_mismatch',
+              severity: rule.severity,
+              message: `Captured GST rate ${(it.gst_rate_bps / 100).toFixed(2)}% differs from reference ${(refBps / 100).toFixed(2)}%.`,
+              detail: { captured_bps: it.gst_rate_bps, reference_bps: refBps },
+            };
+          }
+        }
+      }
+      return null;
+    }
+
+    case 'tds_missing': {
+      // For vendor_bill transactions where the (template) metadata
+      // indicates a TDS-eligible section but no TDS amount was
+      // captured. The posting template stores tds_section / tds_amount
+      // in the postings.metadata; we walk debit-side postings.
+      if (inputs.kind !== 'vendor_bill') return null;
+      for (const p of template.postings) {
+        const tdsSection = (p.metadata as { tds_section?: string } | undefined)?.tds_section;
+        const tdsAmt = (p.metadata as { tds_amount_paise?: string } | undefined)?.tds_amount_paise;
+        if (tdsSection && tdsSection !== 'none' && (!tdsAmt || BigInt(tdsAmt) === 0n)) {
+          return {
+            code: 'tds_missing',
+            severity: rule.severity,
+            message: `Vendor bill carries TDS section "${tdsSection}" but no TDS amount captured.`,
+            detail: { section: tdsSection },
+          };
+        }
+      }
+      return null;
+    }
+
+    case 'tds_threshold_crossed': {
+      // For vendor_bill: look up cumulative base for this vendor +
+      // section + FY via vw_tds_vendor_fy_cumulative. If the
+      // captured TDS section has a configured threshold and the
+      // cumulative (after this bill) crosses it, warn.
+      if (inputs.kind !== 'vendor_bill' || !template.paidToVendorId) return null;
+      for (const p of template.postings) {
+        const meta = p.metadata as
+          | { tds_section?: string; bill_subtotal_paise?: string }
+          | undefined;
+        if (!meta?.tds_section || meta.tds_section === 'none') continue;
+        const billBase = BigInt(meta.bill_subtotal_paise ?? '0');
+        // Fiscal year: Apr starts, so May 2026 → FY 2027.
+        const [y, m] = template.txnDate.split('-').map(Number) as [number, number];
+        const fy = m >= 4 ? y + 1 : y;
+        const cumRow = await client.execute<{
+          cumulative_base_paise: string;
+          threshold_fy_paise: string | null;
+        }>(sql`
+          SELECT
+            COALESCE(v.cumulative_base_paise, 0)::text AS cumulative_base_paise,
+            (s.threshold_fy_paise)::text AS threshold_fy_paise
+          FROM tds_reference_sections s
+          LEFT JOIN vw_tds_vendor_fy_cumulative v
+            ON v.vendor_id = ${template.paidToVendorId}
+            AND v.section = s.code
+            AND v.fiscal_year = ${fy}
+          WHERE s.code = ${meta.tds_section}
+          LIMIT 1
+        `);
+        const cumStr = Array.isArray(cumRow) ? cumRow[0]?.cumulative_base_paise : '0';
+        const thresStr = Array.isArray(cumRow) ? cumRow[0]?.threshold_fy_paise : null;
+        if (thresStr === null || thresStr === undefined) continue;
+        const cumulative = BigInt(cumStr ?? '0');
+        const threshold = BigInt(thresStr);
+        if (threshold > 0n && cumulative + billBase > threshold) {
+          return {
+            code: 'tds_threshold_crossed',
+            severity: rule.severity,
+            message: `Vendor cumulative under TDS section ${meta.tds_section} would cross FY threshold (₹${threshold / 100n}) after this bill.`,
+            detail: {
+              section: meta.tds_section,
+              cumulative_paise: cumulative.toString(),
+              this_bill_paise: billBase.toString(),
+              threshold_paise: threshold.toString(),
+            },
+          };
+        }
+      }
+      return null;
+    }
+
+    // subledger_entity_archived and other rules land in their own
+    // follow-up commits.
     default:
       return null;
   }
