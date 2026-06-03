@@ -58,6 +58,7 @@ type State =
 export function ProjectWindow({ projectId }: ProjectWindowProps) {
   const [state, setState] = useState<State>({ kind: 'loading' });
   const [tab, setTab] = useState<ProjectTab>('overview');
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -83,7 +84,7 @@ export function ProjectWindow({ projectId }: ProjectWindowProps) {
     return () => {
       cancelled = true;
     };
-  }, [projectId]);
+  }, [projectId, reloadKey]);
 
   if (state.kind === 'loading') {
     return <div style={{ padding: 24, color: 'var(--text-muted)' }}>Loading project…</div>;
@@ -112,7 +113,12 @@ export function ProjectWindow({ projectId }: ProjectWindowProps) {
         {tab === 'overview' ? <OverviewBody project={project} feed={feed} /> : null}
         {tab === 'transactions' ? <TransactionsBody project={project} feed={feed} /> : null}
         {tab === 'documents' ? (
-          <DocumentsSection entityType="project" entityId={project.id} entityName={project.name} />
+          <DocumentsSection
+            entityType="project"
+            entityId={project.id}
+            entityName={project.name}
+            onUploaded={() => setReloadKey((k) => k + 1)}
+          />
         ) : null}
         {tab === 'activity' ? <ActivityBody projectId={project.id} /> : null}
       </div>

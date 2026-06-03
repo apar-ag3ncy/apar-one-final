@@ -174,6 +174,7 @@ export function EmployeeWindow({ employeeId }: EmployeeWindowProps) {
             entityId={employee.id}
             entityName={employee.fullName}
             onOpenDocument={openDocumentBeside}
+            onUploaded={() => setReloadKey((k) => k + 1)}
           />
         ) : null}
         {tab === 'projects' ? <ProjectsLedBody projects={projectsLed} /> : null}

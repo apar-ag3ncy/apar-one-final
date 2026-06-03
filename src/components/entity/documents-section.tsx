@@ -48,6 +48,12 @@ export type DocumentsSectionProps = {
    * dispatches `osActions.openWindow({ app: 'documents', entityId })`.
    */
   onOpenDocument?: (documentId: string) => void;
+  /**
+   * Fired after a successful upload, once the section has reloaded its
+   * own list. Parents pass this to refetch entity-level counts (e.g. the
+   * KPI tile or tab badge that reads `client.documentsCount`).
+   */
+  onUploaded?: () => void;
 };
 
 const KIND_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
@@ -76,6 +82,7 @@ export function DocumentsSection({
   entityId,
   entityName,
   onOpenDocument,
+  onUploaded,
 }: DocumentsSectionProps) {
   const [rows, setRows] = useState<readonly EntityDocumentRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -214,6 +221,7 @@ export function DocumentsSection({
         onUploaded={() => {
           setUploadOpen(false);
           void reload.current();
+          onUploaded?.();
         }}
       />
 
