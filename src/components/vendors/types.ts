@@ -18,6 +18,11 @@ export type Vendor = {
   name: string;
   category: VendorCategory;
   status: VendorStatus;
+  /** True when the vendor has been soft-deleted (`is_archived`). Kept
+   *  separate from `status` so the UI can hide archived rows from the
+   *  active directory while still rendering an "(ex-vendor)" suffix on
+   *  bills / expenses that reference them. */
+  isArchived?: boolean;
   gstin: string | null;
   pan: string | null;
   tdsSection: TdsSection;
