@@ -60,6 +60,7 @@ export const transactionSourceKindEnum = pgEnum('transaction_source_kind', [
   'bank_import',
   'extraction',
   'opening_balance',
+  'closing',
 ]);
 
 /**

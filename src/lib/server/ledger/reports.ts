@@ -172,6 +172,16 @@ export type ArAgingRow = {
   totalOutstandingPaise: Paise;
 };
 
+export type ApAgingRow = {
+  vendorId: string;
+  vendorName: string;
+  bucket0to30Paise: Paise;
+  bucket31to60Paise: Paise;
+  bucket61to90Paise: Paise;
+  bucket90PlusPaise: Paise;
+  totalOutstandingPaise: Paise;
+};
+
 /**
  * AR Aging — outstanding receivables per client by bucket. Uses the
  * `1200 Trade Receivables` control account balance, less any
@@ -236,6 +246,88 @@ export async function getArAging(
   ).map((r) => ({
     clientId: r.client_id,
     clientName: r.client_name,
+    bucket0to30Paise: BigInt(r.bucket0to30),
+    bucket31to60Paise: BigInt(r.bucket31to60),
+    bucket61to90Paise: BigInt(r.bucket61to90),
+    bucket90PlusPaise: BigInt(r.bucket90plus),
+    totalOutstandingPaise: BigInt(r.total_outstanding),
+  }));
+}
+
+/**
+ * AP Aging — outstanding payables per vendor by bucket. Uses
+ * `bill_allocations` (Phase 4) to compute settled vs unsettled per
+ * vendor_bill, then buckets by the bill's `txn_date`.
+ *
+ * Convention: positive = we owe the vendor. A vendor_bill posts a
+ * credit on `2110 Trade Payables`; vendor_payment_made posts a debit.
+ * Aging counts vendor_bill credits minus their allocated portions.
+ * Bills with zero outstanding are excluded.
+ */
+export async function getApAging(
+  args: { asOfDate: string },
+  client: DbClient = db,
+): Promise<ApAgingRow[]> {
+  const rows = await client.execute<{
+    vendor_id: string;
+    vendor_name: string;
+    bucket0to30: string;
+    bucket31to60: string;
+    bucket61to90: string;
+    bucket90plus: string;
+    total_outstanding: string;
+  }>(sql`
+    WITH bill_balance AS (
+      SELECT
+        t.id AS bill_txn_id,
+        t.paid_to_vendor_id AS vendor_id,
+        (${args.asOfDate}::date - t.txn_date)::int AS age_days,
+        (
+          COALESCE((
+            SELECT SUM(p.amount_paise) FROM postings p
+            WHERE p.transaction_id = t.id AND p.side = 'credit'
+          ), 0)
+          - COALESCE((
+            SELECT SUM(amount_paise) FROM bill_allocations
+            WHERE bill_txn_id = t.id
+          ), 0)
+        )::bigint AS outstanding
+      FROM transactions t
+      WHERE t.kind = 'vendor_bill'
+        AND t.status = 'posted'
+        AND t.reverses_id IS NULL
+        AND t.paid_to_vendor_id IS NOT NULL
+        AND t.txn_date <= ${args.asOfDate}::date
+    )
+    SELECT
+      v.id AS vendor_id,
+      v.name AS vendor_name,
+      COALESCE(SUM(outstanding) FILTER (WHERE age_days BETWEEN 0 AND 30), 0)  AS bucket0to30,
+      COALESCE(SUM(outstanding) FILTER (WHERE age_days BETWEEN 31 AND 60), 0) AS bucket31to60,
+      COALESCE(SUM(outstanding) FILTER (WHERE age_days BETWEEN 61 AND 90), 0) AS bucket61to90,
+      COALESCE(SUM(outstanding) FILTER (WHERE age_days > 90), 0)              AS bucket90plus,
+      COALESCE(SUM(outstanding), 0)                                           AS total_outstanding
+    FROM vendors v
+    LEFT JOIN bill_balance b ON b.vendor_id = v.id
+    WHERE v.is_archived = false
+    GROUP BY v.id, v.name
+    HAVING COALESCE(SUM(outstanding), 0) > 0
+    ORDER BY total_outstanding DESC
+  `);
+
+  return Array.from(
+    rows as Iterable<{
+      vendor_id: string;
+      vendor_name: string;
+      bucket0to30: string;
+      bucket31to60: string;
+      bucket61to90: string;
+      bucket90plus: string;
+      total_outstanding: string;
+    }>,
+  ).map((r) => ({
+    vendorId: r.vendor_id,
+    vendorName: r.vendor_name,
     bucket0to30Paise: BigInt(r.bucket0to30),
     bucket31to60Paise: BigInt(r.bucket31to60),
     bucket61to90Paise: BigInt(r.bucket61to90),
