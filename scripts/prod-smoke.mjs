@@ -140,6 +140,16 @@ try {
     await shot('08-periods');
   });
 
+  await step('Audit log viewer renders both streams', async () => {
+    await page.goto(`${BASE}/audit`, { waitUntil: 'networkidle' });
+    await page.waitForSelector('h1, h2', { timeout: 8000 });
+    await shot('11-audit-diff');
+    // Toggle to the activity stream.
+    await page.goto(`${BASE}/audit?stream=activity`, { waitUntil: 'networkidle' });
+    await page.waitForSelector('h1, h2', { timeout: 8000 });
+    await shot('12-audit-activity');
+  });
+
   await step('Trial balance + per-client P&L hit real backend', async () => {
     await page.goto(`${BASE}/reports/trial-balance`, { waitUntil: 'networkidle' });
     await page.waitForSelector('h1, h2', { timeout: 8000 });
