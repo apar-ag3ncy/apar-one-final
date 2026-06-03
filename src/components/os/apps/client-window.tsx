@@ -185,7 +185,12 @@ export function ClientWindow({ clientId }: ClientWindowProps) {
           />
         ) : null}
         {tab === 'documents' ? (
-          <DocumentsSection entityType="client" entityId={client.id} entityName={client.name} />
+          <DocumentsSection
+            entityType="client"
+            entityId={client.id}
+            entityName={client.name}
+            onUploaded={() => setReloadKey((k) => k + 1)}
+          />
         ) : null}
         {tab === 'transactions' ? (
           <ClientTransactionsSection clientId={client.id} clientName={client.name} />

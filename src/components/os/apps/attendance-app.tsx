@@ -30,14 +30,19 @@ const STATUS_LABEL: Record<AttendanceStatus, string> = {
   holiday: 'Holiday',
 };
 
+// Punchier palette — the previous one read as "disabled grey" once
+// you put seven of them in a row. Each colour now carries enough
+// saturation to feel alive on the white cell background, weekly_off
+// gets a blue-leaning slate so it stops reading like a dead cell,
+// and holiday picks up a warm terracotta with proper hue.
 const STATUS_COLOR: Record<AttendanceStatus, string> = {
-  present: '#2e8f5a',
-  work_from_home: '#3f6fb0',
-  absent: '#c34a2c',
-  half_day: '#c98a2e',
-  on_leave: '#7a4eaf',
-  weekly_off: '#5a5a5a',
-  holiday: '#8a6a2d',
+  present: '#1fa564',
+  work_from_home: '#3b82d9',
+  absent: '#e2543f',
+  half_day: '#e6a51c',
+  on_leave: '#8b5ad6',
+  weekly_off: '#7d8aa0',
+  holiday: '#cc7a3a',
 };
 
 const STATUS_SHORT: Record<AttendanceStatus, string> = {
@@ -141,6 +146,35 @@ export function AttendanceApp() {
     setYear(next.getUTCFullYear());
     setMonth(next.getUTCMonth() + 1);
   }
+
+  // Step the bulk-mark date by N days. If the new date falls into a
+  // different month, swing the visible matrix along with it so the
+  // selected column stays in view.
+  function shiftBulkDate(delta: number) {
+    const [y, m, d] = bulkDate.split('-').map(Number) as [number, number, number];
+    const next = new Date(Date.UTC(y, m - 1, d + delta));
+    const ny = next.getUTCFullYear();
+    const nm = next.getUTCMonth() + 1;
+    const nd = next.getUTCDate();
+    const iso = `${ny}-${pad2(nm)}-${pad2(nd)}`;
+    setBulkDate(iso);
+    if (ny !== year || nm !== month) {
+      setYear(ny);
+      setMonth(nm);
+    }
+  }
+
+  const bulkDateLabel = useMemo(
+    () =>
+      new Date(`${bulkDate}T00:00:00Z`).toLocaleDateString('en-IN', {
+        weekday: 'short',
+        day: '2-digit',
+        month: 'short',
+        year: bulkDate.slice(0, 4) === String(new Date().getFullYear()) ? undefined : 'numeric',
+        timeZone: 'UTC',
+      }),
+    [bulkDate],
+  );
 
   function openPicker(
     e: React.MouseEvent<HTMLElement>,
@@ -330,23 +364,34 @@ export function AttendanceApp() {
         <span style={{ fontSize: 11, color: 'var(--text-muted)', marginRight: 4 }}>
           Bulk mark for:
         </span>
-        <input
-          type="date"
-          value={bulkDate}
-          onChange={(e) => setBulkDate(e.target.value)}
-          disabled={busy}
-          aria-label="Date for bulk attendance"
-          style={{
-            background: 'var(--content)',
-            border: '1px solid var(--border)',
-            borderRadius: 6,
-            color: 'var(--text)',
-            padding: '4px 8px',
-            fontSize: 12,
-            fontFamily: 'inherit',
-            colorScheme: 'dark light',
-          }}
-        />
+        <div className="att-date-picker" role="group" aria-label="Bulk mark date">
+          <button
+            type="button"
+            className="att-date-step"
+            onClick={() => shiftBulkDate(-1)}
+            disabled={busy}
+            aria-label="Previous day"
+            title="Previous day"
+          >
+            ‹
+          </button>
+          <span className={`att-date-label${bulkDate === todayIso ? ' is-today' : ''}`}>
+            {bulkDateLabel}
+            {bulkDate === todayIso ? (
+              <span className="att-date-today-pill">Today</span>
+            ) : null}
+          </span>
+          <button
+            type="button"
+            className="att-date-step"
+            onClick={() => shiftBulkDate(1)}
+            disabled={busy}
+            aria-label="Next day"
+            title="Next day"
+          >
+            ›
+          </button>
+        </div>
         <button
           type="button"
           className="btn"
@@ -416,29 +461,22 @@ export function AttendanceApp() {
                   const iso = isoFor(year, month, d);
                   const def = defaultStatusForDate(iso);
                   const isToday = iso === todayIso;
+                  const isSelected = iso === bulkDate;
                   return (
                     <th
                       key={d}
+                      className={`att-col-head${isToday ? ' is-today' : ''}${
+                        isSelected ? ' is-selected' : ''
+                      }`}
                       style={{
-                        width: 30,
-                        textAlign: 'center',
-                        padding: '6px 0',
-                        color: isToday
-                          ? 'var(--apar-red)'
-                          : def === 'weekly_off'
-                            ? STATUS_COLOR.weekly_off
-                            : undefined,
-                        background: 'var(--content-2)',
-                        fontWeight: isToday ? 700 : undefined,
-                        borderLeft: isToday ? '2px solid var(--apar-red)' : undefined,
-                        borderRight: isToday ? '2px solid var(--apar-red)' : undefined,
-                        borderTop: isToday ? '2px solid var(--apar-red)' : undefined,
+                        color:
+                          !isToday && def === 'weekly_off' ? STATUS_COLOR.weekly_off : undefined,
                       }}
                       title={`${new Date(`${iso}T00:00:00Z`).toLocaleDateString('en-IN', {
                         weekday: 'short',
                         day: '2-digit',
                         month: 'short',
-                      })}${isToday ? ' (today)' : ''}`}
+                      })}${isToday ? ' (today)' : ''}${isSelected ? ' — bulk target' : ''}`}
                     >
                       {d}
                     </th>
@@ -493,11 +531,14 @@ export function AttendanceApp() {
                     const isOpen =
                       picker !== null && picker.employeeId === r.employeeId && picker.date === iso;
                     const isToday = iso === todayIso;
+                    const isSelected = iso === bulkDate;
                     return (
                       <td
                         key={d}
                         className={`att-cell ${isOverride ? 'is-override' : 'is-default'}${
                           isOpen ? ' is-open' : ''
+                        }${isToday ? ' is-today-col' : ''}${
+                          isSelected ? ' is-selected-col' : ''
                         }`}
                         onClick={(e) =>
                           openPicker(e, r.employeeId, r.fullName, iso, status, isOverride)
@@ -513,22 +554,20 @@ export function AttendanceApp() {
                             day: '2-digit',
                             month: 'short',
                           },
-                        )}${isToday ? ' (today)' : ''}\n${STATUS_LABEL[status]}${isOverride ? ' (override)' : ' (default)'}${busy ? '' : ' — click to change'}`}
+                        )}${isToday ? ' (today)' : ''}${isSelected ? ' — bulk target' : ''}\n${STATUS_LABEL[status]}${isOverride ? ' (override)' : ' (default)'}${busy ? '' : ' — click to change'}`}
                         style={{
                           width: 30,
                           height: 28,
                           textAlign: 'center',
                           padding: 0,
                           cursor: busy ? 'wait' : 'pointer',
-                          background: STATUS_COLOR[status],
+                          // `backgroundColor` longhand — using `background`
+                          // shorthand would reset background-image and
+                          // wipe out the CSS-set today-column tint.
+                          backgroundColor: STATUS_COLOR[status],
                           color: '#fff',
                           fontWeight: 600,
                           fontSize: 10,
-                          borderRight: isToday
-                            ? '2px solid var(--apar-red)'
-                            : '1px solid var(--border)',
-                          borderLeft: isToday ? '2px solid var(--apar-red)' : undefined,
-                          borderBottom: '1px solid var(--border)',
                         }}
                       >
                         {STATUS_SHORT[status]}

@@ -1258,27 +1258,137 @@
 /* than overrides but still clearly clickable, with a hover lift so the       */
 /* affordance is unmistakable.                                                */
 /* -------------------------------------------------------------------------- */
+/* Default + override both render at full opacity — fading defaults
+   made the whole month read as disabled. Distinguish overrides with a
+   thin white inner ring instead of a brightness shift. */
 .os-root .att-cell {
+  opacity: 1;
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
   transition:
-    opacity 120ms ease,
     filter 120ms ease,
     box-shadow 120ms ease;
 }
-.os-root .att-cell.is-default {
-  opacity: 0.82;
-}
 .os-root .att-cell.is-override {
-  opacity: 1;
+  box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, 0.55);
 }
 .os-root .att-cell:hover {
-  opacity: 1;
-  filter: brightness(1.1);
-  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.55);
+  filter: brightness(1.12);
+  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.7);
 }
 .os-root .att-cell.is-open {
   outline: 2px solid var(--apar-red);
   outline-offset: -2px;
-  opacity: 1;
+  filter: brightness(1.08);
+}
+
+/* Today's column — thick red side borders + tinted background that
+   reads through the status colour. Overrides the default 1px border
+   on left/right so the band feels continuous top-to-bottom. */
+.os-root .att-cell.is-today-col {
+  border-left: 3px solid var(--apar-red);
+  border-right: 3px solid var(--apar-red);
+  background-image: linear-gradient(
+    rgba(230, 58, 31, 0.18),
+    rgba(230, 58, 31, 0.18)
+  );
+  background-blend-mode: multiply;
+}
+
+/* Selected-for-bulk-mark column — secondary outline so the user sees
+   which day the "Mark all" buttons will write to. Sits on the inner
+   edge so it doesn't fight with the today band when they overlap. */
+.os-root .att-cell.is-selected-col {
+  box-shadow:
+    inset 0 0 0 2px rgba(255, 255, 255, 0.9),
+    inset 0 0 0 3px rgba(20, 12, 8, 0.45);
+}
+.os-root .att-cell.is-selected-col.is-override {
+  box-shadow:
+    inset 0 0 0 2px rgba(255, 255, 255, 0.9),
+    inset 0 0 0 3px rgba(20, 12, 8, 0.45);
+}
+
+/* Column-header treatments. Stickier styling than the cells so the
+   day numbers read clearly above the band. */
+.os-root .att-col-head {
+  width: 30px;
+  text-align: center;
+  padding: 6px 0;
+  background: var(--content-2);
+  font-weight: 500;
+  border-bottom: 1px solid var(--border);
+}
+.os-root .att-col-head.is-today {
+  color: var(--apar-red);
+  font-weight: 700;
+  border-left: 3px solid var(--apar-red);
+  border-right: 3px solid var(--apar-red);
+  border-top: 3px solid var(--apar-red);
+  background: color-mix(in oklab, var(--apar-red) 14%, var(--content-2));
+}
+.os-root .att-col-head.is-selected {
+  outline: 2px solid var(--text);
+  outline-offset: -2px;
+}
+
+/* Compact ← [date] → stepper used by the bulk-mark row. Reads as a
+   single segmented control instead of a tiny native date input. */
+.os-root .att-date-picker {
+  display: inline-flex;
+  align-items: stretch;
+  background: var(--content-2);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  overflow: hidden;
+  height: 28px;
+}
+.os-root .att-date-step {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  color: var(--text);
+  padding: 0 10px;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+.os-root .att-date-step:hover:not(:disabled) {
+  background: var(--apar-red);
+  color: #fff;
+}
+.os-root .att-date-step:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.os-root .att-date-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 168px;
+  justify-content: center;
+  padding: 0 12px;
+  border-left: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+  font-size: 12.5px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  white-space: nowrap;
+}
+.os-root .att-date-label.is-today {
+  color: var(--apar-red);
+}
+.os-root .att-date-today-pill {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--apar-red);
+  color: #fff;
 }
 
 /* -------------------------------------------------------------------------- */

@@ -48,6 +48,7 @@ type State =
 export function VendorWindow({ vendorId }: VendorWindowProps) {
   const [state, setState] = useState<State>({ kind: 'loading' });
   const [tab, setTab] = useState<VendorTab>('overview');
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -73,7 +74,7 @@ export function VendorWindow({ vendorId }: VendorWindowProps) {
     return () => {
       cancelled = true;
     };
-  }, [vendorId]);
+  }, [vendorId, reloadKey]);
 
   if (state.kind === 'loading') {
     return <div style={{ padding: 24, color: 'var(--text-muted)' }}>Loading vendor…</div>;
@@ -113,7 +114,12 @@ export function VendorWindow({ vendorId }: VendorWindowProps) {
           />
         ) : null}
         {tab === 'documents' ? (
-          <DocumentsSection entityType="vendor" entityId={vendor.id} entityName={vendor.name} />
+          <DocumentsSection
+            entityType="vendor"
+            entityId={vendor.id}
+            entityName={vendor.name}
+            onUploaded={() => setReloadKey((k) => k + 1)}
+          />
         ) : null}
         {tab === 'bills' ? (
           <VendorBillsSection vendorId={vendor.id} vendorName={vendor.name} />

@@ -1,5 +1,6 @@
 'use server';
 
+import { revalidatePath } from 'next/cache';
 import { and, desc, eq, isNull, sql } from 'drizzle-orm';
 import { z } from 'zod';
 
@@ -41,6 +42,20 @@ const DocumentKind = z.enum([
 ]);
 
 const DocumentVisibility = z.enum(['public', 'internal', 'restricted', 'kyc']);
+
+const ENTITY_DETAIL_BASE: Record<z.infer<typeof DocumentEntityType>, string> = {
+  client: '/clients',
+  vendor: '/vendors',
+  employee: '/employees',
+  project: '/projects',
+};
+
+function revalidateEntityDetail(
+  entityType: z.infer<typeof DocumentEntityType>,
+  entityId: string,
+): void {
+  revalidatePath(`${ENTITY_DETAIL_BASE[entityType]}/${entityId}`);
+}
 
 /**
  * Maps a document kind to its target storage bucket. KYC kinds MUST land
@@ -210,6 +225,8 @@ export async function uploadDocument(formData: FormData): Promise<{
     },
   });
 
+  revalidateEntityDetail(entityType, entityId);
+
   return result;
 }
 
@@ -373,6 +390,8 @@ export async function replaceDocument(
       version: existing.version + 1,
     },
   });
+
+  revalidateEntityDetail(DocumentEntityType.parse(existing.entityType), existing.entityId);
 
   return result;
 }
