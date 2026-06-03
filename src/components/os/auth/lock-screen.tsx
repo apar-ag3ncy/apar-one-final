@@ -86,9 +86,19 @@ export function LockScreen() {
               onClick={() => setSelectedId(u.id)}
               title={u.fullName}
             >
-              <span className="lock-screen__user-avatar" style={{ background: u.tone }} aria-hidden>
-                {initials(u.fullName)}
-              </span>
+              {u.role === 'super_admin' || u.role === 'admin' ? (
+                <span className="lock-screen__user-avatar is-mark" aria-hidden>
+                  <img src="/brand/apar-mark.png" alt="" draggable={false} />
+                </span>
+              ) : (
+                <span
+                  className="lock-screen__user-avatar"
+                  style={{ background: u.tone }}
+                  aria-hidden
+                >
+                  {initials(u.fullName)}
+                </span>
+              )}
               <span className="lock-screen__user-name">{u.fullName.split(' ')[0]}</span>
             </button>
           ))}
@@ -98,9 +108,15 @@ export function LockScreen() {
       {/* key on the form forces a remount when the user changes — password / error
           / pending state reset naturally without a setState-in-effect dance. */}
       <form key={selected.id} className="lock-screen__stack" onSubmit={submit}>
-        <div className="lock-screen__avatar" style={{ background: selected.tone }} aria-hidden>
-          {initials(selected.fullName)}
-        </div>
+        {selected.role === 'super_admin' || selected.role === 'admin' ? (
+          <div className="lock-screen__avatar is-mark" aria-hidden>
+            <img src="/brand/apar-mark.png" alt="" draggable={false} />
+          </div>
+        ) : (
+          <div className="lock-screen__avatar" style={{ background: selected.tone }} aria-hidden>
+            {initials(selected.fullName)}
+          </div>
+        )}
         <div className="lock-screen__greeting">{selected.fullName}</div>
         <div className="lock-screen__hint">@{selected.username}</div>
 
