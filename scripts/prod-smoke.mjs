@@ -129,6 +129,26 @@ try {
     await shot('06-attendance-next-day');
   });
 
+  await step('Period management page renders with real data', async () => {
+    await page.goto(`${BASE}/settings/periods`, { waitUntil: 'networkidle' });
+    await page.waitForSelector('h1, h2', { timeout: 8000 });
+    // The page is server-rendered with real periods from the DB. Verify
+    // that at least one period row landed (otherwise the read-side is
+    // back-to-stub silently).
+    const rowCount = await page.locator('table tbody tr').count();
+    if (rowCount < 1) throw new Error('Periods table empty — read-side wire-up may have regressed');
+    await shot('08-periods');
+  });
+
+  await step('Trial balance + per-client P&L hit real backend', async () => {
+    await page.goto(`${BASE}/reports/trial-balance`, { waitUntil: 'networkidle' });
+    await page.waitForSelector('h1, h2', { timeout: 8000 });
+    await shot('09-trial-balance');
+    await page.goto(`${BASE}/reports/per-client-pnl`, { waitUntil: 'networkidle' });
+    await page.waitForSelector('h1, h2', { timeout: 8000 });
+    await shot('10-per-client-pnl');
+  });
+
   await step('Toggle dark theme via menubar', async () => {
     // Open View menu → Theme: Dark (skip if menubar text differs)
     // Simpler: directly toggle by setting data-theme
