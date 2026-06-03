@@ -218,6 +218,13 @@
       "when": 1780200000000,
       "tag": "0030_enforce_period_close_default",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1780500000000,
+      "tag": "0033_tds_gst_validation_enable",
+      "breakpoints": true
     }
   ]
 }
