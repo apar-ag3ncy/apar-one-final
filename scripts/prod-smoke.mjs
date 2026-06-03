@@ -160,8 +160,11 @@ try {
   });
 
   await step('Toggle dark theme via menubar', async () => {
-    // Open View menu → Theme: Dark (skip if menubar text differs)
-    // Simpler: directly toggle by setting data-theme
+    // Earlier dashboard checks (/audit, /reports/*) navigated away
+    // from the OS, so revisit /os before flipping `data-theme` on
+    // `.os-root` — otherwise the selector misses.
+    await page.goto(`${BASE}/os`, { waitUntil: 'networkidle' });
+    await page.waitForSelector('.os-root .menubar', { timeout: 10000 });
     await page.evaluate(() => document.querySelector('.os-root')?.setAttribute('data-theme', 'dark'));
     await page.waitForTimeout(300);
     await shot('07-dark');
