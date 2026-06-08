@@ -15,8 +15,8 @@ import { readActivityDigestConfig } from '@/lib/server/settings/app-settings';
  *   POST https://<host>/api/cron/activity-digest
  *   Authorization: Bearer <CRON_SECRET>
  *
- * Requires CRON_SECRET, plus RESEND_API_KEY + EMAIL_FROM for delivery, and a
- * saved+enabled recipient in Settings. Any missing piece yields an explicit,
+ * Requires CRON_SECRET, plus GMAIL_USER + GMAIL_APP_PASSWORD for delivery, and
+ * a saved+enabled recipient in Settings. Any missing piece yields an explicit,
  * non-throwing response.
  */
 

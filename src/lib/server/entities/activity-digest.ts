@@ -29,7 +29,7 @@ const DIGEST_ENTITY_ID = '0d160000-0000-0000-0000-000000000000';
 export type ActivityDigestConfigView = {
   enabled: boolean;
   recipient: string;
-  /** Whether the email provider (Resend) is configured in the environment. */
+  /** Whether the Gmail/Workspace sender is configured in the environment. */
   emailReady: boolean;
   /** Human-readable reason the provider isn't ready, if any. */
   emailError: string | null;
