@@ -136,7 +136,7 @@ export function ClientEditDialog({ client, onSaved }: { client: Client; onSaved:
       <Button size="sm" variant="outline" onClick={() => setOpen(true)}>
         Edit
       </Button>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>Edit {client.name}</DialogTitle>
           <DialogDescription>

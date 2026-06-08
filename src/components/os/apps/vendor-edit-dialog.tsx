@@ -132,7 +132,7 @@ export function VendorEditDialog({ vendor, onSaved }: { vendor: Vendor; onSaved:
       <Button size="sm" variant="outline" onClick={() => setOpen(true)}>
         Edit
       </Button>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>Edit {vendor.name}</DialogTitle>
           <DialogDescription>

@@ -988,7 +988,7 @@ function Modal({
             <Icon name="close" size={13} />
           </button>
         </div>
-        {children}
+        <div className="os-modal-body">{children}</div>
       </div>
     </div>
   );
