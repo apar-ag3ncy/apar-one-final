@@ -84,6 +84,74 @@ export type Capability = (typeof CAPABILITIES)[number];
 
 export const CAPABILITY_SET: ReadonlySet<Capability> = new Set(CAPABILITIES);
 
+/**
+ * Human-readable labels for each capability — used by the Settings → Security
+ * panel to show a user what they're allowed to do. `Record<Capability, …>`
+ * forces this map to stay exhaustive: adding a capability above without a
+ * label here is a compile error.
+ */
+export const CAPABILITY_LABELS: Record<Capability, string> = {
+  manage_form_templates: 'Manage form templates',
+  manage_role_capabilities: 'Manage roles & permissions',
+  create_client: 'Create clients',
+  update_client: 'Edit clients',
+  archive_client: 'Archive clients',
+  create_vendor: 'Create vendors',
+  update_vendor: 'Edit vendors',
+  archive_vendor: 'Archive vendors',
+  create_employee: 'Create employees',
+  update_employee: 'Edit employees',
+  archive_employee: 'Archive employees',
+  reveal_kyc: 'Reveal KYC details',
+  reveal_bank: 'Reveal bank details',
+  upload_document: 'Upload documents',
+  delete_document: 'Delete documents',
+  post_transaction: 'Post transactions',
+  reconcile_transaction: 'Reconcile transactions',
+  reverse_transaction: 'Reverse transactions',
+  manage_users: 'Manage team members',
+  view_audit_log: 'View the audit log',
+  manage_periods: 'Manage accounting periods',
+  close_period: 'Close accounting periods',
+  reopen_period: 'Reopen accounting periods',
+  manage_validation_rules: 'Manage validation rules',
+  manage_tax_rates: 'Manage tax rates',
+  create_journal_voucher: 'Create journal vouchers',
+  manage_bank_accounts: 'Manage bank accounts',
+  restore_client: 'Restore clients',
+  restore_vendor: 'Restore vendors',
+  restore_employee: 'Restore employees',
+  hard_delete_client: 'Permanently delete clients',
+  hard_delete_vendor: 'Permanently delete vendors',
+  hard_delete_employee: 'Permanently delete employees',
+  hard_delete_document: 'Permanently delete documents',
+  hard_delete_custom_field: 'Permanently delete custom fields',
+  portal_access: 'Access the employee portal',
+  manage_salary_structures: 'Manage salary structures',
+  create_salary_run: 'Create salary runs',
+  post_salary_run: 'Post salary runs',
+  reverse_salary_run: 'Reverse salary runs',
+  view_salary: 'View salary details',
+  record_bonus_or_perk: 'Record bonuses & perks',
+  approve_reimbursement: 'Approve reimbursements',
+  approve_leave: 'Approve leave requests',
+  manage_leaves: 'Manage leave policies',
+  mark_achievement: 'Record achievements',
+  manage_user_table_preferences: 'Save personal table views',
+  create_invoice: 'Create invoices',
+  send_invoice: 'Send invoices',
+  void_invoice: 'Void invoices',
+  manage_credit_note: 'Manage credit notes',
+  manage_estimate: 'Manage estimates',
+  receive_payment: 'Receive payments',
+  manage_recurring: 'Manage recurring billing & reminders',
+  manage_billing_settings: 'Manage billing settings',
+  manage_service_items: 'Manage service items',
+  manage_party_billing_profile: 'Manage party billing profiles',
+  view_gst_reports: 'View GST reports',
+  manage_tax_reference_sections: 'Manage TDS/tax reference sections',
+};
+
 export type Role = 'partner' | 'admin' | 'manager' | 'accountant' | 'employee' | 'viewer';
 
 /**

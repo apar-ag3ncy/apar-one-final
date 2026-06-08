@@ -37,10 +37,27 @@ export type UserSettings = {
   accent: string;
   /** App id to auto-open on login (empty = none). */
   defaultLandingApp: string;
+  /** Notification preferences (Settings → Notifications). */
+  notifications: NotificationSettings;
+};
+
+/** Per-user notification toggles. Persisted in the same prefs blob. */
+export type NotificationSettings = {
+  invoicePaymentReminders: boolean;
+  overdueAlerts: boolean;
+  weeklySummary: boolean;
+  inAppToasts: boolean;
 };
 
 /** Selectable accent colours (must match the server PrefsSchema enum). */
 export const ACCENTS = ['#E63A1F', '#7A4E2D', '#5B6677', '#2E8F5A', '#3A5BA0'] as const;
+
+export const DEFAULT_NOTIFICATIONS: NotificationSettings = {
+  invoicePaymentReminders: true,
+  overdueAlerts: true,
+  weeklySummary: false,
+  inAppToasts: true,
+};
 
 export const DEFAULT_SETTINGS: UserSettings = {
   theme: 'light',
@@ -49,6 +66,7 @@ export const DEFAULT_SETTINGS: UserSettings = {
   reducedMotion: false,
   accent: '#E63A1F',
   defaultLandingApp: '',
+  notifications: DEFAULT_NOTIFICATIONS,
 };
 
 export const DOCK_SIZE_MIN = 32;
@@ -77,6 +95,27 @@ function coerceSettings(parsed: Partial<UserSettings> | null | undefined): UserS
       ? (parsed.accent as string)
       : DEFAULT_SETTINGS.accent,
     defaultLandingApp: typeof parsed.defaultLandingApp === 'string' ? parsed.defaultLandingApp : '',
+    // Always emit the FULL notifications object: the server-side jsonb merge is
+    // shallow, so a partial would drop sibling toggles on the next save.
+    notifications: coerceNotifications(parsed.notifications),
+  };
+}
+
+function coerceNotifications(
+  n: Partial<NotificationSettings> | null | undefined,
+): NotificationSettings {
+  if (!n || typeof n !== 'object') return DEFAULT_NOTIFICATIONS;
+  return {
+    invoicePaymentReminders:
+      typeof n.invoicePaymentReminders === 'boolean'
+        ? n.invoicePaymentReminders
+        : DEFAULT_NOTIFICATIONS.invoicePaymentReminders,
+    overdueAlerts:
+      typeof n.overdueAlerts === 'boolean' ? n.overdueAlerts : DEFAULT_NOTIFICATIONS.overdueAlerts,
+    weeklySummary:
+      typeof n.weeklySummary === 'boolean' ? n.weeklySummary : DEFAULT_NOTIFICATIONS.weeklySummary,
+    inAppToasts:
+      typeof n.inAppToasts === 'boolean' ? n.inAppToasts : DEFAULT_NOTIFICATIONS.inAppToasts,
   };
 }
 

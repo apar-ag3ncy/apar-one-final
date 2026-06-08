@@ -17,6 +17,13 @@ import { getActorContext } from '@/lib/server/actor';
  * migration; the schema below whitelists + clamps the keys we currently
  * support, and callers coerce with their own defaults.
  */
+export type UserNotificationPrefs = {
+  invoicePaymentReminders?: boolean;
+  overdueAlerts?: boolean;
+  weeklySummary?: boolean;
+  inAppToasts?: boolean;
+};
+
 export type UserPrefs = {
   theme?: 'light' | 'dark';
   dockItemSize?: number;
@@ -24,12 +31,27 @@ export type UserPrefs = {
   reducedMotion?: boolean;
   accent?: string;
   defaultLandingApp?: string;
+  notifications?: UserNotificationPrefs;
 };
 
 const ACCENTS = ['#E63A1F', '#7A4E2D', '#5B6677', '#2E8F5A', '#3A5BA0'] as const;
 
 // Whitelist + clamp every key. `.strip()` drops anything not listed, so a
 // client can never write arbitrary JSON into a user's row.
+// Notification toggles. The parent jsonb merge (`prefs || patch`) is shallow,
+// so callers must always send the FULL `notifications` object on a change
+// (the client routes it through useUserSettings, whose coerce always emits the
+// complete object) — otherwise sibling toggles would be dropped.
+const NotificationsSchema = z
+  .object({
+    invoicePaymentReminders: z.boolean(),
+    overdueAlerts: z.boolean(),
+    weeklySummary: z.boolean(),
+    inAppToasts: z.boolean(),
+  })
+  .partial()
+  .strip();
+
 const PrefsSchema = z
   .object({
     theme: z.enum(['light', 'dark']),
@@ -38,6 +60,7 @@ const PrefsSchema = z
     reducedMotion: z.boolean(),
     accent: z.enum(ACCENTS),
     defaultLandingApp: z.string().max(40),
+    notifications: NotificationsSchema,
   })
   .partial()
   .strip();

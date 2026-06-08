@@ -1250,7 +1250,8 @@
   color: var(--text-muted);
   margin-top: 2px;
 }
-.os-root .settings-row select.input {
+.os-root input.input,
+.os-root select.input {
   font-size: 12.5px;
   font-weight: 500;
   padding: 6px 11px;
@@ -1258,11 +1259,33 @@
   border: 1px solid var(--border);
   background: var(--content);
   color: var(--text);
+}
+.os-root select.input {
   cursor: pointer;
 }
-.os-root .settings-row select.input:focus-visible {
+.os-root input.input:disabled,
+.os-root select.input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.os-root input.input:focus-visible,
+.os-root select.input:focus-visible {
   outline: 2px solid var(--apar-red);
   outline-offset: 1px;
+}
+/* Small status / role / capability chips used in Settings. */
+.os-root .badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11.5px;
+  font-weight: 500;
+  line-height: 1.4;
+  padding: 2px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--content-2);
+  color: var(--text);
+  white-space: nowrap;
 }
 .os-root .toggle {
   width: 38px;

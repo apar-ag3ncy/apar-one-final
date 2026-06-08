@@ -121,6 +121,82 @@ export async function deleteReminderSchedule(id: string): Promise<void> {
 }
 
 /* -------------------------------------------------------------------------- */
+/* Global default schedule — ergonomic wrappers for Settings → Notifications  */
+/* -------------------------------------------------------------------------- */
+
+export type GlobalReminderSchedule = {
+  exists: boolean;
+  name: string;
+  isActive: boolean;
+  rules: ReminderRule[];
+  notes: string | null;
+};
+
+/** The org-wide default reminder schedule (clientId IS NULL), or an empty default. */
+export async function getGlobalReminderSchedule(): Promise<GlobalReminderSchedule> {
+  const ctx = await getActorContext();
+  requireCapability(ctx, 'manage_recurring');
+  const rows = await db
+    .select()
+    .from(reminderSchedules)
+    .where(isNull(reminderSchedules.clientId))
+    .limit(1);
+  const row = rows[0];
+  if (!row) {
+    return { exists: false, name: 'Default reminders', isActive: true, rules: [], notes: null };
+  }
+  return {
+    exists: true,
+    name: row.name,
+    isActive: row.isActive,
+    rules: (row.rules ?? []) as ReminderRule[],
+    notes: row.notes ?? null,
+  };
+}
+
+const SaveGlobalScheduleInputSchema = z.object({
+  rules: z.array(RuleSchema).min(1),
+  name: z.string().trim().min(1).max(200).optional(),
+  isActive: z.boolean().optional(),
+  notes: z.string().trim().max(2000).nullish(),
+});
+export type SaveGlobalReminderScheduleInput = z.input<typeof SaveGlobalScheduleInputSchema>;
+
+/** Create/update the org-wide default reminder schedule. Thin wrapper over upsert. */
+export async function saveGlobalReminderSchedule(
+  input: SaveGlobalReminderScheduleInput,
+): Promise<{ id: string }> {
+  const ctx = await getActorContext();
+  requireCapability(ctx, 'manage_recurring');
+  const v = SaveGlobalScheduleInputSchema.parse(input);
+
+  const existed = await db
+    .select({ id: reminderSchedules.id })
+    .from(reminderSchedules)
+    .where(isNull(reminderSchedules.clientId))
+    .limit(1);
+
+  const { id } = await upsertReminderSchedule({
+    clientId: null,
+    name: v.name ?? 'Default reminders',
+    isActive: v.isActive ?? true,
+    rules: v.rules,
+    notes: v.notes ?? null,
+  });
+
+  // Attributable audit row (the auto-trigger row is actor-NULL).
+  await logAudit({
+    actorId: ctx.userId,
+    entityType: 'reminder_schedules',
+    entityId: id,
+    action: existed[0] ? 'update' : 'insert',
+    changes: { rules: { before: null, after: v.rules } },
+  });
+
+  return { id };
+}
+
+/* -------------------------------------------------------------------------- */
 /* decideRemindersForToday — planner                                          */
 /* -------------------------------------------------------------------------- */
 

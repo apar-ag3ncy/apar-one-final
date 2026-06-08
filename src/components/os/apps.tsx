@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useRef, useState, useTransition, type FormEvent, type ReactNode } from 'react';
 import {
   Area,
   AreaChart,
@@ -29,6 +29,7 @@ import {
   DOCK_GAP_MIN,
   DOCK_SIZE_MAX,
   DOCK_SIZE_MIN,
+  type NotificationSettings,
   type UserSettings,
 } from './auth/session-store';
 import { formatINR, initials, paiseToDecimalRupees, parseRupeesToPaise } from './format';
@@ -54,6 +55,24 @@ import {
 import { archiveVendor, createVendor, updateVendor } from '@/lib/server/entities/vendors';
 import { archiveClient, createClient, updateClient } from '@/lib/server/entities/clients';
 import { archiveEmployee, createEmployee, updateEmployee } from '@/lib/server/entities/employees';
+import {
+  getMyProfile,
+  getMySecurity,
+  updateMyProfile,
+  type MyProfile,
+  type MySecurity,
+} from '@/lib/server/entities/account';
+import {
+  listTeamMembers,
+  setUserActive,
+  setUserRole,
+  type TeamMember,
+} from '@/lib/server/entities/team';
+import {
+  getGlobalReminderSchedule,
+  saveGlobalReminderSchedule,
+  type GlobalReminderSchedule,
+} from '@/lib/server/billing/reminders';
 import {
   listRecentDocuments,
   type RecentDocumentRow,
@@ -3824,10 +3843,16 @@ export function SettingsApp({
   settings,
   onSettingsChange,
   onResetSettings,
+  currentUserRole,
+  onSignOut,
+  onDisplayNameChange,
 }: {
   settings: UserSettings;
   onSettingsChange: (patch: Partial<UserSettings>) => void;
   onResetSettings?: () => void;
+  currentUserRole?: 'super_admin' | 'admin' | 'user';
+  onSignOut?: () => void;
+  onDisplayNameChange?: (fullName: string) => void;
 }) {
   const [section, setSection] = useState<SettingsSection['name']>('General');
   // Apps a user can pick as their landing app (admin-only apps excluded).
@@ -4006,28 +4031,661 @@ export function SettingsApp({
               />
             </div>
           </div>
+        ) : section === 'Account' ? (
+          <AccountPanel onSignOut={onSignOut} onDisplayNameChange={onDisplayNameChange} />
+        ) : section === 'Team' ? (
+          <TeamPanel currentUserRole={currentUserRole} />
+        ) : section === 'Notifications' ? (
+          <NotificationsPanel
+            notifications={settings.notifications}
+            onSettingsChange={onSettingsChange}
+            currentUserRole={currentUserRole}
+          />
         ) : (
-          <div style={{ padding: 24, color: 'var(--text-muted)', fontSize: 13 }}>
-            <div
-              style={{
-                background: 'var(--content-2)',
-                border: '1px solid var(--border)',
-                borderRadius: 12,
-                padding: 32,
-                textAlign: 'center',
-              }}
-            >
-              <div className="font-display" style={{ fontSize: 24, color: 'var(--text)' }}>
-                {section}
-              </div>
-              <div style={{ marginTop: 6 }}>
-                {section} settings are coming soon. Appearance preferences are available now under
-                the Appearance tab.
-              </div>
-            </div>
-          </div>
+          <SecurityPanel onSignOut={onSignOut} />
         )}
       </div>
     </>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Settings · Account                                                         */
+/* -------------------------------------------------------------------------- */
+
+const ROLE_LABELS: Record<string, string> = {
+  partner: 'Partner',
+  admin: 'Admin',
+  manager: 'Manager',
+  accountant: 'Accountant',
+  employee: 'Employee',
+  viewer: 'Viewer',
+};
+
+function AccountPanel({
+  onSignOut,
+  onDisplayNameChange,
+}: {
+  onSignOut?: () => void;
+  onDisplayNameChange?: (fullName: string) => void;
+}) {
+  const [profile, setProfile] = useState<MyProfile | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [fullName, setFullName] = useState('');
+  const [nameError, setNameError] = useState<string | null>(null);
+  const [saving, startSave] = useTransition();
+
+  useEffect(() => {
+    let cancelled = false;
+    getMyProfile()
+      .then((p) => {
+        if (cancelled) return;
+        setProfile(p);
+        setFullName(p.fullName);
+      })
+      .catch(() => {
+        if (!cancelled) setLoadError('Could not load your profile.');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const dirty = profile != null && fullName.trim() !== profile.fullName;
+
+  const save = () => {
+    setNameError(null);
+    startSave(async () => {
+      const res = await updateMyProfile({ fullName });
+      if (!res.ok) {
+        setNameError(res.errors.fullName ?? null);
+        toast.error(res.message);
+        return;
+      }
+      const next = fullName.trim();
+      setProfile((p) => (p ? { ...p, fullName: next } : p));
+      setFullName(next);
+      onDisplayNameChange?.(next);
+      toast.success('Profile updated.');
+    });
+  };
+
+  if (loadError) {
+    return <div style={{ padding: 24, color: 'var(--text-muted)', fontSize: 13 }}>{loadError}</div>;
+  }
+  if (!profile) {
+    return (
+      <div style={{ padding: 24, color: 'var(--text-muted)', fontSize: 13 }}>Loading profile…</div>
+    );
+  }
+
+  return (
+    <div>
+      <div className="settings-row">
+        <div>
+          <div className="label">Full name</div>
+          <div className="desc">Shown across the workspace and on the menu bar.</div>
+          {nameError ? (
+            <div className="desc" style={{ color: 'var(--apar-red)' }}>
+              {nameError}
+            </div>
+          ) : null}
+        </div>
+        <input
+          className="input"
+          style={{ maxWidth: 240 }}
+          value={fullName}
+          maxLength={200}
+          onChange={(e) => setFullName(e.target.value)}
+          aria-label="Full name"
+        />
+      </div>
+      <div className="settings-row">
+        <div>
+          <div className="label">Email</div>
+          <div className="desc">Managed by your sign-in — change it from the login provider.</div>
+        </div>
+        <input
+          className="input"
+          style={{ maxWidth: 240 }}
+          value={profile.email}
+          readOnly
+          disabled
+          aria-label="Email (read-only)"
+        />
+      </div>
+      <div className="settings-row">
+        <div>
+          <div className="label">Role</div>
+          <div className="desc">Your access level. Roles are managed under Team.</div>
+        </div>
+        <span className="badge">{ROLE_LABELS[profile.role] ?? profile.role}</span>
+      </div>
+      <div className="settings-row">
+        <div>
+          <div className="label">Save changes</div>
+          <div className="desc">Your name is saved to your profile and synced everywhere.</div>
+        </div>
+        <button className="btn primary" type="button" onClick={save} disabled={!dirty || saving}>
+          {saving ? 'Saving…' : 'Save'}
+        </button>
+      </div>
+      {onSignOut ? (
+        <div className="settings-row">
+          <div>
+            <div className="label">Sign out</div>
+            <div className="desc">End your session on this device.</div>
+          </div>
+          <button className="btn" type="button" onClick={onSignOut}>
+            Sign out
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Settings · Team                                                            */
+/* -------------------------------------------------------------------------- */
+
+const SENTINEL_USER_ID = '00000000-0000-0000-0000-000000000000';
+const TEAM_ROLES = ['admin', 'manager', 'accountant', 'employee', 'viewer'] as const;
+
+function TeamPanel({ currentUserRole }: { currentUserRole?: 'super_admin' | 'admin' | 'user' }) {
+  const [members, setMembers] = useState<readonly TeamMember[] | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const canManage = currentUserRole === 'super_admin' || currentUserRole === 'admin';
+
+  const reload = () => {
+    listTeamMembers()
+      .then(setMembers)
+      .catch(() => setLoadError('Could not load the team. You may not have permission.'));
+  };
+  useEffect(() => {
+    let cancelled = false;
+    listTeamMembers()
+      .then((m) => {
+        if (!cancelled) setMembers(m);
+      })
+      .catch(() => {
+        if (!cancelled) setLoadError('Could not load the team. You may not have permission.');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const changeRole = async (m: TeamMember, role: string) => {
+    setBusyId(m.id);
+    const res = await setUserRole(m.id, role);
+    setBusyId(null);
+    if (!res.ok) {
+      toast.error(res.message);
+      return;
+    }
+    toast.success(`${m.fullName} is now ${ROLE_LABELS[role] ?? role}.`);
+    reload();
+  };
+
+  const toggleActive = async (m: TeamMember) => {
+    setBusyId(m.id);
+    const res = await setUserActive(m.id, !m.active);
+    setBusyId(null);
+    if (!res.ok) {
+      toast.error(res.message);
+      return;
+    }
+    toast.success(`${m.fullName} ${m.active ? 'deactivated' : 'reactivated'}.`);
+    reload();
+  };
+
+  if (loadError) {
+    return <div style={{ padding: 24, color: 'var(--text-muted)', fontSize: 13 }}>{loadError}</div>;
+  }
+  if (!members) {
+    return (
+      <div style={{ padding: 24, color: 'var(--text-muted)', fontSize: 13 }}>Loading team…</div>
+    );
+  }
+
+  return (
+    <div>
+      <div className="settings-row" style={{ alignItems: 'flex-start' }}>
+        <div>
+          <div className="label">Team members</div>
+          <div className="desc">
+            {canManage
+              ? 'Set each member’s role or deactivate access. Inviting new members arrives with the sign-in system.'
+              : 'You can view the team. Ask an admin to change roles or access.'}
+          </div>
+        </div>
+      </div>
+      <div style={{ padding: '4px 18px 18px' }}>
+        {members.map((m) => {
+          const protectedRow = m.role === 'partner' || m.id === SENTINEL_USER_ID;
+          const disabled = !canManage || protectedRow || busyId === m.id;
+          return (
+            <div
+              key={m.id}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 12,
+                padding: '10px 0',
+                borderBottom: '1px solid var(--border)',
+                opacity: m.active ? 1 : 0.55,
+              }}
+            >
+              <div
+                aria-hidden
+                style={{
+                  width: 30,
+                  height: 30,
+                  borderRadius: '50%',
+                  background: 'var(--apar-red-soft)',
+                  color: 'var(--apar-red)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: 12,
+                  fontWeight: 600,
+                  flexShrink: 0,
+                }}
+              >
+                {initials(m.fullName)}
+              </div>
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div style={{ fontSize: 13, fontWeight: 500 }}>
+                  {m.fullName}
+                  {!m.active ? (
+                    <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}> · inactive</span>
+                  ) : null}
+                </div>
+                <div className="desc" style={{ marginTop: 0 }}>
+                  {m.email}
+                </div>
+              </div>
+              {m.role === 'partner' ? (
+                <span className="badge">Partner</span>
+              ) : (
+                <select
+                  className="input"
+                  style={{ maxWidth: 150 }}
+                  value={m.role}
+                  disabled={disabled}
+                  aria-label={`Role for ${m.fullName}`}
+                  onChange={(e) => void changeRole(m, e.target.value)}
+                >
+                  {TEAM_ROLES.map((r) => (
+                    <option key={r} value={r}>
+                      {ROLE_LABELS[r]}
+                    </option>
+                  ))}
+                </select>
+              )}
+              <button
+                className="btn"
+                type="button"
+                disabled={disabled}
+                onClick={() => void toggleActive(m)}
+                title={protectedRow ? 'Protected account' : undefined}
+              >
+                {m.active ? 'Deactivate' : 'Reactivate'}
+              </button>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Settings · Notifications                                                   */
+/* -------------------------------------------------------------------------- */
+
+const NOTIFICATION_TOGGLES: { key: keyof NotificationSettings; label: string; desc: string }[] = [
+  {
+    key: 'invoicePaymentReminders',
+    label: 'Invoice payment reminders',
+    desc: 'Reminders for upcoming and due invoice payments.',
+  },
+  {
+    key: 'overdueAlerts',
+    label: 'Overdue invoice alerts',
+    desc: 'Alerts when an invoice passes its due date.',
+  },
+  {
+    key: 'weeklySummary',
+    label: 'Weekly summary',
+    desc: 'A digest of receivables, payables and activity.',
+  },
+  {
+    key: 'inAppToasts',
+    label: 'In-app notifications',
+    desc: 'Show toast pop-ups for actions inside the workspace.',
+  },
+];
+
+function NotificationsPanel({
+  notifications,
+  onSettingsChange,
+  currentUserRole,
+}: {
+  notifications: NotificationSettings;
+  onSettingsChange: (patch: Partial<UserSettings>) => void;
+  currentUserRole?: 'super_admin' | 'admin' | 'user';
+}) {
+  const canManageSchedule = currentUserRole === 'super_admin' || currentUserRole === 'admin';
+
+  const toggle = (key: keyof NotificationSettings) => {
+    // Send the FULL object — the server-side jsonb merge is shallow.
+    onSettingsChange({ notifications: { ...notifications, [key]: !notifications[key] } });
+  };
+
+  return (
+    <div>
+      {NOTIFICATION_TOGGLES.map((t) => (
+        <div className="settings-row" key={t.key}>
+          <div>
+            <div className="label">{t.label}</div>
+            <div className="desc">{t.desc}</div>
+          </div>
+          <button
+            type="button"
+            className={`toggle ${notifications[t.key] ? 'on' : ''}`}
+            role="switch"
+            aria-checked={notifications[t.key]}
+            aria-label={t.label}
+            onClick={() => toggle(t.key)}
+          />
+        </div>
+      ))}
+      <div className="settings-row" style={{ borderBottom: 'none' }}>
+        <div>
+          <div className="desc">
+            Preferences are saved to your profile and synced across your devices. Email and SMS
+            delivery is configured by your administrator.
+          </div>
+        </div>
+      </div>
+      {canManageSchedule ? <ReminderScheduleEditor /> : null}
+    </div>
+  );
+}
+
+type ReminderRuleDraft = { offset_days: number; template: string; channel: 'email' | 'sms' };
+
+function ReminderScheduleEditor() {
+  const [schedule, setSchedule] = useState<GlobalReminderSchedule | null>(null);
+  const [rules, setRules] = useState<ReminderRuleDraft[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [saving, startSave] = useTransition();
+
+  useEffect(() => {
+    let cancelled = false;
+    getGlobalReminderSchedule()
+      .then((s) => {
+        if (cancelled) return;
+        setSchedule(s);
+        setRules(s.rules.map((r) => ({ ...r })));
+      })
+      .catch(() => {
+        if (!cancelled) setLoadError('Could not load the reminder schedule.');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const updateRule = (i: number, patch: Partial<ReminderRuleDraft>) => {
+    setRules((prev) => prev.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
+  };
+  const addRule = () =>
+    setRules((prev) => [
+      ...prev,
+      { offset_days: 0, template: 'Payment reminder', channel: 'email' },
+    ]);
+  const removeRule = (i: number) => setRules((prev) => prev.filter((_, idx) => idx !== i));
+
+  const save = () => {
+    const clean = rules
+      .map((r) => ({ ...r, template: r.template.trim() }))
+      .filter((r) => r.template.length > 0);
+    if (clean.length === 0) {
+      toast.error('Add at least one reminder rule with a message.');
+      return;
+    }
+    startSave(async () => {
+      try {
+        await saveGlobalReminderSchedule({ rules: clean });
+        toast.success('Reminder schedule saved.');
+        setRules(clean.map((r) => ({ ...r })));
+      } catch {
+        toast.error('Could not save the reminder schedule.');
+      }
+    });
+  };
+
+  if (loadError) {
+    return (
+      <div style={{ padding: '8px 18px 18px', color: 'var(--text-muted)', fontSize: 13 }}>
+        {loadError}
+      </div>
+    );
+  }
+  if (!schedule) {
+    return (
+      <div style={{ padding: '8px 18px 18px', color: 'var(--text-muted)', fontSize: 13 }}>
+        Loading schedule…
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ padding: '8px 18px 18px', borderTop: '1px solid var(--border)' }}>
+      <div className="label" style={{ marginBottom: 2 }}>
+        Invoice reminder schedule
+      </div>
+      <div className="desc" style={{ marginBottom: 12 }}>
+        Org-wide default dunning rules. Offset is days from the due date (negative = before, 0 = on
+        the due date). These drive the automated reminder job.
+      </div>
+      {rules.length === 0 ? (
+        <div className="desc" style={{ marginBottom: 10 }}>
+          No rules yet — add one below.
+        </div>
+      ) : null}
+      {rules.map((r, i) => (
+        <div
+          key={i}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            marginBottom: 8,
+            flexWrap: 'wrap',
+          }}
+        >
+          <input
+            className="input"
+            type="number"
+            style={{ width: 76 }}
+            value={r.offset_days}
+            min={-365}
+            max={365}
+            aria-label="Offset days"
+            onChange={(e) => updateRule(i, { offset_days: Number(e.target.value) })}
+          />
+          <span className="desc" style={{ margin: 0 }}>
+            days
+          </span>
+          <input
+            className="input"
+            style={{ flex: 1, minWidth: 160 }}
+            value={r.template}
+            maxLength={120}
+            placeholder="Message / template name"
+            aria-label="Template"
+            onChange={(e) => updateRule(i, { template: e.target.value })}
+          />
+          <select
+            className="input"
+            style={{ width: 96 }}
+            value={r.channel}
+            aria-label="Channel"
+            onChange={(e) => updateRule(i, { channel: e.target.value as 'email' | 'sms' })}
+          >
+            <option value="email">Email</option>
+            <option value="sms">SMS</option>
+          </select>
+          <button
+            className="btn"
+            type="button"
+            onClick={() => removeRule(i)}
+            aria-label="Remove rule"
+          >
+            Remove
+          </button>
+        </div>
+      ))}
+      <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+        <button className="btn" type="button" onClick={addRule}>
+          Add rule
+        </button>
+        <button className="btn primary" type="button" onClick={save} disabled={saving}>
+          {saving ? 'Saving…' : 'Save schedule'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Settings · Security                                                        */
+/* -------------------------------------------------------------------------- */
+
+function SecurityPanel({ onSignOut }: { onSignOut?: () => void }) {
+  const [security, setSecurity] = useState<MySecurity | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    getMySecurity()
+      .then((s) => {
+        if (!cancelled) setSecurity(s);
+      })
+      .catch(() => {
+        if (!cancelled) setLoadError('Could not load your security details.');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (loadError) {
+    return <div style={{ padding: 24, color: 'var(--text-muted)', fontSize: 13 }}>{loadError}</div>;
+  }
+  if (!security) {
+    return (
+      <div style={{ padding: 24, color: 'var(--text-muted)', fontSize: 13 }}>Loading security…</div>
+    );
+  }
+
+  return (
+    <div>
+      <div className="settings-row">
+        <div>
+          <div className="label">Role</div>
+          <div className="desc">Your access level in the workspace.</div>
+        </div>
+        <span className="badge">{ROLE_LABELS[security.role] ?? security.role}</span>
+      </div>
+      <div className="settings-row" style={{ alignItems: 'flex-start' }}>
+        <div>
+          <div className="label">What you can do</div>
+          <div className="desc">Permissions granted by your role.</div>
+        </div>
+        <div
+          style={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            gap: 6,
+            maxWidth: 360,
+            justifyContent: 'flex-end',
+          }}
+        >
+          {security.capabilities.length === 0 ? (
+            <span className="desc" style={{ margin: 0 }}>
+              No special permissions.
+            </span>
+          ) : (
+            security.capabilities.map((c) => (
+              <span key={c.key} className="badge" style={{ fontWeight: 400 }}>
+                {c.label}
+              </span>
+            ))
+          )}
+        </div>
+      </div>
+      <div className="settings-row" style={{ alignItems: 'flex-start' }}>
+        <div style={{ flex: 1 }}>
+          <div className="label">Recent account activity</div>
+          <div className="desc">Your last actions across the workspace.</div>
+          <div style={{ marginTop: 8 }}>
+            {security.recentActivity.length === 0 ? (
+              <div className="desc" style={{ margin: 0 }}>
+                No recent activity recorded.
+              </div>
+            ) : (
+              security.recentActivity.slice(0, 10).map((a) => (
+                <div
+                  key={a.id}
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    gap: 12,
+                    fontSize: 12,
+                    padding: '4px 0',
+                    borderBottom: '1px solid var(--border)',
+                  }}
+                >
+                  <span style={{ color: 'var(--text)' }}>
+                    {a.action} · {a.entityType}
+                  </span>
+                  <span style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                    {new Date(a.createdAt).toLocaleString()}
+                  </span>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      </div>
+      <div className="settings-row">
+        <div>
+          <div className="label">Password &amp; two-factor</div>
+          <div className="desc">
+            Managed by your sign-in provider — available once SSO login is enabled.
+          </div>
+        </div>
+        <button className="btn" type="button" disabled title="Available with the sign-in system.">
+          Manage
+        </button>
+      </div>
+      {onSignOut ? (
+        <div className="settings-row">
+          <div>
+            <div className="label">Sign out</div>
+            <div className="desc">End your session on this device.</div>
+          </div>
+          <button className="btn" type="button" onClick={onSignOut}>
+            Sign out
+          </button>
+        </div>
+      ) : null}
+    </div>
   );
 }

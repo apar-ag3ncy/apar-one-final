@@ -15,7 +15,7 @@ import { osActions, useOsStore, type WindowState } from '@/lib/os/store';
 import { useWindowUrlSync } from '@/lib/url/per-window-nuqs';
 import { AdminConsole } from './auth/admin-console';
 import { LockScreen } from './auth/lock-screen';
-import { useAuth } from './auth/store';
+import { useAuth, SUPER_ADMIN_USER_ID } from './auth/store';
 import { can } from './auth/types';
 import { useUserSettings, type UserSettings } from './auth/session-store';
 import { useVendorStore } from './auth/vendor-store';
@@ -133,8 +133,22 @@ export function OsRoot() {
 /* -------------------------------------------------------------------------- */
 
 function Desktop({ signOut }: { signOut: () => void }) {
-  const { currentUser } = useAuth();
+  const { currentUser, updateSuperAdmin, updateUser } = useAuth();
   const user = currentUser!;
+
+  // Keep the OS session's display name in step with an Account save (which
+  // writes the real users table). Super admin's record is edited via its own
+  // path; everyone else through updateUser.
+  const setDisplayName = useCallback(
+    (fullName: string) => {
+      if (user.id === SUPER_ADMIN_USER_ID) {
+        updateSuperAdmin({ fullName });
+      } else {
+        updateUser(user.id, { fullName });
+      }
+    },
+    [user.id, updateSuperAdmin, updateUser],
+  );
 
   // Per-user settings (theme, dock size, dock gap, accent, default app).
   const { settings, setSettings, resetSettings, settingsLoaded } = useUserSettings(user.id);
@@ -676,6 +690,9 @@ function Desktop({ signOut }: { signOut: () => void }) {
                   settings={settings}
                   onSettingsChange={setSettings}
                   onResetSettings={resetSettings}
+                  currentUserRole={user.role}
+                  onSignOut={signOut}
+                  onDisplayNameChange={setDisplayName}
                 />
               );
             case 'admin_console':
