@@ -47,3 +47,6 @@ next-env.d.ts
 # local screenshots
 .screenshots/
 .screenshots-prod/
+
+# data exports (npm run db:export) — may contain real business data
+exports/

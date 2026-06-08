@@ -74,6 +74,12 @@ import {
   type GlobalReminderSchedule,
 } from '@/lib/server/billing/reminders';
 import {
+  getActivityDigestConfig,
+  saveActivityDigestConfig,
+  sendActivityDigestNow,
+  type ActivityDigestConfigView,
+} from '@/lib/server/entities/activity-digest';
+import {
   listRecentDocuments,
   type RecentDocumentRow,
 } from '@/lib/server/entities/entity-documents';
@@ -4411,7 +4417,156 @@ function NotificationsPanel({
           </div>
         </div>
       </div>
+      {canManageSchedule ? <ActivityDigestEditor /> : null}
       {canManageSchedule ? <ReminderScheduleEditor /> : null}
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Settings · Notifications — daily activity digest (admin)                    */
+/* -------------------------------------------------------------------------- */
+
+function ActivityDigestEditor() {
+  const [cfg, setCfg] = useState<ActivityDigestConfigView | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [enabled, setEnabled] = useState(false);
+  const [recipient, setRecipient] = useState('');
+  const [recipientError, setRecipientError] = useState<string | null>(null);
+  const [saving, startSave] = useTransition();
+  const [sending, startSend] = useTransition();
+
+  useEffect(() => {
+    let cancelled = false;
+    getActivityDigestConfig()
+      .then((c) => {
+        if (cancelled) return;
+        setCfg(c);
+        setEnabled(c.enabled);
+        setRecipient(c.recipient);
+      })
+      .catch(() => {
+        if (!cancelled) setLoadError('Could not load the digest settings.');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const save = () => {
+    setRecipientError(null);
+    startSave(async () => {
+      const res = await saveActivityDigestConfig({ enabled, recipient });
+      if (!res.ok) {
+        setRecipientError(res.errors.recipient ?? null);
+        toast.error(res.message);
+        return;
+      }
+      toast.success('Digest settings saved.');
+    });
+  };
+
+  const sendTest = () => {
+    startSend(async () => {
+      const res = await sendActivityDigestNow();
+      if (!res.ok) {
+        toast.error(res.message);
+        return;
+      }
+      toast.success(`Digest sent (${res.count} event${res.count === 1 ? '' : 's'}).`);
+    });
+  };
+
+  if (loadError) {
+    return (
+      <div style={{ padding: '8px 18px 18px', color: 'var(--text-muted)', fontSize: 13 }}>
+        {loadError}
+      </div>
+    );
+  }
+  if (!cfg) {
+    return (
+      <div style={{ padding: '8px 18px 18px', color: 'var(--text-muted)', fontSize: 13 }}>
+        Loading digest settings…
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ padding: '8px 18px 18px', borderTop: '1px solid var(--border)' }}>
+      <div className="label" style={{ marginBottom: 2 }}>
+        Daily activity digest
+      </div>
+      <div className="desc" style={{ marginBottom: 10 }}>
+        Email a summary of the last 24 hours of activity to a recipient once a day (driven by the
+        scheduled job).
+      </div>
+      {!cfg.emailReady ? (
+        <div
+          className="desc"
+          style={{
+            color: 'var(--apar-red)',
+            background: 'var(--apar-red-soft)',
+            borderRadius: 8,
+            padding: '8px 10px',
+            marginBottom: 10,
+          }}
+        >
+          {cfg.emailError ?? 'Email provider is not configured.'} Add it to .env.local to enable
+          sending.
+        </div>
+      ) : null}
+      <div className="settings-row" style={{ padding: '10px 0' }}>
+        <div>
+          <div className="label">Enable daily digest</div>
+          <div className="desc">Turn the scheduled email on or off.</div>
+        </div>
+        <button
+          type="button"
+          className={`toggle ${enabled ? 'on' : ''}`}
+          role="switch"
+          aria-checked={enabled}
+          aria-label="Enable daily digest"
+          onClick={() => setEnabled((v) => !v)}
+        />
+      </div>
+      <div className="settings-row" style={{ padding: '10px 0' }}>
+        <div>
+          <div className="label">Recipient</div>
+          <div className="desc">Where the digest is sent.</div>
+          {recipientError ? (
+            <div className="desc" style={{ color: 'var(--apar-red)' }}>
+              {recipientError}
+            </div>
+          ) : null}
+        </div>
+        <input
+          className="input"
+          type="email"
+          style={{ maxWidth: 240 }}
+          value={recipient}
+          maxLength={200}
+          placeholder="company@example.com"
+          aria-label="Digest recipient"
+          onChange={(e) => setRecipient(e.target.value)}
+        />
+      </div>
+      <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+        <button className="btn primary" type="button" onClick={save} disabled={saving}>
+          {saving ? 'Saving…' : 'Save'}
+        </button>
+        <button
+          className="btn"
+          type="button"
+          onClick={sendTest}
+          disabled={sending || !cfg.emailReady}
+          title={
+            cfg.emailReady ? 'Send the digest now to the saved recipient' : (cfg.emailError ?? '')
+          }
+        >
+          {sending ? 'Sending…' : 'Send test now'}
+        </button>
+      </div>
     </div>
   );
 }

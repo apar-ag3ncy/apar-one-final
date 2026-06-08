@@ -17,6 +17,7 @@
     "db:studio": "drizzle-kit studio",
     "db:check": "tsx scripts/check-no-floats.ts",
     "db:seed": "tsx scripts/seed.ts",
+    "db:export": "node scripts/export-data.mjs",
     "check:money": "node scripts/check-money.mjs",
     "check": "npm run typecheck && npm run lint && npm run format:check && npm run test && npm run db:check && npm run check:money"
   },
