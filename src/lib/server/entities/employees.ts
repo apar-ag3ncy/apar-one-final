@@ -629,6 +629,20 @@ const UpdateEmployeeSchema = z.object({
   employmentType: z.enum(['full_time', 'part_time', 'contract', 'intern', 'consultant']).optional(),
   status: z.enum(['prospective', 'active', 'on_leave', 'notice', 'separated']).optional(),
   reportsToEmployeeId: z.string().uuid().nullable().optional(),
+  // Lifecycle dates. joinedOn is NOT NULL in the DB, so it can be corrected
+  // but not cleared; confirmedOn / separatedOn are nullable.
+  joinedOn: z.string().regex(ISO_DATE, 'Joining date must be YYYY-MM-DD').optional(),
+  confirmedOn: z
+    .string()
+    .regex(ISO_DATE, 'Confirmation date must be YYYY-MM-DD')
+    .nullable()
+    .optional(),
+  separatedOn: z
+    .string()
+    .regex(ISO_DATE, 'Separation date must be YYYY-MM-DD')
+    .nullable()
+    .optional(),
+  noticePeriodDays: z.string().trim().max(40).nullable().optional(),
   notes: z.string().trim().max(2000).nullable().optional(),
 });
 
@@ -725,6 +739,10 @@ export async function updateEmployee(input: UpdateEmployeeInput): Promise<Update
   if (v.employmentType !== undefined) patch.employmentType = v.employmentType;
   if (v.status !== undefined) patch.status = v.status;
   if (v.reportsToEmployeeId !== undefined) patch.reportsToEmployeeId = v.reportsToEmployeeId;
+  if (v.joinedOn !== undefined) patch.joinedOn = v.joinedOn;
+  if (v.confirmedOn !== undefined) patch.confirmedOn = v.confirmedOn;
+  if (v.separatedOn !== undefined) patch.separatedOn = v.separatedOn;
+  if (v.noticePeriodDays !== undefined) patch.noticePeriodDays = v.noticePeriodDays;
   if (v.notes !== undefined) patch.notes = v.notes;
 
   try {
@@ -775,4 +793,55 @@ export async function updateEmployee(input: UpdateEmployeeInput): Promise<Update
       errors: {},
     };
   }
+}
+
+/* -------------------------------------------------------------------------- */
+/* getEmployeeEditable — full editable field set for the OS profile editor     */
+/* -------------------------------------------------------------------------- */
+
+export type EditableEmployee = {
+  id: string;
+  fullName: string;
+  displayName: string | null;
+  designation: string | null;
+  department: string | null;
+  employmentType: 'full_time' | 'part_time' | 'contract' | 'intern' | 'consultant';
+  status: 'prospective' | 'active' | 'on_leave' | 'notice' | 'separated';
+  workEmail: string | null;
+  personalEmail: string | null;
+  phone: string | null;
+  reportsToEmployeeId: string | null;
+  joinedOn: string;
+  confirmedOn: string | null;
+  separatedOn: string | null;
+  noticePeriodDays: string | null;
+  notes: string | null;
+};
+
+/** Every field the OS profile editor needs to prefill + round-trip. */
+export async function getEmployeeEditable(id: string): Promise<EditableEmployee | null> {
+  await getActorContext();
+  const rows = await db
+    .select({
+      id: employees.id,
+      fullName: employees.fullName,
+      displayName: employees.displayName,
+      designation: employees.designation,
+      department: employees.department,
+      employmentType: employees.employmentType,
+      status: employees.status,
+      workEmail: employees.workEmail,
+      personalEmail: employees.personalEmail,
+      phone: employees.phone,
+      reportsToEmployeeId: employees.reportsToEmployeeId,
+      joinedOn: employees.joinedOn,
+      confirmedOn: employees.confirmedOn,
+      separatedOn: employees.separatedOn,
+      noticePeriodDays: employees.noticePeriodDays,
+      notes: employees.notes,
+    })
+    .from(employees)
+    .where(and(eq(employees.id, id), isNull(employees.deletedAt)))
+    .limit(1);
+  return rows[0] ?? null;
 }

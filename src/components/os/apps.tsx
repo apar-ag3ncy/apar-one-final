@@ -1,15 +1,6 @@
 'use client';
 
 import { useEffect, useRef, useState, useTransition, type FormEvent, type ReactNode } from 'react';
-import {
-  Area,
-  AreaChart,
-  CartesianGrid,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from 'recharts';
 import { APPS } from './data';
 import { useBusinessData } from './data-store';
 import { navigateBesideFocused } from './apps/navigate';
@@ -21,8 +12,7 @@ import {
   listUsers as listDbUsers,
   listDepartments as listDbDepartments,
 } from '@/lib/server-stub/entity-actions';
-import { departmentLabel } from '@/components/employees/types';
-import type { Employee as OsEmployee } from './types';
+import { departmentLabel, type Employee as HrEmployee } from '@/components/employees/types';
 import {
   ACCENTS,
   DOCK_GAP_MAX,
@@ -37,7 +27,6 @@ import { Icon, type IconName } from './icons';
 import type {
   Client,
   Project,
-  Report,
   Vendor,
   VendorDocument,
   VendorDocumentKind,
@@ -54,7 +43,13 @@ import {
 } from '@/lib/server/entities/projects';
 import { archiveVendor, createVendor, updateVendor } from '@/lib/server/entities/vendors';
 import { archiveClient, createClient, updateClient } from '@/lib/server/entities/clients';
-import { archiveEmployee, createEmployee, updateEmployee } from '@/lib/server/entities/employees';
+import {
+  archiveEmployee,
+  createEmployee,
+  getEmployeeEditable,
+  updateEmployee,
+  type EditableEmployee,
+} from '@/lib/server/entities/employees';
 import {
   getMyProfile,
   getMySecurity,
@@ -3031,6 +3026,23 @@ function ProjectFormModal({
 /* Employees                                                                  */
 /* -------------------------------------------------------------------------- */
 
+type EmpStatusUi = 'active' | 'notice' | 'separated';
+
+const EMP_STATUS_META: Record<EmpStatusUi, { label: string; fg: string; bg: string }> = {
+  active: { label: 'Active', fg: '#2e8f5a', bg: 'rgba(46,143,90,0.12)' },
+  notice: { label: 'Notice', fg: '#c46a28', bg: 'rgba(196,106,40,0.14)' },
+  separated: { label: 'Separated', fg: 'var(--text-muted)', bg: 'var(--content-2)' },
+};
+
+const EMP_TYPE_LABEL: Record<string, string> = {
+  full_time: 'Full-time',
+  part_time: 'Part-time',
+  contractor: 'Contractor',
+  intern: 'Intern',
+};
+
+type DirRow = HrEmployee & { tone: string; managerName: string | null };
+
 export function EmployeesApp({
   canEdit = true,
   canDelete = true,
@@ -3038,46 +3050,41 @@ export function EmployeesApp({
   canEdit?: boolean;
   canDelete?: boolean;
 }) {
-  const [filterDept, setFilterDept] = useState<string>('all');
+  const [rows, setRows] = useState<readonly DirRow[] | null>(null);
+  const [search, setSearch] = useState('');
+  const [filterDept, setFilterDept] = useState('all');
+  const [filterStatus, setFilterStatus] = useState<'all' | EmpStatusUi>('all');
+  const [filterType, setFilterType] = useState('all');
+  const [sortBy, setSortBy] = useState<'name' | 'joined' | 'dept'>('name');
+  const [showInactive, setShowInactive] = useState(false);
   const [showNew, setShowNew] = useState(false);
   const [showDepts, setShowDepts] = useState(false);
-  const [editing, setEditing] = useState<OsEmployee | null>(null);
-  const [confirmDel, setConfirmDel] = useState<OsEmployee | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [confirmDel, setConfirmDel] = useState<DirRow | null>(null);
 
-  // Real DB-backed list. Mirrors the ClientsApp / VendorsApp swap so
-  // clicking an employee card passes a real UUID into the openWindow
-  // route → EmployeeWindow renders with the §8.4 personal dashboard.
-  // Edit / delete go straight to the DB (updateEmployee / archiveEmployee)
-  // and then refetch this list — there is no local-store copy to drift.
-  const [dbEmployees, setDbEmployees] = useState<readonly OsEmployee[] | null>(null);
-
-  async function fetchEmployeeList(): Promise<readonly OsEmployee[]> {
-    const rows = await listDbEmployees();
-    // The Team directory shows current team only — archived / separated
-    // teammates drop off (they stay queryable from the dashboard list).
-    return rows
-      .filter((r) => r.status !== 'separated')
-      .map(
-        (r): OsEmployee => ({
-          id: r.id,
-          name: r.fullName,
-          role: r.designation || '—',
-          dept: departmentLabel(r.department),
-          tone: toneForName(r.fullName),
-        }),
-      );
+  // Real DB-backed list. Clicking a card passes a real UUID into the
+  // openWindow route → EmployeeWindow renders the §8.4 dashboard. Edits go
+  // straight to the DB (create/updateEmployee / archiveEmployee) then refetch.
+  async function fetchEmployeeList(): Promise<readonly DirRow[]> {
+    const list = await listDbEmployees();
+    const nameById = new Map(list.map((r) => [r.id, r.fullName]));
+    return list.map((r) => ({
+      ...r,
+      tone: toneForName(r.fullName),
+      managerName: r.reportsTo ? (nameById.get(r.reportsTo) ?? null) : null,
+    }));
   }
 
   async function refreshEmployeeList() {
     const next = await fetchEmployeeList().catch(() => null);
-    if (next) setDbEmployees(next);
+    if (next) setRows(next);
   }
 
   useEffect(() => {
     let cancelled = false;
     fetchEmployeeList()
       .then((mapped) => {
-        if (!cancelled) setDbEmployees(mapped);
+        if (!cancelled) setRows(mapped);
       })
       .catch(() => {
         /* fall through to empty list */
@@ -3087,30 +3094,44 @@ export function EmployeesApp({
     };
   }, []);
 
-  const data = { employees: dbEmployees ?? [] };
-  const visible =
-    filterDept === 'all' ? data.employees : data.employees.filter((e) => e.dept === filterDept);
-  const depts = new Set(data.employees.map((e) => e.dept));
+  const all = rows ?? [];
+  const deptOptions = Array.from(
+    new Set(all.map((e) => departmentLabel(e.department)).filter((d) => d && d !== '—')),
+  ).sort();
+  const q = search.trim().toLowerCase();
+  const filtered = all
+    .filter((e) => (showInactive || filterStatus === 'separated' ? true : e.status !== 'separated'))
+    .filter((e) => (filterStatus === 'all' ? true : e.status === filterStatus))
+    .filter((e) => (filterType === 'all' ? true : e.employmentType === filterType))
+    .filter((e) => (filterDept === 'all' ? true : departmentLabel(e.department) === filterDept))
+    .filter((e) =>
+      q === ''
+        ? true
+        : [e.fullName, e.designation, departmentLabel(e.department), e.workEmail].some((v) =>
+            (v ?? '').toLowerCase().includes(q),
+          ),
+    );
+  const visible = [...filtered].sort((a, b) => {
+    if (sortBy === 'joined') return b.joinedAt.getTime() - a.joinedAt.getTime();
+    if (sortBy === 'dept')
+      return (
+        departmentLabel(a.department).localeCompare(departmentLabel(b.department)) ||
+        a.fullName.localeCompare(b.fullName)
+      );
+    return a.fullName.localeCompare(b.fullName);
+  });
+  const activeCount = all.filter((e) => e.status === 'active').length;
+  const roster = all.map((e) => ({ id: e.id, name: e.fullName }));
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
       <div className="main-header">
         <h2>Team</h2>
         <span className="sub">
-          {data.employees.length} people · {depts.size} department{depts.size === 1 ? '' : 's'}
+          {all.length} {all.length === 1 ? 'person' : 'people'} · {activeCount} active ·{' '}
+          {deptOptions.length} dept{deptOptions.length === 1 ? '' : 's'}
         </span>
         <div className="grow" />
-        <select
-          value={filterDept}
-          onChange={(e) => setFilterDept(e.target.value)}
-          className="header-select"
-          aria-label="Filter by department"
-        >
-          <option value="all">All departments</option>
-          {[...depts].map((d) => (
-            <option key={d}>{d}</option>
-          ))}
-        </select>
         <button
           className="btn"
           type="button"
@@ -3136,64 +3157,86 @@ export function EmployeesApp({
           Invite
         </button>
       </div>
+
+      <div
+        style={{
+          display: 'flex',
+          gap: 8,
+          alignItems: 'center',
+          flexWrap: 'wrap',
+          padding: '10px 16px',
+          borderBottom: '1px solid var(--border)',
+        }}
+      >
+        <input
+          className="input"
+          style={{ flex: '1 1 200px', minWidth: 160 }}
+          placeholder="Search name, role, email…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          aria-label="Search team"
+        />
+        <select
+          className="input"
+          value={filterStatus}
+          onChange={(e) => setFilterStatus(e.target.value as 'all' | EmpStatusUi)}
+          aria-label="Filter by status"
+        >
+          <option value="all">All statuses</option>
+          <option value="active">Active</option>
+          <option value="notice">Notice</option>
+          <option value="separated">Separated</option>
+        </select>
+        <select
+          className="input"
+          value={filterType}
+          onChange={(e) => setFilterType(e.target.value)}
+          aria-label="Filter by employment type"
+        >
+          <option value="all">All types</option>
+          <option value="full_time">Full-time</option>
+          <option value="part_time">Part-time</option>
+          <option value="contractor">Contractor</option>
+          <option value="intern">Intern</option>
+        </select>
+        <select
+          className="input"
+          value={filterDept}
+          onChange={(e) => setFilterDept(e.target.value)}
+          aria-label="Filter by department"
+        >
+          <option value="all">All departments</option>
+          {deptOptions.map((d) => (
+            <option key={d}>{d}</option>
+          ))}
+        </select>
+        <select
+          className="input"
+          value={sortBy}
+          onChange={(e) => setSortBy(e.target.value as 'name' | 'joined' | 'dept')}
+          aria-label="Sort by"
+        >
+          <option value="name">Sort: Name</option>
+          <option value="joined">Sort: Joined</option>
+          <option value="dept">Sort: Department</option>
+        </select>
+        <button
+          type="button"
+          className={`toggle ${showInactive ? 'on' : ''}`}
+          role="switch"
+          aria-checked={showInactive}
+          aria-label="Show separated teammates"
+          title="Show separated / archived teammates"
+          onClick={() => setShowInactive((v) => !v)}
+        />
+        <span style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>Show inactive</span>
+      </div>
+
       <div
         className="card-grid"
-        style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))' }}
+        style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))' }}
       >
-        {visible.map((e) => (
-          <div
-            key={e.id}
-            className="emp-card emp-card-actionable"
-            role="button"
-            tabIndex={0}
-            onClick={() => navigateBesideFocused({ type: 'employee', id: e.id })}
-            onKeyDown={(ev) => {
-              if (ev.key === 'Enter' || ev.key === ' ') {
-                ev.preventDefault();
-                navigateBesideFocused({ type: 'employee', id: e.id });
-              }
-            }}
-            style={{ cursor: 'pointer' }}
-            title={`Open ${e.name}'s profile`}
-          >
-            <div
-              className="avatar"
-              style={{ width: 44, height: 44, fontSize: 14, background: e.tone, borderRadius: 12 }}
-            >
-              {initials(e.name)}
-            </div>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div className="name">{e.name}</div>
-              <div className="role">{e.role}</div>
-              <div className="dept">{e.dept}</div>
-            </div>
-            {(canEdit || canDelete) && (
-              <div className="emp-card-actions" onClick={(ev) => ev.stopPropagation()}>
-                {canEdit && (
-                  <button
-                    type="button"
-                    className="emp-card-btn"
-                    title="Edit teammate"
-                    onClick={() => setEditing(e)}
-                  >
-                    <Icon name="edit" size={12} />
-                  </button>
-                )}
-                {canDelete && (
-                  <button
-                    type="button"
-                    className="emp-card-btn emp-card-delete"
-                    title="Remove from team"
-                    onClick={() => setConfirmDel(e)}
-                  >
-                    <Icon name="trash" size={12} />
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
-        ))}
-        {visible.length === 0 && (
+        {rows === null ? (
           <div
             style={{
               gridColumn: '1 / -1',
@@ -3202,9 +3245,143 @@ export function EmployeesApp({
               color: 'var(--text-muted)',
             }}
           >
-            {data.employees.length === 0
+            Loading team…
+          </div>
+        ) : (
+          visible.map((e) => {
+            const sm = EMP_STATUS_META[e.status];
+            return (
+              <div
+                key={e.id}
+                className="emp-card emp-card-actionable"
+                role="button"
+                tabIndex={0}
+                onClick={() => navigateBesideFocused({ type: 'employee', id: e.id })}
+                onKeyDown={(ev) => {
+                  if (ev.key === 'Enter' || ev.key === ' ') {
+                    ev.preventDefault();
+                    navigateBesideFocused({ type: 'employee', id: e.id });
+                  }
+                }}
+                style={{
+                  cursor: 'pointer',
+                  alignItems: 'flex-start',
+                  opacity: e.status === 'separated' ? 0.7 : 1,
+                }}
+                title={`Open ${e.fullName}'s profile`}
+              >
+                <div
+                  className="avatar"
+                  style={{
+                    width: 44,
+                    height: 44,
+                    fontSize: 14,
+                    background: e.tone,
+                    borderRadius: 12,
+                  }}
+                >
+                  {initials(e.fullName)}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <div
+                      className="name"
+                      style={{
+                        minWidth: 0,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {e.fullName}
+                    </div>
+                    <span
+                      style={{
+                        fontSize: 10,
+                        fontWeight: 600,
+                        padding: '1px 7px',
+                        borderRadius: 999,
+                        color: sm.fg,
+                        background: sm.bg,
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {sm.label}
+                    </span>
+                  </div>
+                  <div className="role">{e.designation || '—'}</div>
+                  <div className="dept">
+                    {departmentLabel(e.department)} ·{' '}
+                    {EMP_TYPE_LABEL[e.employmentType] ?? e.employmentType}
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 11,
+                      color: 'var(--text-muted)',
+                      marginTop: 3,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 1,
+                    }}
+                  >
+                    {e.workEmail ? (
+                      <span
+                        style={{
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {e.workEmail}
+                      </span>
+                    ) : null}
+                    <span>
+                      Joined{' '}
+                      {e.joinedAt.toLocaleDateString('en-IN', { month: 'short', year: 'numeric' })}
+                      {e.managerName ? ` · ↳ ${e.managerName}` : ''}
+                    </span>
+                  </div>
+                </div>
+                {(canEdit || canDelete) && (
+                  <div className="emp-card-actions" onClick={(ev) => ev.stopPropagation()}>
+                    {canEdit && (
+                      <button
+                        type="button"
+                        className="emp-card-btn"
+                        title="Edit profile"
+                        onClick={() => setEditingId(e.id)}
+                      >
+                        <Icon name="edit" size={12} />
+                      </button>
+                    )}
+                    {canDelete && e.status !== 'separated' && (
+                      <button
+                        type="button"
+                        className="emp-card-btn emp-card-delete"
+                        title="Remove from team"
+                        onClick={() => setConfirmDel(e)}
+                      >
+                        <Icon name="trash" size={12} />
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })
+        )}
+        {rows !== null && visible.length === 0 && (
+          <div
+            style={{
+              gridColumn: '1 / -1',
+              padding: 28,
+              textAlign: 'center',
+              color: 'var(--text-muted)',
+            }}
+          >
+            {all.length === 0
               ? 'No teammates yet — click "Invite" to add the first.'
-              : `No one in ${filterDept}.`}
+              : 'No teammates match these filters.'}
           </div>
         )}
       </div>
@@ -3219,62 +3396,40 @@ export function EmployeesApp({
         />
       )}
       {showNew && (
-        <EmployeeFormModal
+        <EmployeeProfileEditor
           mode="create"
+          roster={roster}
           onClose={() => setShowNew(false)}
-          onSubmit={async (input) => {
-            // Quick invite — sensible defaults; HR fills KYC / salary /
-            // contract in the full wizard (/employees/new) or the window.
-            const result = await createEmployee({
-              fullName: input.name,
-              designation: input.role || undefined,
-              department: input.dept || undefined,
-              employmentType: 'full_time',
-              joinedOn: new Date().toISOString().slice(0, 10),
-            });
-            if (!result.ok) {
-              toast.error(result.message);
-              return;
-            }
+          onSaved={async (id, name) => {
             setShowNew(false);
             await refreshEmployeeList();
-            navigateBesideFocused({ type: 'employee', id: result.id });
-            toast.success(`${input.name} added to the team.`);
+            if (id) navigateBesideFocused({ type: 'employee', id });
+            toast.success(`${name} added to the team.`);
           }}
         />
       )}
-      {editing && (
-        <EmployeeFormModal
+      {editingId && (
+        <EmployeeProfileEditor
           mode="edit"
-          initial={editing}
-          onClose={() => setEditing(null)}
-          onSubmit={async (input) => {
-            // Persist to the DB, then refetch so the card reflects the edit.
-            const result = await updateEmployee({
-              id: editing.id,
-              fullName: input.name,
-              designation: input.role || null,
-              department: input.dept || null,
-            });
-            if (!result.ok) {
-              toast.error(result.message);
-              return;
-            }
-            setEditing(null);
+          employeeId={editingId}
+          roster={roster.filter((r) => r.id !== editingId)}
+          onClose={() => setEditingId(null)}
+          onSaved={async (_id, name) => {
+            setEditingId(null);
             await refreshEmployeeList();
-            toast.success(`Updated ${input.name}.`);
+            toast.success(`Updated ${name}.`);
           }}
         />
       )}
       {confirmDel && (
         <ConfirmDialog
-          title={`Remove ${confirmDel.name} from the team?`}
-          message="They'll disappear from the team directory. Projects and ledger entries that reference them aren't affected, and a partner can restore them later."
+          title={`Remove ${confirmDel.fullName} from the team?`}
+          message="They'll disappear from the active team directory. Projects and ledger entries that reference them aren't affected, and they can be restored later."
           destructive
           confirmLabel="Remove"
           onCancel={() => setConfirmDel(null)}
           onConfirm={async () => {
-            const name = confirmDel.name;
+            const name = confirmDel.fullName;
             setConfirmDel(null);
             try {
               await archiveEmployee(confirmDel.id);
@@ -3290,35 +3445,118 @@ export function EmployeesApp({
   );
 }
 
-function EmployeeFormModal({
+/* -------------------------------------------------------------------------- */
+/* Employee profile editor — full create + edit form (OS)                      */
+/* -------------------------------------------------------------------------- */
+
+type EmpType = 'full_time' | 'part_time' | 'contract' | 'intern' | 'consultant';
+type EmpStatus = 'prospective' | 'active' | 'on_leave' | 'notice' | 'separated';
+
+const EMP_TYPE_OPTIONS: { value: EmpType; label: string }[] = [
+  { value: 'full_time', label: 'Full-time' },
+  { value: 'part_time', label: 'Part-time' },
+  { value: 'contract', label: 'Contract' },
+  { value: 'intern', label: 'Intern' },
+  { value: 'consultant', label: 'Consultant' },
+];
+const EMP_STATUS_OPTIONS: { value: EmpStatus; label: string }[] = [
+  { value: 'prospective', label: 'Prospective' },
+  { value: 'active', label: 'Active' },
+  { value: 'on_leave', label: 'On leave' },
+  { value: 'notice', label: 'Notice' },
+  { value: 'separated', label: 'Separated' },
+];
+
+type EditorForm = {
+  fullName: string;
+  displayName: string;
+  designation: string;
+  department: string;
+  employmentType: EmpType;
+  status: EmpStatus;
+  workEmail: string;
+  personalEmail: string;
+  phone: string;
+  reportsToEmployeeId: string;
+  joinedOn: string;
+  confirmedOn: string;
+  separatedOn: string;
+  noticePeriodDays: string;
+  notes: string;
+};
+
+function todayIso(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+const EMPTY_EDITOR_FORM: EditorForm = {
+  fullName: '',
+  displayName: '',
+  designation: '',
+  department: '',
+  employmentType: 'full_time',
+  status: 'active',
+  workEmail: '',
+  personalEmail: '',
+  phone: '',
+  reportsToEmployeeId: '',
+  joinedOn: '',
+  confirmedOn: '',
+  separatedOn: '',
+  noticePeriodDays: '',
+  notes: '',
+};
+
+function editableToForm(e: EditableEmployee): EditorForm {
+  return {
+    fullName: e.fullName,
+    displayName: e.displayName ?? '',
+    designation: e.designation ?? '',
+    department: e.department ? departmentLabel(e.department) : '',
+    employmentType: e.employmentType,
+    status: e.status,
+    workEmail: e.workEmail ?? '',
+    personalEmail: e.personalEmail ?? '',
+    phone: e.phone ?? '',
+    reportsToEmployeeId: e.reportsToEmployeeId ?? '',
+    joinedOn: e.joinedOn,
+    confirmedOn: e.confirmedOn ?? '',
+    separatedOn: e.separatedOn ?? '',
+    noticePeriodDays: e.noticePeriodDays ?? '',
+    notes: e.notes ?? '',
+  };
+}
+
+function FieldErr({ msg }: { msg: string }) {
+  return <div style={{ fontSize: 11, color: 'var(--apar-red)', marginTop: 3 }}>{msg}</div>;
+}
+
+export function EmployeeProfileEditor({
   mode,
-  initial,
+  employeeId,
+  roster,
   onClose,
-  onSubmit,
+  onSaved,
 }: {
   mode: 'create' | 'edit';
-  initial?: { name?: string; role?: string; dept?: string };
+  employeeId?: string;
+  roster: readonly { id: string; name: string }[];
   onClose: () => void;
-  onSubmit: (input: { name: string; role: string; dept: string }) => void | Promise<void>;
+  onSaved: (id: string | null, name: string) => void | Promise<void>;
 }) {
-  const [name, setName] = useState(initial?.name ?? '');
-  const [role, setRole] = useState(initial?.role ?? '');
-  const [dept, setDept] = useState(initial?.dept ?? '');
+  const [form, setForm] = useState<EditorForm>(() =>
+    mode === 'create' ? { ...EMPTY_EDITOR_FORM, joinedOn: todayIso() } : EMPTY_EDITOR_FORM,
+  );
+  const [loading, setLoading] = useState(mode === 'edit');
   const [departments, setDepartments] = useState<readonly string[]>([]);
-  const [err, setErr] = useState<string | null>(null);
+  const [errors, setErrors] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
-  const nameRef = useRef<HTMLInputElement | null>(null);
 
-  useEffect(() => {
-    nameRef.current?.focus();
-  }, []);
-
-  // Dynamic department suggestions — pick an existing one or type a new one.
   useEffect(() => {
     let active = true;
     listDbDepartments()
-      .then((rows) => {
-        if (active) setDepartments(rows);
+      .then((d) => {
+        if (active) setDepartments(d);
       })
       .catch(() => {});
     return () => {
@@ -3326,66 +3564,251 @@ function EmployeeFormModal({
     };
   }, []);
 
-  const submit = async (e: FormEvent) => {
-    e.preventDefault();
+  useEffect(() => {
+    // `loading` initialises to (mode === 'edit'); the editor is mounted fresh
+    // per edit, so we don't reset it synchronously here (that would trip the
+    // no-sync-setState-in-effect rule).
+    if (mode !== 'edit' || !employeeId) return;
+    let active = true;
+    getEmployeeEditable(employeeId)
+      .then((e) => {
+        if (!active) return;
+        if (e) setForm(editableToForm(e));
+        setLoading(false);
+      })
+      .catch(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [mode, employeeId]);
+
+  const set = <K extends keyof EditorForm>(k: K, v: EditorForm[K]) =>
+    setForm((f) => ({ ...f, [k]: v }));
+
+  const submit = async (ev: FormEvent) => {
+    ev.preventDefault();
     if (busy) return;
-    if (!name.trim()) return setErr('Name is required.');
-    if (!role.trim()) return setErr('Role is required.');
-    setErr(null);
+    if (!form.fullName.trim()) {
+      setErrors({ fullName: 'Full name is required.' });
+      return;
+    }
+    if (!form.joinedOn) {
+      setErrors({ joinedOn: 'Joining date is required.' });
+      return;
+    }
+    setErrors({});
     setBusy(true);
     try {
-      await onSubmit({ name: name.trim(), role: role.trim(), dept });
+      if (mode === 'create') {
+        const res = await createEmployee({
+          fullName: form.fullName.trim(),
+          displayName: form.displayName.trim() || undefined,
+          designation: form.designation.trim() || undefined,
+          department: form.department.trim() || undefined,
+          employmentType: form.employmentType,
+          status: form.status,
+          workEmail: form.workEmail.trim() || undefined,
+          personalEmail: form.personalEmail.trim() || undefined,
+          phone: form.phone.trim() || undefined,
+          reportsToEmployeeId: form.reportsToEmployeeId || undefined,
+          joinedOn: form.joinedOn,
+          confirmedOn: form.confirmedOn || undefined,
+          noticePeriodDays: form.noticePeriodDays.trim() || undefined,
+          notes: form.notes.trim() || undefined,
+        });
+        if (!res.ok) {
+          setErrors(res.errors);
+          toast.error(res.message);
+          return;
+        }
+        await onSaved(res.id, form.fullName.trim());
+      } else if (employeeId) {
+        const res = await updateEmployee({
+          id: employeeId,
+          fullName: form.fullName.trim(),
+          displayName: form.displayName.trim() || null,
+          designation: form.designation.trim() || null,
+          department: form.department.trim() || null,
+          employmentType: form.employmentType,
+          status: form.status,
+          workEmail: form.workEmail.trim() || null,
+          personalEmail: form.personalEmail.trim() || null,
+          phone: form.phone.trim() || null,
+          reportsToEmployeeId: form.reportsToEmployeeId || null,
+          joinedOn: form.joinedOn,
+          confirmedOn: form.confirmedOn || null,
+          separatedOn: form.separatedOn || null,
+          noticePeriodDays: form.noticePeriodDays.trim() || null,
+          notes: form.notes.trim() || null,
+        });
+        if (!res.ok) {
+          setErrors(res.errors);
+          toast.error(res.message);
+          return;
+        }
+        await onSaved(null, form.fullName.trim());
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not save the employee.');
     } finally {
       setBusy(false);
     }
   };
 
   return (
-    <Modal
-      title={mode === 'edit' ? `Edit ${initial?.name ?? 'Teammate'}` : 'Invite Teammate'}
-      onClose={onClose}
-      width={480}
-    >
-      <form onSubmit={submit} className="os-form">
-        <Field label="Full name" full>
-          <input
-            ref={nameRef}
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="e.g. Riya Sengupta"
-          />
-        </Field>
-        <Field label="Role">
-          <input
-            value={role}
-            onChange={(e) => setRole(e.target.value)}
-            placeholder="Senior Visualiser"
-          />
-        </Field>
-        <Field label="Department">
-          <input
-            list="os-employee-departments"
-            value={dept}
-            onChange={(e) => setDept(e.target.value)}
-            placeholder="Pick or type a department"
-          />
-          <datalist id="os-employee-departments">
-            {departments.map((d) => (
-              <option key={d} value={departmentLabel(d)} />
-            ))}
-          </datalist>
-        </Field>
-        {err && <div className="os-form-error">{err}</div>}
-        <div className="os-form-actions">
-          <button type="button" className="btn" onClick={onClose} disabled={busy}>
-            Cancel
-          </button>
-          <button type="submit" className="btn primary" disabled={busy}>
-            <Icon name="check" size={13} />
-            {busy ? 'Saving…' : mode === 'edit' ? 'Save changes' : 'Add to team'}
-          </button>
-        </div>
-      </form>
+    <Modal title={mode === 'edit' ? 'Edit Employee' : 'Add Employee'} onClose={onClose} width={620}>
+      {loading ? (
+        <div style={{ padding: 24, color: 'var(--text-muted)', fontSize: 13 }}>Loading…</div>
+      ) : (
+        <form onSubmit={submit} className="os-form">
+          <Field label="Full name" full>
+            <input
+              value={form.fullName}
+              onChange={(e) => set('fullName', e.target.value)}
+              placeholder="e.g. Riya Sengupta"
+              autoFocus
+            />
+            {errors.fullName ? <FieldErr msg={errors.fullName} /> : null}
+          </Field>
+          <Field label="Display name">
+            <input
+              value={form.displayName}
+              onChange={(e) => set('displayName', e.target.value)}
+              placeholder="Short / nick name"
+            />
+          </Field>
+          <Field label="Designation">
+            <input
+              value={form.designation}
+              onChange={(e) => set('designation', e.target.value)}
+              placeholder="Senior Visualiser"
+            />
+          </Field>
+          <Field label="Department">
+            <input
+              list="os-employee-departments"
+              value={form.department}
+              onChange={(e) => set('department', e.target.value)}
+              placeholder="Pick or type"
+            />
+            <datalist id="os-employee-departments">
+              {departments.map((d) => (
+                <option key={d} value={departmentLabel(d)} />
+              ))}
+            </datalist>
+          </Field>
+          <Field label="Employment type">
+            <select
+              value={form.employmentType}
+              onChange={(e) => set('employmentType', e.target.value as EmpType)}
+            >
+              {EMP_TYPE_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Status">
+            <select
+              value={form.status}
+              onChange={(e) => set('status', e.target.value as EmpStatus)}
+            >
+              {EMP_STATUS_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Reports to">
+            <select
+              value={form.reportsToEmployeeId}
+              onChange={(e) => set('reportsToEmployeeId', e.target.value)}
+            >
+              <option value="">— No manager —</option>
+              {roster.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.name}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Work email">
+            <input
+              type="email"
+              value={form.workEmail}
+              onChange={(e) => set('workEmail', e.target.value)}
+              placeholder="name@apar.com"
+            />
+            {errors.workEmail ? <FieldErr msg={errors.workEmail} /> : null}
+          </Field>
+          <Field label="Personal email">
+            <input
+              type="email"
+              value={form.personalEmail}
+              onChange={(e) => set('personalEmail', e.target.value)}
+            />
+          </Field>
+          <Field label="Phone">
+            <input
+              value={form.phone}
+              onChange={(e) => set('phone', e.target.value)}
+              placeholder="+91…"
+            />
+          </Field>
+          <Field label="Joined on">
+            <input
+              type="date"
+              value={form.joinedOn}
+              onChange={(e) => set('joinedOn', e.target.value)}
+            />
+            {errors.joinedOn ? <FieldErr msg={errors.joinedOn} /> : null}
+          </Field>
+          <Field label="Confirmed on">
+            <input
+              type="date"
+              value={form.confirmedOn}
+              onChange={(e) => set('confirmedOn', e.target.value)}
+            />
+          </Field>
+          {mode === 'edit' ? (
+            <Field label="Separated on">
+              <input
+                type="date"
+                value={form.separatedOn}
+                onChange={(e) => set('separatedOn', e.target.value)}
+              />
+            </Field>
+          ) : null}
+          <Field label="Notice period">
+            <input
+              value={form.noticePeriodDays}
+              onChange={(e) => set('noticePeriodDays', e.target.value)}
+              placeholder="e.g. 30 days"
+            />
+          </Field>
+          <Field label="Notes" full>
+            <textarea
+              rows={2}
+              value={form.notes}
+              onChange={(e) => set('notes', e.target.value)}
+              placeholder="Internal notes"
+            />
+          </Field>
+          <div className="os-form-actions">
+            <button type="button" className="btn" onClick={onClose} disabled={busy}>
+              Cancel
+            </button>
+            <button type="submit" className="btn primary" disabled={busy}>
+              <Icon name="check" size={13} />
+              {busy ? 'Saving…' : mode === 'edit' ? 'Save changes' : 'Add to team'}
+            </button>
+          </div>
+        </form>
+      )}
     </Modal>
   );
 }
@@ -3796,7 +4219,7 @@ export function InboxApp() {
 // `<TransactionList>` (LEDGER-SPEC §0.1 + §5).
 
 /* -------------------------------------------------------------------------- */
-/* Reports + Report detail                                                    */
+/* Reports                                                                    */
 /* -------------------------------------------------------------------------- */
 
 // Real, DB-backed reports catalog. Each tile opens the corresponding
@@ -4036,91 +4459,6 @@ function UploadClientDocModal({
 // `RecordTxModal` + ledger enums removed in Phase 1 — the OS no longer
 // accepts free-form single-entry transactions. Real posting flows through
 // extraction → review → confirm once that pipeline ships.
-
-const MONTHS = ['Aug', 'Sep', 'Oct', 'Nov', 'Dec', 'Jan', 'Feb', 'Mar', 'Apr', 'May'];
-
-export function ReportDetail({ report }: { report: Report }) {
-  const data = report.spark.map((v, i) => ({ month: MONTHS[i] ?? `m${i}`, value: v }));
-  return (
-    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: 20, gap: 16 }}>
-      <div>
-        <div className="font-display" style={{ fontSize: 26 }}>
-          {report.label}
-        </div>
-        <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>
-          {report.value} · {report.trend}
-        </div>
-      </div>
-      <div
-        style={{
-          background: 'var(--content-2)',
-          border: '1px solid var(--border)',
-          borderRadius: 12,
-          padding: 16,
-          height: 280,
-        }}
-      >
-        <ResponsiveContainer width="100%" height="100%">
-          <AreaChart data={data} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
-            <defs>
-              <linearGradient id={`g-${report.id}`} x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor={report.color} stopOpacity={0.4} />
-                <stop offset="100%" stopColor={report.color} stopOpacity={0} />
-              </linearGradient>
-            </defs>
-            <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-            <XAxis dataKey="month" stroke="var(--text-muted)" fontSize={11} />
-            <YAxis stroke="var(--text-muted)" fontSize={11} />
-            <Tooltip
-              contentStyle={{
-                background: 'var(--content)',
-                border: '1px solid var(--border)',
-                borderRadius: 8,
-                fontSize: 12,
-                color: 'var(--text)',
-              }}
-            />
-            <Area
-              type="monotone"
-              dataKey="value"
-              stroke={report.color}
-              strokeWidth={2}
-              fill={`url(#g-${report.id})`}
-            />
-          </AreaChart>
-        </ResponsiveContainer>
-      </div>
-      <table className="table">
-        <thead>
-          <tr>
-            <th>Month</th>
-            <th>Value</th>
-            <th>Δ vs prev</th>
-          </tr>
-        </thead>
-        <tbody>
-          {data.map((d, i) => {
-            const prev = i > 0 ? data[i - 1]!.value : null;
-            const delta = prev != null ? d.value - prev : null;
-            return (
-              <tr key={i}>
-                <td>{d.month} 2025-26</td>
-                <td style={{ fontVariantNumeric: 'tabular-nums' }}>{d.value}</td>
-                <td
-                  style={{
-                    color: delta != null && delta > 0 ? 'var(--green)' : 'var(--text-muted)',
-                  }}
-                >
-                  {delta == null ? '—' : (delta > 0 ? '+' : '') + delta}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
-  );
-}
 
 /* -------------------------------------------------------------------------- */
 /* Settings                                                                   */

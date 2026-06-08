@@ -91,7 +91,7 @@ export function AgingWindow({ side }: { side: 'receivable' | 'payable' }) {
       controls={
         <>
           <DateField label="As of" value={asOfDate} onChange={setAsOfDate} />
-          <OsExportButtons onExport={handleExport} disabled={isEmpty} />
+          <OsExportButtons onExport={handleExport} disabled={!rows || rows.length === 0} />
         </>
       }
       loading={!rows && !error}

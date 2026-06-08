@@ -21,7 +21,7 @@ import { useUserSettings, type UserSettings } from './auth/session-store';
 import { useVendorStore } from './auth/vendor-store';
 import { CommandPalette } from './command-palette';
 import { useBusinessData } from './data-store';
-import { APPS, REPORTS } from './data';
+import { APPS } from './data';
 import { Dock } from './dock';
 import { Icon } from './icons';
 import { MenuBar } from './menubar';
@@ -31,7 +31,6 @@ import {
   EmployeesApp,
   InboxApp,
   ProjectsApp,
-  ReportDetail,
   ReportsApp,
   SettingsApp,
   VendorsApp,
@@ -58,7 +57,7 @@ import { OfficeUtilitiesWindow } from './apps/office-utilities-window';
 import { ClientLedgerWindow } from './apps/client-ledger-window';
 import { VendorLedgerWindow } from './apps/vendor-ledger-window';
 import { OfficeApp } from './apps/office-app';
-import type { AppDef, AppId, Client, CmdAction, DockBounds, Report, Vendor } from './types';
+import type { AppDef, AppId, Client, CmdAction, DockBounds, Vendor } from './types';
 
 export function OsRoot() {
   const { currentUser, signOut } = useAuth();
@@ -457,15 +456,13 @@ function Desktop({ signOut }: { signOut: () => void }) {
   // Resolve the detail entity for an entity-scoped window. Returns null
   // when the entity has been removed since the window was opened (e.g.
   // user deleted a client — we show a "no longer available" placeholder).
-  function resolveEntity(w: WindowState): Client | Vendor | Report | null {
+  function resolveEntity(w: WindowState): Client | Vendor | null {
     if (!w.entityId) return null;
     switch (w.app) {
       case 'clients':
         return businessData.clients.find((c) => c.id === w.entityId) ?? null;
       case 'vendors':
         return vendorStore.vendors.find((v) => v.id === w.entityId) ?? null;
-      case 'reports':
-        return REPORTS.find((r) => r.id === w.entityId) ?? null;
       default:
         return null;
     }
@@ -521,13 +518,6 @@ function Desktop({ signOut }: { signOut: () => void }) {
     // seed id whose legacy detail view only persisted to localStorage — never
     // render it (silent data-loss trap); show the unavailable state instead.
     if (w.app === 'clients' || w.app === 'vendors') return recordGone;
-    if (w.app === 'reports') {
-      return (
-        <div className="main">
-          <ReportDetail report={entity as Report} />
-        </div>
-      );
-    }
     return null;
   }
 
@@ -605,8 +595,8 @@ function Desktop({ signOut }: { signOut: () => void }) {
           // (not an entity uuid lookup) — e.g. ledger 'office'/'client:<uuid>'
           // and reports 'trial-balance'/'statement'/etc. Skip the
           // resolveEntity path (which would fall back to "no longer
-          // available" or the stale fake-data ReportDetail) — the switch
-          // below handles every report/ledger shape natively.
+          // available") — the switch below handles every report/ledger shape
+          // natively.
           if (w.entityId && w.app !== 'ledger' && w.app !== 'reports') return renderDetail(w);
           switch (w.app) {
             case 'clients':
@@ -719,9 +709,16 @@ function Desktop({ signOut }: { signOut: () => void }) {
                 case 'per-client-pnl':
                   return <PerClientPnLWindow />;
                 // The Office Ledger (cash + bank, running balance) IS the
-                // live bank book — reuse it rather than ship a stub.
+                // live bank book — reuse it with bank-book labels rather
+                // than ship a stub.
                 case 'bank-book':
-                  return <OfficeLedgerWindow />;
+                  return (
+                    <OfficeLedgerWindow
+                      title="Bank Book"
+                      subtitle="Bank + cash movements (accounts 1110 + 1120) in date order, with a running balance. Posted transactions only."
+                      exportPrefix="bank-book"
+                    />
+                  );
                 case 'cash-flow':
                   return <CashFlowWindow />;
                 default:
