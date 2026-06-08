@@ -76,10 +76,10 @@ export function PeriodsClient({
             <div>
               <p className="font-medium">Soft-close enforcement is advisory only</p>
               <p className="text-muted-foreground text-xs">
-                <span className="font-mono">settings.enforce_period_close = false</span>. Hard-closed
-                periods still block all postings — that's enforced server-side in <span className="font-mono">postTransaction</span>{' '}
-                regardless of this flag. Toggle this on to additionally have the UI warn on drafts
-                that target a soft-closed period.
+                <span className="font-mono">settings.enforce_period_close = false</span>.
+                Hard-closed periods still block all postings — that&apos;s enforced server-side in{' '}
+                <span className="font-mono">postTransaction</span> regardless of this flag. Toggle
+                this on to additionally have the UI warn on drafts that target a soft-closed period.
               </p>
             </div>
           </CardContent>

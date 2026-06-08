@@ -61,9 +61,7 @@ function strip(line: string): string {
  *  Operate on the full file string; replace block-comment content with spaces
  *  preserving line breaks so line numbers stay aligned. */
 function stripBlockComments(src: string): string {
-  return src.replace(/\/\*[\s\S]*?\*\//g, (match) =>
-    match.replace(/[^\n]/g, ' '),
-  );
+  return src.replace(/\/\*[\s\S]*?\*\//g, (match) => match.replace(/[^\n]/g, ' '));
 }
 
 async function findSqlFiles(dir: string): Promise<string[]> {

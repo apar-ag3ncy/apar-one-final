@@ -5,7 +5,8 @@ import type { ColumnDef } from '@tanstack/react-table';
 import { DataTableColumnHeader } from '@/components/data-table/data-table-column-header';
 import { DateCell } from '@/components/data-table/data-table-cells';
 import { StatusBadge, type StatusTone } from '@/components/shared/status-badge';
-import type { Department, Employee, EmployeeStatus, EmploymentType } from './types';
+import { departmentLabel } from './types';
+import type { Employee, EmployeeStatus, EmploymentType } from './types';
 
 const STATUS_TONES: Record<EmployeeStatus, StatusTone> = {
   active: 'success',
@@ -24,16 +25,6 @@ const EMPLOYMENT_LABELS: Record<EmploymentType, string> = {
   part_time: 'Part-time',
   contractor: 'Contractor',
   intern: 'Intern',
-};
-
-const DEPARTMENT_LABELS: Record<Department, string> = {
-  creative: 'Creative',
-  strategy: 'Strategy',
-  growth: 'Growth',
-  operations: 'Operations',
-  finance: 'Finance',
-  engineering: 'Engineering',
-  leadership: 'Leadership',
 };
 
 export const employeeColumns: ColumnDef<Employee>[] = [
@@ -62,7 +53,7 @@ export const employeeColumns: ColumnDef<Employee>[] = [
     accessorKey: 'department',
     header: ({ column }) => <DataTableColumnHeader column={column} title="Department" />,
     meta: { exportLabel: 'Department' },
-    cell: ({ row }) => DEPARTMENT_LABELS[row.original.department],
+    cell: ({ row }) => departmentLabel(row.original.department),
   },
   {
     accessorKey: 'employmentType',

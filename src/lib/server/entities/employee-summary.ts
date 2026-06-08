@@ -49,6 +49,7 @@ export type EmployeeSummary = {
     department: string | null;
     employmentType: string;
     status: string;
+    isArchived: boolean;
     joinedOn: string;
     workEmail: string | null;
     phone: string | null;
@@ -171,6 +172,7 @@ export async function getEmployeeSummary(employeeId: string): Promise<EmployeeSu
       department: emp.department,
       employmentType: emp.employmentType,
       status: emp.status,
+      isArchived: emp.isArchived,
       joinedOn: emp.joinedOn,
       workEmail: emp.workEmail,
       phone: emp.phone,

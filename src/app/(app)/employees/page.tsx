@@ -3,6 +3,8 @@ import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { EmployeesList } from '@/components/employees/employees-list';
 import { listEmployees } from '@/lib/server-stub/entity-actions';
+import { getActorContext } from '@/lib/server/actor';
+import { hasCapability } from '@/lib/rbac';
 import { PageHeader } from '@/components/shared/page-header';
 
 export const metadata: Metadata = {
@@ -10,8 +12,10 @@ export const metadata: Metadata = {
 };
 
 export default async function EmployeesPage() {
-  const data = await listEmployees();
+  const [data, actor] = await Promise.all([listEmployees(), getActorContext()]);
   const active = data.filter((e) => e.status === 'active').length;
+  const canArchive = hasCapability(actor, 'archive_employee');
+  const canHardDelete = actor.role === 'partner';
   return (
     <>
       <PageHeader
@@ -23,7 +27,7 @@ export default async function EmployeesPage() {
           </Button>
         }
       />
-      <EmployeesList data={data} />
+      <EmployeesList data={data} canArchive={canArchive} canHardDelete={canHardDelete} />
     </>
   );
 }

@@ -431,17 +431,18 @@ function Desktop({ signOut }: { signOut: () => void }) {
       w.entityId &&
       /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(w.entityId)
     ) {
+      const onClose = () => osActions.closeWindow(w.id);
       if (w.app === 'clients') {
-        return <ClientWindow clientId={w.entityId} />;
+        return <ClientWindow clientId={w.entityId} onClose={onClose} />;
       }
       if (w.app === 'vendors') {
-        return <VendorWindow vendorId={w.entityId} />;
+        return <VendorWindow vendorId={w.entityId} onClose={onClose} />;
       }
       if (w.app === 'employees') {
-        return <EmployeeWindow employeeId={w.entityId} />;
+        return <EmployeeWindow employeeId={w.entityId} onClose={onClose} />;
       }
       if (w.app === 'projects') {
-        return <ProjectWindow projectId={w.entityId} />;
+        return <ProjectWindow projectId={w.entityId} onClose={onClose} />;
       }
     }
 

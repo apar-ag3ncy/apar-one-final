@@ -1,6 +1,6 @@
 'use server';
 
-import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull, ne, sql } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { logActivity } from '@/lib/activity';
@@ -92,11 +92,13 @@ export async function hardDeleteClient(id: string): Promise<void> {
     });
   }
 
-  // Dependents check: any transactions (any status) referencing this client.
+  // Dependents check: any non-reversed transaction referencing this client.
+  // Reversed entries are historical and don't block deletion (matches the
+  // vendors/projects/employees rule).
   const refs = await db
     .select({ id: transactions.id })
     .from(transactions)
-    .where(eq(transactions.onBehalfOfClientId, id))
+    .where(and(eq(transactions.onBehalfOfClientId, id), ne(transactions.status, 'reversed')))
     .limit(1);
   if (refs.length > 0) {
     throw new AppError(
@@ -125,7 +127,12 @@ export async function hardDeleteClients(ids: readonly string[]): Promise<{
   const refs = await db
     .select({ id: transactions.onBehalfOfClientId })
     .from(transactions)
-    .where(inArray(transactions.onBehalfOfClientId, parsed as string[]));
+    .where(
+      and(
+        inArray(transactions.onBehalfOfClientId, parsed as string[]),
+        ne(transactions.status, 'reversed'),
+      ),
+    );
   const blockedSet = new Set<string>();
   for (const r of refs) {
     if (r.id) blockedSet.add(r.id);
@@ -207,6 +214,7 @@ const CreateClientSchema = z.object({
     .optional(),
   industry: z.string().trim().max(160).optional(),
   status: z.enum(['prospect', 'active', 'inactive']).optional(),
+  accountManagerId: z.string().uuid().optional(),
   primaryEmail: z.string().trim().max(200).optional(),
   primaryPhone: z.string().trim().max(40).optional(),
   pan: z.string().trim().toUpperCase().optional(),
@@ -382,6 +390,7 @@ export async function createClient(input: CreateClientInput): Promise<CreateClie
           name: v.name,
           industry: v.industry || null,
           status: v.status ?? 'active',
+          accountManagerId: v.accountManagerId || null,
           gstin: v.gstin || null,
           pan: v.pan || null,
           contractStatus: contract.kind,
@@ -535,5 +544,139 @@ export async function createClient(input: CreateClientInput): Promise<CreateClie
           ? e.message
           : 'Could not create the client.';
     return { ok: false, message, errors: {} };
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/* updateClient — backs the OS "Edit Client" modal                            */
+/* -------------------------------------------------------------------------- */
+
+const UpdateClientSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string().trim().min(1, 'Client name is required').optional(),
+  industry: z.string().trim().max(160).nullable().optional(),
+  status: z.enum(['prospect', 'active', 'inactive']).optional(),
+  gstin: z.string().trim().toUpperCase().nullable().optional(),
+  pan: z.string().trim().toUpperCase().nullable().optional(),
+  accountManagerId: z.string().uuid().nullable().optional(),
+  notes: z.string().trim().max(2000).nullable().optional(),
+});
+
+export type UpdateClientInput = z.input<typeof UpdateClientSchema>;
+
+export type UpdateClientResult =
+  | { ok: true }
+  | { ok: false; message: string; errors: Record<string, string> };
+
+/**
+ * Patch the parent `clients` row. Polymorphic children (contacts /
+ * addresses / banking / tax identifiers) are owned by their own editors;
+ * this is the OS quick-edit modal's path. Mirrors `updateVendor`:
+ * `null` clears a column, `undefined` leaves it untouched. Format-checks
+ * GSTIN/PAN and refuses a rename that collides with another active client
+ * (the `clients_name_unique_active` partial index is the real guard).
+ */
+export async function updateClient(input: UpdateClientInput): Promise<UpdateClientResult> {
+  const ctx = await getActorContext();
+  requireCapability(ctx, 'update_client');
+
+  const parsed = UpdateClientSchema.safeParse(input);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      message: 'Please fix the highlighted fields.',
+      errors: zodErrorsToPathMap(parsed.error),
+    };
+  }
+  const v = parsed.data;
+
+  const fieldErrors: Record<string, string> = {};
+  if (v.gstin && !GSTIN_RE.test(v.gstin)) {
+    fieldErrors.gstin = 'GSTIN must be 15 characters like 27ABCDE1234F1Z5.';
+  }
+  if (v.pan && !PAN_RE.test(v.pan)) {
+    fieldErrors.pan = 'PAN must look like ABCDE1234F.';
+  }
+  if (Object.keys(fieldErrors).length > 0) {
+    return { ok: false, message: 'Please fix the highlighted fields.', errors: fieldErrors };
+  }
+
+  // Refuse a rename that would collide with another active client.
+  if (v.name) {
+    const dup = await db
+      .select({ id: clients.id })
+      .from(clients)
+      .where(
+        and(
+          ne(clients.id, v.id),
+          eq(clients.isArchived, false),
+          isNull(clients.deletedAt),
+          sql`lower(${clients.name}) = lower(${v.name})`,
+        ),
+      )
+      .limit(1);
+    if (dup.length > 0) {
+      return {
+        ok: false,
+        message: `A client named "${v.name}" already exists.`,
+        errors: { name: 'A client with this name already exists.' },
+      };
+    }
+  }
+
+  const patch: Partial<typeof clients.$inferInsert> = { updatedBy: ctx.userId };
+  if (v.name !== undefined) patch.name = v.name;
+  if (v.industry !== undefined) patch.industry = v.industry;
+  if (v.status !== undefined) patch.status = v.status;
+  if (v.gstin !== undefined) patch.gstin = v.gstin;
+  if (v.pan !== undefined) patch.pan = v.pan;
+  if (v.accountManagerId !== undefined) patch.accountManagerId = v.accountManagerId;
+  if (v.notes !== undefined) patch.notes = v.notes;
+
+  try {
+    const result = await db
+      .update(clients)
+      .set(patch)
+      .where(and(eq(clients.id, v.id), isNull(clients.deletedAt)))
+      .returning({ id: clients.id, name: clients.name });
+    if (result.length === 0) {
+      return { ok: false, message: 'Client not found.', errors: {} };
+    }
+
+    await logAudit({
+      actorId: ctx.userId,
+      entityType: 'client',
+      entityId: v.id,
+      action: 'update',
+      changes: Object.fromEntries(
+        Object.entries(patch)
+          .filter(([k]) => k !== 'updatedBy')
+          .map(([k, val]) => [k, { before: null, after: val }]),
+      ),
+    });
+    await logActivity({
+      entityType: 'client',
+      entityId: v.id,
+      actorId: ctx.userId,
+      kind: 'entity.updated',
+      summary: `Client "${result[0]!.name}" updated`,
+    });
+
+    return { ok: true };
+  } catch (e) {
+    const code =
+      typeof e === 'object' && e !== null && 'code' in e ? (e as { code?: unknown }).code : null;
+    if (code === '23505') {
+      return {
+        ok: false,
+        message: `A client named "${v.name ?? v.id}" already exists.`,
+        errors: { name: 'A client with this name already exists.' },
+      };
+    }
+    return {
+      ok: false,
+      message: e instanceof Error ? e.message : 'Could not update the client.',
+      errors: {},
+    };
   }
 }

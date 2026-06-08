@@ -37,13 +37,11 @@ export function TransactionDetailWindow({ transactionId }: TransactionDetailWind
         }}
       >
         <div style={{ maxWidth: 420 }}>
-          <div style={{ fontWeight: 600, color: 'var(--text)' }}>
-            Transaction details unavailable
-          </div>
+          <div style={{ fontWeight: 600, color: 'var(--text)' }}>Transaction not found</div>
           <div style={{ marginTop: 6, fontSize: 13, lineHeight: 1.5 }}>
-            Backend wiring lands in Phase 3 — once <code>getTransaction</code> ships, this window
-            will show double-entry postings, validation flags, and the linked source document
-            inline.
+            This transaction may have been reversed or removed. Open one from a ledger or from a
+            client / vendor / project Transactions tab to see its double-entry postings and the
+            linked source document inline.
           </div>
         </div>
       </div>

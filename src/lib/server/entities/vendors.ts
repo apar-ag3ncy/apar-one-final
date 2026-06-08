@@ -262,7 +262,10 @@ const CreateVendorContractSchema = z.discriminatedUnion('kind', [
 
 const CreateVendorSchema = z.object({
   name: z.string().trim().min(1, 'Vendor name is required'),
-  category: z.string().trim().max(80).optional(),
+  // Normalise to lowercase so it matches the VendorCategory enum the UI maps
+  // back from (mapVendorCategory is case-sensitive; "Photographer" would
+  // otherwise fall back to "other").
+  category: z.string().trim().toLowerCase().max(80).optional(),
   primaryEmail: z.string().trim().max(200).optional(),
   primaryPhone: z.string().trim().max(40).optional(),
   pan: z.string().trim().toUpperCase().optional(),
@@ -557,7 +560,7 @@ export async function createVendor(input: CreateVendorInput): Promise<CreateVend
 const UpdateVendorSchema = z.object({
   id: z.string().uuid(),
   name: z.string().trim().min(1, 'Vendor name is required').optional(),
-  category: z.string().trim().max(80).nullable().optional(),
+  category: z.string().trim().toLowerCase().max(80).nullable().optional(),
   gstin: z.string().trim().toUpperCase().nullable().optional(),
   pan: z.string().trim().toUpperCase().nullable().optional(),
   notes: z.string().trim().max(2000).nullable().optional(),

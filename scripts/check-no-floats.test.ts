@@ -9,10 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
  * The script reads from `process.cwd()/drizzle/*.sql`. We run it as a child
  * process with `cwd` pointed at a temp dir so we can fixture-in SQL files.
  */
-const SCRIPT_PATH = join(
-  fileURLToPath(new URL('.', import.meta.url)),
-  'check-no-floats.ts',
-);
+const SCRIPT_PATH = join(fileURLToPath(new URL('.', import.meta.url)), 'check-no-floats.ts');
 
 async function runScript(cwd: string): Promise<{ code: number; stdout: string; stderr: string }> {
   // Use Node + tsx via npm to keep this Windows-friendly.

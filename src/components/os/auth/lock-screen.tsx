@@ -33,11 +33,17 @@ export function LockScreen() {
     [allUsers, selectedId],
   );
 
-  // Live clock.
+  // Live clock. The first set is deferred to the next frame (not a
+  // synchronous setState in the effect body) so `now` stays null for the
+  // hydration paint, avoiding an SSR/CSR mismatch.
   useEffect(() => {
-    setNow(new Date());
-    const t = setInterval(() => setNow(new Date()), 1000 * 15);
-    return () => clearInterval(t);
+    const update = () => setNow(new Date());
+    const raf = requestAnimationFrame(update);
+    const t = setInterval(update, 1000 * 15);
+    return () => {
+      cancelAnimationFrame(raf);
+      clearInterval(t);
+    };
   }, []);
 
   const time = now

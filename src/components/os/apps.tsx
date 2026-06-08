@@ -18,7 +18,10 @@ import {
   listClients as listDbClients,
   listEmployees as listDbEmployees,
   listVendors as listDbVendors,
+  listUsers as listDbUsers,
+  listDepartments as listDbDepartments,
 } from '@/lib/server-stub/entity-actions';
+import { departmentLabel } from '@/components/employees/types';
 import type { Employee as OsEmployee } from './types';
 import {
   DOCK_GAP_MAX,
@@ -48,9 +51,8 @@ import {
   type ProjectListRow,
 } from '@/lib/server/entities/projects';
 import { archiveVendor, createVendor, updateVendor } from '@/lib/server/entities/vendors';
-import { archiveClient, createClient } from '@/lib/server/entities/clients';
-import { createEmployee } from '@/lib/server/entities/employees';
-import { listEmployeeOptions, type EntityOption } from '@/lib/server/entities/options';
+import { archiveClient, createClient, updateClient } from '@/lib/server/entities/clients';
+import { archiveEmployee, createEmployee, updateEmployee } from '@/lib/server/entities/employees';
 import {
   listRecentDocuments,
   type RecentDocumentRow,
@@ -196,7 +198,6 @@ export function ClientsApp({
   canEdit?: boolean;
   canDelete?: boolean;
 }) {
-  const { updateClient } = useBusinessData();
   const [search, setSearch] = useState('');
   const [showNew, setShowNew] = useState(false);
   const [editing, setEditing] = useState<Client | null>(null);
@@ -212,28 +213,31 @@ export function ClientsApp({
 
   async function fetchClientList(): Promise<readonly Client[]> {
     const rows = await listDbClients();
-    return rows
-      // Archived clients drop out of the active directory but stay
-      // queryable from anywhere they're referenced (projects, txns,
-      // invoices) where the UI renders them as "<name> (ex-client)".
-      .filter((r) => r.status !== 'archived')
-      .map(
-        (r): Client => ({
-          id: r.id,
-          name: r.name,
-          industry: r.industry || '—',
-          status: DB_TO_OS_CLIENT_STATUS[r.status] ?? 'Active',
-          manager: r.accountManager || '—',
-          activity: r.lastActivityAt
-            ? new Date(r.lastActivityAt).toLocaleDateString('en-IN', {
-                day: '2-digit',
-                month: 'short',
-              })
-            : '—',
-          logo: logoForName(r.name),
-          tone: toneForName(r.name),
-        }),
-      );
+    return (
+      rows
+        // Archived clients drop out of the active directory but stay
+        // queryable from anywhere they're referenced (projects, txns,
+        // invoices) where the UI renders them as "<name> (ex-client)".
+        .filter((r) => r.status !== 'archived')
+        .map(
+          (r): Client => ({
+            id: r.id,
+            name: r.name,
+            industry: r.industry || '—',
+            status: DB_TO_OS_CLIENT_STATUS[r.status] ?? 'Active',
+            manager: r.accountManager || '—',
+            managerId: r.accountManagerId,
+            activity: r.lastActivityAt
+              ? new Date(r.lastActivityAt).toLocaleDateString('en-IN', {
+                  day: '2-digit',
+                  month: 'short',
+                })
+              : '—',
+            logo: logoForName(r.name),
+            tone: toneForName(r.name),
+          }),
+        )
+    );
   }
 
   useEffect(() => {
@@ -367,11 +371,17 @@ export function ClientsApp({
               <tr>
                 <td
                   colSpan={6}
-                  style={{ textAlign: 'center', padding: 28, color: 'var(--text-muted)' }}
+                  style={{
+                    textAlign: 'center',
+                    padding: 28,
+                    color: loadError ? 'var(--text-error, #c33)' : 'var(--text-muted)',
+                  }}
                 >
-                  {data.clients.length === 0
-                    ? 'No clients yet — click "New Client" to add the first.'
-                    : `No clients match "${search}".`}
+                  {loadError
+                    ? `Couldn't load clients: ${loadError}`
+                    : data.clients.length === 0
+                      ? 'No clients yet — click "New Client" to add the first.'
+                      : `No clients match "${search}".`}
                 </td>
               </tr>
             )}
@@ -388,6 +398,7 @@ export function ClientsApp({
               name: input.name,
               industry: input.industry || undefined,
               status: OS_TO_DB_CLIENT_STATUS[input.status] ?? 'active',
+              accountManagerId: input.managerId ?? undefined,
             });
             if (!result.ok) {
               toast.error(result.message);
@@ -407,9 +418,22 @@ export function ClientsApp({
           mode="edit"
           initial={editing}
           onClose={() => setEditing(null)}
-          onSubmit={(input) => {
-            updateClient(editing.id, input);
+          onSubmit={async (input) => {
+            const result = await updateClient({
+              id: editing.id,
+              name: input.name,
+              industry: input.industry || null,
+              status: OS_TO_DB_CLIENT_STATUS[input.status] ?? undefined,
+              accountManagerId: input.managerId,
+            });
+            if (!result.ok) {
+              toast.error(result.message);
+              return;
+            }
             setEditing(null);
+            const next = await fetchClientList().catch(() => null);
+            if (next) setDbClients(next);
+            toast.success(`Updated ${input.name}.`);
           }}
         />
       )}
@@ -441,9 +465,8 @@ export function ClientsApp({
 type ClientFormValues = {
   name: string;
   industry: string;
-  manager: string;
+  managerId: string | null;
   status: string;
-  logo?: string;
 };
 
 function ClientFormModal({
@@ -459,15 +482,15 @@ function ClientFormModal({
 }) {
   const [name, setName] = useState(initial?.name ?? '');
   const [industry, setIndustry] = useState(initial?.industry ?? '');
-  const [manager, setManager] = useState(initial?.manager ?? '');
+  const [managerId, setManagerId] = useState<string>(initial?.managerId ?? '');
   const [status, setStatus] = useState(initial?.status ?? CLIENT_STATUSES[0]!);
-  const [logo, setLogo] = useState(initial?.logo ?? '');
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const nameRef = useRef<HTMLInputElement | null>(null);
 
-  // Real team members for the Account-manager picker (was a static seed).
-  const [employees, setEmployees] = useState<readonly EntityOption[]>([]);
+  // Real team members for the Account-manager picker. Account manager is a
+  // FK to users.id (not employees), so this lists system users.
+  const [managers, setManagers] = useState<readonly { id: string; name: string }[]>([]);
 
   useEffect(() => {
     nameRef.current?.focus();
@@ -475,9 +498,9 @@ function ClientFormModal({
 
   useEffect(() => {
     let active = true;
-    listEmployeeOptions()
+    listDbUsers()
       .then((rows) => {
-        if (active) setEmployees(rows);
+        if (active) setManagers(rows.map((u) => ({ id: u.id, name: u.fullName })));
       })
       .catch(() => {});
     return () => {
@@ -497,9 +520,8 @@ function ClientFormModal({
       await onSubmit({
         name: n,
         industry: industry.trim(),
-        manager: manager.trim() || 'Unassigned',
+        managerId: managerId || null,
         status,
-        logo: logo.trim() || undefined,
       });
     } finally {
       setBusy(false);
@@ -536,24 +558,14 @@ function ClientFormModal({
           </select>
         </Field>
         <Field label="Account manager">
-          <select value={manager} onChange={(e) => setManager(e.target.value)}>
+          <select value={managerId} onChange={(e) => setManagerId(e.target.value)}>
             <option value="">— Unassigned —</option>
-            {employees.map((e) => (
-              <option key={e.id} value={e.label}>
-                {e.label}
-                {e.sub ? ` · ${e.sub}` : ''}
+            {managers.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.name}
               </option>
             ))}
           </select>
-        </Field>
-        <Field label="Logo initials" hint="Up to 4 characters. Defaults to the name's initials.">
-          <input
-            value={logo}
-            onChange={(e) => setLogo(e.target.value.toUpperCase())}
-            maxLength={4}
-            placeholder="AP"
-            className="font-mono"
-          />
         </Field>
         {err && <div className="os-form-error">{err}</div>}
         <div className="os-form-actions">
@@ -1037,28 +1049,30 @@ export function VendorsApp({
 
   async function fetchVendorList(): Promise<readonly Vendor[]> {
     const rows = await listDbVendors();
-    return rows
-      // Archived vendors drop out of the active directory. Bills,
-      // expenses, and documents that reference them still resolve the
-      // name and show an "(ex-vendor)" suffix.
-      .filter((r) => !r.isArchived)
-      .map(
-        (r): Vendor => ({
-          id: r.id,
-          name: r.name,
-          cat: r.category ? r.category.charAt(0).toUpperCase() + r.category.slice(1) : 'Other',
-          outstanding: r.outstandingPaise,
-          last: r.lastTxnAt
-            ? new Date(r.lastTxnAt).toLocaleDateString('en-IN', {
-                day: '2-digit',
-                month: 'short',
-              })
-            : '—',
-          gstin: r.gstin ?? undefined,
-          pan: r.pan ?? undefined,
-          notes: r.notes ?? undefined,
-        }),
-      );
+    return (
+      rows
+        // Archived vendors drop out of the active directory. Bills,
+        // expenses, and documents that reference them still resolve the
+        // name and show an "(ex-vendor)" suffix.
+        .filter((r) => !r.isArchived)
+        .map(
+          (r): Vendor => ({
+            id: r.id,
+            name: r.name,
+            cat: r.category ? r.category.charAt(0).toUpperCase() + r.category.slice(1) : 'Other',
+            outstanding: r.outstandingPaise,
+            last: r.lastTxnAt
+              ? new Date(r.lastTxnAt).toLocaleDateString('en-IN', {
+                  day: '2-digit',
+                  month: 'short',
+                })
+              : '—',
+            gstin: r.gstin ?? undefined,
+            pan: r.pan ?? undefined,
+            notes: r.notes ?? undefined,
+          }),
+        )
+    );
   }
 
   useEffect(() => {
@@ -2084,16 +2098,21 @@ function VendorFormModal({
             ))}
           </select>
         </Field>
-        <Field label="Payment terms (days)">
-          <input
-            type="number"
-            min={0}
-            max={180}
-            value={terms}
-            onChange={(e) => setTerms(e.target.value)}
-            placeholder="30"
-          />
-        </Field>
+        {/* Payment terms persist on create (party-billing profile) but the
+            quick-edit only patches the vendors row, so it's create-only to
+            avoid a field that silently doesn't save. Edit it from billing. */}
+        {mode === 'create' ? (
+          <Field label="Payment terms (days)">
+            <input
+              type="number"
+              min={0}
+              max={180}
+              value={terms}
+              onChange={(e) => setTerms(e.target.value)}
+              placeholder="30"
+            />
+          </Field>
+        ) : null}
         <Field label="GSTIN" hint="Captured, never computed. 15 chars.">
           <input
             value={gstin}
@@ -2112,29 +2131,37 @@ function VendorFormModal({
             maxLength={10}
           />
         </Field>
-        <Field label="Email" full>
-          <input
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            placeholder="billing@vendor.com"
-          />
-        </Field>
-        <Field label="Phone">
-          <input
-            value={phone}
-            onChange={(e) => setPhone(e.target.value)}
-            placeholder="+91 98xxxxxxxx"
-          />
-        </Field>
-        <Field label="Address" full>
-          <textarea
-            rows={2}
-            value={address}
-            onChange={(e) => setAddress(e.target.value)}
-            placeholder="Registered office address"
-          />
-        </Field>
+        {/* Contact + address live in child tables (entity_contacts /
+            entity_addresses). They're captured on create; edit them from the
+            vendor window's Contacts tab. Hidden on edit so the form never
+            shows a field that won't save. */}
+        {mode === 'create' ? (
+          <>
+            <Field label="Email" full>
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="billing@vendor.com"
+              />
+            </Field>
+            <Field label="Phone">
+              <input
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+                placeholder="+91 98xxxxxxxx"
+              />
+            </Field>
+            <Field label="Address" full>
+              <textarea
+                rows={2}
+                value={address}
+                onChange={(e) => setAddress(e.target.value)}
+                placeholder="Registered office address"
+              />
+            </Field>
+          </>
+        ) : null}
         <Field label="Notes" full>
           <textarea
             rows={2}
@@ -2756,8 +2783,14 @@ export function ProjectsApp({
                 name: input.name,
                 clientId: input.clientId,
                 leadEmployeeId: input.leadEmployeeId ?? null,
-                col: input.col,
-                fee: input.fee,
+                // Only send status when the column actually changed — the
+                // col↔status map is lossy (won→Proposed→pitch,
+                // cancelled→Completed→completed), so an unchanged column
+                // would silently corrupt the real DB status.
+                ...(input.col !== editing.col ? { col: input.col } : {}),
+                // Only send fee when it actually changed — a blank/0 fee on
+                // edit would otherwise wipe the captured fee.
+                ...(input.fee !== editing.fee ? { fee: input.fee } : {}),
               });
             }
             setEditing(null);
@@ -2965,8 +2998,6 @@ function ProjectFormModal({
 /* Employees                                                                  */
 /* -------------------------------------------------------------------------- */
 
-const DEPARTMENTS: readonly string[] = ['Accounts', 'Strategy', 'Creative', 'Finance', 'People'];
-
 export function EmployeesApp({
   canEdit = true,
   canDelete = true,
@@ -2974,7 +3005,6 @@ export function EmployeesApp({
   canEdit?: boolean;
   canDelete?: boolean;
 }) {
-  const { updateEmployee, removeEmployee } = useBusinessData();
   const [filterDept, setFilterDept] = useState<string>('all');
   const [showNew, setShowNew] = useState(false);
   const [editing, setEditing] = useState<OsEmployee | null>(null);
@@ -2983,19 +3013,30 @@ export function EmployeesApp({
   // Real DB-backed list. Mirrors the ClientsApp / VendorsApp swap so
   // clicking an employee card passes a real UUID into the openWindow
   // route → EmployeeWindow renders with the §8.4 personal dashboard.
+  // Edit / delete go straight to the DB (updateEmployee / archiveEmployee)
+  // and then refetch this list — there is no local-store copy to drift.
   const [dbEmployees, setDbEmployees] = useState<readonly OsEmployee[] | null>(null);
 
   async function fetchEmployeeList(): Promise<readonly OsEmployee[]> {
     const rows = await listDbEmployees();
-    return rows.map(
-      (r): OsEmployee => ({
-        id: r.id,
-        name: r.fullName,
-        role: r.designation || '—',
-        dept: r.department.charAt(0).toUpperCase() + r.department.slice(1),
-        tone: toneForName(r.fullName),
-      }),
-    );
+    // The Team directory shows current team only — archived / separated
+    // teammates drop off (they stay queryable from the dashboard list).
+    return rows
+      .filter((r) => r.status !== 'separated')
+      .map(
+        (r): OsEmployee => ({
+          id: r.id,
+          name: r.fullName,
+          role: r.designation || '—',
+          dept: departmentLabel(r.department),
+          tone: toneForName(r.fullName),
+        }),
+      );
+  }
+
+  async function refreshEmployeeList() {
+    const next = await fetchEmployeeList().catch(() => null);
+    if (next) setDbEmployees(next);
   }
 
   useEffect(() => {
@@ -3139,8 +3180,7 @@ export function EmployeesApp({
               return;
             }
             setShowNew(false);
-            const next = await fetchEmployeeList().catch(() => null);
-            if (next) setDbEmployees(next);
+            await refreshEmployeeList();
             navigateBesideFocused({ type: 'employee', id: result.id });
             toast.success(`${input.name} added to the team.`);
           }}
@@ -3151,22 +3191,41 @@ export function EmployeesApp({
           mode="edit"
           initial={editing}
           onClose={() => setEditing(null)}
-          onSubmit={(input) => {
-            updateEmployee(editing.id, input);
+          onSubmit={async (input) => {
+            // Persist to the DB, then refetch so the card reflects the edit.
+            const result = await updateEmployee({
+              id: editing.id,
+              fullName: input.name,
+              designation: input.role || null,
+              department: input.dept || null,
+            });
+            if (!result.ok) {
+              toast.error(result.message);
+              return;
+            }
             setEditing(null);
+            await refreshEmployeeList();
+            toast.success(`Updated ${input.name}.`);
           }}
         />
       )}
       {confirmDel && (
         <ConfirmDialog
           title={`Remove ${confirmDel.name} from the team?`}
-          message="They'll disappear from the team directory. Projects and ledger entries that reference them aren't affected."
+          message="They'll disappear from the team directory. Projects and ledger entries that reference them aren't affected, and a partner can restore them later."
           destructive
           confirmLabel="Remove"
           onCancel={() => setConfirmDel(null)}
-          onConfirm={() => {
-            removeEmployee(confirmDel.id);
+          onConfirm={async () => {
+            const name = confirmDel.name;
             setConfirmDel(null);
+            try {
+              await archiveEmployee(confirmDel.id);
+              await refreshEmployeeList();
+              toast.success(`Removed ${name} from the team.`);
+            } catch (e) {
+              toast.error(e instanceof Error ? e.message : 'Could not remove the teammate.');
+            }
           }}
         />
       )}
@@ -3183,23 +3242,45 @@ function EmployeeFormModal({
   mode: 'create' | 'edit';
   initial?: { name?: string; role?: string; dept?: string };
   onClose: () => void;
-  onSubmit: (input: { name: string; role: string; dept: string }) => void;
+  onSubmit: (input: { name: string; role: string; dept: string }) => void | Promise<void>;
 }) {
   const [name, setName] = useState(initial?.name ?? '');
   const [role, setRole] = useState(initial?.role ?? '');
-  const [dept, setDept] = useState(initial?.dept ?? DEPARTMENTS[0]!);
+  const [dept, setDept] = useState(initial?.dept ?? '');
+  const [departments, setDepartments] = useState<readonly string[]>([]);
   const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
   const nameRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     nameRef.current?.focus();
   }, []);
 
-  const submit = (e: FormEvent) => {
+  // Dynamic department suggestions — pick an existing one or type a new one.
+  useEffect(() => {
+    let active = true;
+    listDbDepartments()
+      .then((rows) => {
+        if (active) setDepartments(rows);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const submit = async (e: FormEvent) => {
     e.preventDefault();
+    if (busy) return;
     if (!name.trim()) return setErr('Name is required.');
     if (!role.trim()) return setErr('Role is required.');
-    onSubmit({ name: name.trim(), role: role.trim(), dept });
+    setErr(null);
+    setBusy(true);
+    try {
+      await onSubmit({ name: name.trim(), role: role.trim(), dept });
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -3225,20 +3306,26 @@ function EmployeeFormModal({
           />
         </Field>
         <Field label="Department">
-          <select value={dept} onChange={(e) => setDept(e.target.value)}>
-            {DEPARTMENTS.map((d) => (
-              <option key={d}>{d}</option>
+          <input
+            list="os-employee-departments"
+            value={dept}
+            onChange={(e) => setDept(e.target.value)}
+            placeholder="Pick or type a department"
+          />
+          <datalist id="os-employee-departments">
+            {departments.map((d) => (
+              <option key={d} value={departmentLabel(d)} />
             ))}
-          </select>
+          </datalist>
         </Field>
         {err && <div className="os-form-error">{err}</div>}
         <div className="os-form-actions">
-          <button type="button" className="btn" onClick={onClose}>
+          <button type="button" className="btn" onClick={onClose} disabled={busy}>
             Cancel
           </button>
-          <button type="submit" className="btn primary">
+          <button type="submit" className="btn primary" disabled={busy}>
             <Icon name="check" size={13} />
-            {mode === 'edit' ? 'Save changes' : 'Add to team'}
+            {busy ? 'Saving…' : mode === 'edit' ? 'Save changes' : 'Add to team'}
           </button>
         </div>
       </form>
@@ -3416,11 +3503,11 @@ export function ReportsApp({ openReportDetail }: { openReportDetail: (r: Report)
         <h2>Reports</h2>
         <span className="sub">May 2026 · finance & ops</span>
         <div className="grow" />
-        <button className="btn" type="button">
+        <button className="btn" type="button" disabled title="Period filter — coming soon.">
           <Icon name="filter" size={13} />
           FY26
         </button>
-        <button className="btn" type="button">
+        <button className="btn" type="button" disabled title="Report export — coming soon.">
           <Icon name="filetext" size={13} />
           Export
         </button>
@@ -3726,7 +3813,7 @@ export function SettingsApp({
                 <div className="label">Desktop Wallpaper</div>
                 <div className="desc">Apār Charcoal Gradient · Default</div>
               </div>
-              <button className="btn" type="button">
+              <button className="btn" type="button" disabled title="More wallpapers — coming soon.">
                 Change…
               </button>
             </div>
@@ -3793,7 +3880,8 @@ export function SettingsApp({
                 {section}
               </div>
               <div style={{ marginTop: 6 }}>
-                This pane is part of the desktop mockup. Real settings appear here.
+                {section} settings are coming soon. Appearance preferences are available now under
+                the Appearance tab.
               </div>
             </div>
           </div>

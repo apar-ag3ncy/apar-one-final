@@ -11,8 +11,8 @@
    selectively on numeric cells via component classes. */
 :root {
   --font-sf:
-    -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF UI Display',
-    'Helvetica Neue', system-ui, sans-serif;
+    -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF UI Display', 'Helvetica Neue',
+    system-ui, sans-serif;
   --font-sans: var(--font-sf);
   --font-mono: var(--font-sf);
 }

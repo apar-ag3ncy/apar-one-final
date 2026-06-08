@@ -28,11 +28,7 @@ function fmtTs(d: Date): string {
   });
 }
 
-export default async function AuditPage({
-  searchParams,
-}: {
-  searchParams: Promise<SearchParams>;
-}) {
+export default async function AuditPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
   const params = await searchParams;
   const filter = {
     entityType: params.entityType && params.entityType !== 'all' ? params.entityType : undefined,
@@ -71,12 +67,12 @@ export default async function AuditPage({
       </Card>
 
       <Card>
-        <CardHeader className="pb-2 flex flex-row items-center justify-between">
+        <CardHeader className="flex flex-row items-center justify-between pb-2">
           <CardTitle className="text-base">
             {stream === 'audit' ? 'Diff entries' : 'Activity events'}
           </CardTitle>
           <span className="text-muted-foreground text-xs">
-            {(stream === 'audit' ? auditRows.length : activityRows.length)} row(s)
+            {stream === 'audit' ? auditRows.length : activityRows.length} row(s)
           </span>
         </CardHeader>
         <CardContent className="space-y-2">
@@ -90,13 +86,17 @@ export default async function AuditPage({
                     <span className="bg-muted rounded px-1.5 py-0.5 font-mono uppercase">
                       {row.action}
                     </span>
-                    <span className="bg-muted rounded px-1.5 py-0.5 font-mono">{row.entityType}</span>
+                    <span className="bg-muted rounded px-1.5 py-0.5 font-mono">
+                      {row.entityType}
+                    </span>
                     <span className="text-muted-foreground font-mono">{row.entityId}</span>
                     <span className="text-muted-foreground ml-auto">
                       {fmtTs(row.createdAt)} · {row.actorName ?? row.actorId ?? 'system'}
                     </span>
                   </div>
-                  <AuditDiffRow changes={row.changes as Parameters<typeof AuditDiffRow>[0]['changes']} />
+                  <AuditDiffRow
+                    changes={row.changes as Parameters<typeof AuditDiffRow>[0]['changes']}
+                  />
                 </div>
               ))
             )

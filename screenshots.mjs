@@ -95,7 +95,10 @@ await shot('tabs-5-upload-modal', async (page) => {
   await openClientDetail(page);
   await page.getByText('Documents', { exact: true }).first().click();
   await page.waitForTimeout(400);
-  await page.getByRole('button', { name: /Upload Document/ }).first().click();
+  await page
+    .getByRole('button', { name: /Upload Document/ })
+    .first()
+    .click();
   await page.waitForTimeout(500);
   await page.getByPlaceholder(/MSA_v3_signed/).fill('Royal_Enfield_MSA_v1.pdf');
 });

@@ -42,6 +42,7 @@ function openDocumentBeside(documentId: string) {
 
 export type EmployeeWindowProps = {
   employeeId: string;
+  onClose?: () => void;
 };
 
 type State =
@@ -49,7 +50,7 @@ type State =
   | { kind: 'error'; message: string }
   | { kind: 'ready'; summary: EmployeeSummary; contacts: readonly ContactRow[] };
 
-export function EmployeeWindow({ employeeId }: EmployeeWindowProps) {
+export function EmployeeWindow({ employeeId, onClose }: EmployeeWindowProps) {
   const [state, setState] = useState<State>({ kind: 'loading' });
   const [tab, setTab] = useState<string>('overview');
   const [reloadKey, setReloadKey] = useState(0);
@@ -92,7 +93,10 @@ export function EmployeeWindow({ employeeId }: EmployeeWindowProps) {
 
   const { summary, contacts } = state;
   const { employee, kpis, projectsLed, achievements } = summary;
-  const isArchived = employee.status === 'separated';
+  // Archive lifecycle is the `is_archived` boolean — independent of the
+  // `separated` employment status (you can archive an active employee, and
+  // a separated employee may not be archived).
+  const isArchived = employee.isArchived;
 
   const tabDefs: ReadonlyArray<{ value: string; label: string; count?: number }> = [
     { value: 'overview', label: 'Overview' },
@@ -193,6 +197,7 @@ export function EmployeeWindow({ employeeId }: EmployeeWindowProps) {
             entityName={employee.fullName}
             isArchived={isArchived}
             onChanged={() => setReloadKey((k) => k + 1)}
+            onDeleted={onClose}
           />
         ) : null}
       </div>

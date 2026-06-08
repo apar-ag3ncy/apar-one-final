@@ -48,6 +48,8 @@ export type Client = {
   name: string;
   industry: string;
   manager: string;
+  /** Account-manager user id (null = unassigned). Drives the edit picker. */
+  managerId?: string | null;
   status: string;
   activity: string;
   logo: string;

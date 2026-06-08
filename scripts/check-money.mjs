@@ -66,11 +66,7 @@ for (const root of moneyGlobs) {
     text.split('\n').forEach((line, idx) => {
       const trimmed = line.trimStart();
       // Skip comments
-      if (
-        trimmed.startsWith('//') ||
-        trimmed.startsWith('*') ||
-        trimmed.startsWith('/*')
-      ) {
+      if (trimmed.startsWith('//') || trimmed.startsWith('*') || trimmed.startsWith('/*')) {
         return;
       }
       // Skip lines that already use formatINR
@@ -106,7 +102,9 @@ walk(ENTITY, (file) => {
 });
 
 if (errors > 0) {
-  console.error(`\n${errors} violation${errors === 1 ? '' : 's'}. Fix or whitelist before committing.`);
+  console.error(
+    `\n${errors} violation${errors === 1 ? '' : 's'}. Fix or whitelist before committing.`,
+  );
   process.exit(1);
 }
 console.log('check-money: OK');

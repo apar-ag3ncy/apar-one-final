@@ -2,7 +2,10 @@ import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { EmployeeDetailTabs } from '@/components/employees/employee-detail-tabs';
+import { EmployeeEditDialog } from '@/components/employees/employee-edit-dialog';
 import { getEmployee } from '@/lib/server-stub/entity-actions';
+import { getActorContext } from '@/lib/server/actor';
+import { hasCapability } from '@/lib/rbac';
 import type { EmployeeStatus } from '@/types/api';
 import { ProfileHeader } from '@/components/entity/profile-header';
 import type { StatusTone } from '@/components/shared/status-badge';
@@ -31,10 +34,10 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
 export default async function EmployeeDetailPage({ params }: Props) {
   const { id } = await params;
-  // TODO(backend): swap for getEmployee(id) once Backend ships the query helper, with role-aware
-  // KYC masking enforced server-side.
-  const employee = await getEmployee(id);
+  const [employee, actor] = await Promise.all([getEmployee(id), getActorContext()]);
   if (!employee) notFound();
+
+  const canEdit = hasCapability(actor, 'update_employee');
 
   return (
     <>
@@ -52,14 +55,13 @@ export default async function EmployeeDetailPage({ params }: Props) {
         back={{ href: '/employees', label: 'All employees' }}
         actions={
           <>
-            <Button
-              size="sm"
-              variant="outline"
-              disabled
-              title="Server action pending (Backend agent)."
-            >
-              Edit
-            </Button>
+            {canEdit ? (
+              <EmployeeEditDialog employee={employee} />
+            ) : (
+              <Button size="sm" variant="outline" disabled title="Your role can't edit employees.">
+                Edit
+              </Button>
+            )}
             <Button size="sm" disabled title="Server action pending (Backend agent).">
               Log activity
             </Button>

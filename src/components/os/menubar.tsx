@@ -40,9 +40,15 @@ export function MenuBar({
   const [now, setNow] = useState<Date | null>(null);
 
   useEffect(() => {
-    setNow(new Date());
-    const t = setInterval(() => setNow(new Date()), 1000 * 30);
-    return () => clearInterval(t);
+    // Deferred to the next frame (not a synchronous setState in the effect
+    // body) so the null-clock hydration paint matches SSR.
+    const update = () => setNow(new Date());
+    const raf = requestAnimationFrame(update);
+    const t = setInterval(update, 1000 * 30);
+    return () => {
+      cancelAnimationFrame(raf);
+      clearInterval(t);
+    };
   }, []);
 
   useEffect(() => {
@@ -154,28 +160,38 @@ export function MenuBar({
                 'sep' in it && it.sep ? (
                   <hr key={i} />
                 ) : (
-                  <div
-                    key={i}
-                    className={`row ${'live' in it && it.live ? 'live' : ''}`}
-                    onClick={() => {
-                      if ('action' in it) it.action?.();
-                      setOpen(null);
-                    }}
-                  >
-                    <span>{'label' in it ? it.label : ''}</span>
-                    {'shortcut' in it && it.shortcut ? (
-                      <span
-                        style={{
-                          color: 'var(--text-dim)',
-                          fontFamily: 'var(--os-font)',
-                          fontVariantNumeric: 'tabular-nums',
-                          fontSize: 11,
+                  (() => {
+                    // Items without an `action` are not wired up — render them
+                    // visibly disabled so the menu never shows a control that
+                    // silently does nothing.
+                    const enabled = 'action' in it && typeof it.action === 'function';
+                    return (
+                      <div
+                        key={i}
+                        className={`row ${'live' in it && it.live ? 'live' : ''}`}
+                        aria-disabled={enabled ? undefined : true}
+                        style={enabled ? undefined : { opacity: 0.38, cursor: 'default' }}
+                        onClick={() => {
+                          if (enabled && 'action' in it) it.action?.();
+                          setOpen(null);
                         }}
                       >
-                        {it.shortcut}
-                      </span>
-                    ) : null}
-                  </div>
+                        <span>{'label' in it ? it.label : ''}</span>
+                        {'shortcut' in it && it.shortcut ? (
+                          <span
+                            style={{
+                              color: 'var(--text-dim)',
+                              fontFamily: 'var(--os-font)',
+                              fontVariantNumeric: 'tabular-nums',
+                              fontSize: 11,
+                            }}
+                          >
+                            {it.shortcut}
+                          </span>
+                        ) : null}
+                      </div>
+                    );
+                  })()
                 ),
               )}
             </div>

@@ -25,8 +25,10 @@
 import { and, desc, eq, ilike, isNull, or, sql } from 'drizzle-orm';
 
 import { maybeCurrentUser } from '@/lib/auth';
+import { CAPABILITY_SET } from '@/lib/rbac';
 import { db } from '@/lib/db/client';
 import {
+  accounts,
   bills,
   clients,
   employees,
@@ -36,7 +38,9 @@ import {
   entityTaxIdentifiers,
   invoices,
   officeExpenses,
+  postings,
   projects,
+  transactions as ledgerTransactions,
   users,
   vendors,
 } from '@/lib/db/schema';
@@ -47,6 +51,7 @@ import { updateProject as updateProjectAction } from '@/lib/server/entities/proj
 import { revealBank as revealBankFromVault, revealKyc as revealKycFromVault } from '@/lib/storage';
 import type { Client, ClientPoc, ClientPriority, ClientStatus } from '@/components/clients/types';
 import type { Vendor, VendorCategory, VendorStatus, TdsSection } from '@/components/vendors/types';
+import { KNOWN_DEPARTMENTS } from '@/components/employees/types';
 import type {
   Employee,
   EmployeeStatus,
@@ -60,6 +65,10 @@ import type {
   BillingModel,
 } from '@/components/projects/types';
 import type { Transaction, TransactionStatus } from '@/components/entity/transaction-list';
+import type {
+  TransactionDetailData,
+  TransactionPosting,
+} from '@/components/entity/transaction-detail';
 
 /* -------------------------------------------------------------------------- */
 /* Clients                                                                     */
@@ -88,6 +97,7 @@ export async function listClients(): Promise<readonly Client[]> {
       pan: clients.pan,
       notes: clients.notes,
       createdAt: clients.createdAt,
+      accountManagerId: clients.accountManagerId,
       accountManagerName: sql<
         string | null
       >`(select full_name from users where id = ${clients.accountManagerId})`,
@@ -106,6 +116,7 @@ export async function listClients(): Promise<readonly Client[]> {
       status: mapClientStatus(r.status, r.isArchived),
       priority: FALLBACK_PRIORITY,
       accountManager: r.accountManagerName ?? '—',
+      accountManagerId: r.accountManagerId,
       gstin: r.gstin,
       pan: r.pan,
       city: '',
@@ -132,6 +143,7 @@ export async function getClient(id: string): Promise<Client | null> {
       pan: clients.pan,
       notes: clients.notes,
       createdAt: clients.createdAt,
+      accountManagerId: clients.accountManagerId,
       accountManagerName: sql<
         string | null
       >`(select full_name from users where id = ${clients.accountManagerId})`,
@@ -175,6 +187,7 @@ export async function getClient(id: string): Promise<Client | null> {
     status: mapClientStatus(row.status, row.isArchived),
     priority: FALLBACK_PRIORITY,
     accountManager: row.accountManagerName ?? '—',
+    accountManagerId: row.accountManagerId,
     gstin: row.gstin,
     pan: row.pan,
     city: '',
@@ -265,21 +278,31 @@ export async function getVendor(id: string): Promise<Vendor | null> {
 /* Employees                                                                   */
 /* -------------------------------------------------------------------------- */
 
-const KNOWN_DEPARTMENTS: readonly Department[] = [
-  'creative',
-  'strategy',
-  'growth',
-  'operations',
-  'finance',
-  'engineering',
-  'leadership',
-];
-
+// Departments are dynamic free-text — return the stored value as-is rather
+// than coercing unknown values into a fixed enum (that's what made custom
+// departments collapse to "operations"). Empty/null → '' (UI shows '—').
 function mapDepartment(raw: string | null): Department {
-  if (!raw) return 'operations';
-  return (KNOWN_DEPARTMENTS as readonly string[]).includes(raw)
-    ? (raw as Department)
-    : 'operations';
+  return (raw ?? '').trim();
+}
+
+/**
+ * Distinct departments currently in use across employees, merged with the
+ * known baseline, deduped (case-insensitive) and sorted — powers the
+ * dynamic department picker on the create/edit forms.
+ */
+export async function listDepartments(): Promise<readonly string[]> {
+  await getActorContext();
+  const rows = await db
+    .select({ department: employees.department })
+    .from(employees)
+    .where(isNull(employees.deletedAt));
+  const set = new Map<string, string>(); // lowercased key → first-seen value
+  for (const k of KNOWN_DEPARTMENTS) set.set(k.toLowerCase(), k);
+  for (const r of rows) {
+    const d = (r.department ?? '').trim();
+    if (d) set.set(d.toLowerCase(), d.toLowerCase());
+  }
+  return Array.from(set.values()).sort();
 }
 
 function mapEmploymentType(
@@ -912,6 +935,127 @@ export async function getEntityActivity(args: {
 /* Current user                                                                */
 /* -------------------------------------------------------------------------- */
 
+/* -------------------------------------------------------------------------- */
+/* Single ledger transaction (Transaction-detail window)                       */
+/* -------------------------------------------------------------------------- */
+
+async function resolveEntityLabel(
+  kind: 'client' | 'vendor' | 'employee' | 'project',
+  entityId: string,
+): Promise<string> {
+  if (kind === 'client') {
+    const r = await db
+      .select({ n: clients.name })
+      .from(clients)
+      .where(eq(clients.id, entityId))
+      .limit(1);
+    return r[0]?.n ?? entityId.slice(0, 8);
+  }
+  if (kind === 'vendor') {
+    const r = await db
+      .select({ n: vendors.name })
+      .from(vendors)
+      .where(eq(vendors.id, entityId))
+      .limit(1);
+    return r[0]?.n ?? entityId.slice(0, 8);
+  }
+  if (kind === 'employee') {
+    const r = await db
+      .select({ n: employees.fullName })
+      .from(employees)
+      .where(eq(employees.id, entityId))
+      .limit(1);
+    return r[0]?.n ?? entityId.slice(0, 8);
+  }
+  const r = await db
+    .select({ n: projects.name })
+    .from(projects)
+    .where(eq(projects.id, entityId))
+    .limit(1);
+  return r[0]?.n ?? entityId.slice(0, 8);
+}
+
+/**
+ * Load one ledger transaction with its double-entry postings (joined to the
+ * chart of accounts) for the OS Transaction-detail window. Read-only;
+ * returns null when the id doesn't resolve.
+ */
+export async function getTransaction(id: string): Promise<TransactionDetailData | null> {
+  await getActorContext();
+
+  const rows = await db
+    .select({
+      id: ledgerTransactions.id,
+      externalRef: ledgerTransactions.externalRef,
+      kind: ledgerTransactions.kind,
+      txnDate: ledgerTransactions.txnDate,
+      status: ledgerTransactions.status,
+      description: ledgerTransactions.description,
+      notes: ledgerTransactions.notes,
+      sourceDocumentId: ledgerTransactions.sourceDocumentId,
+      relatedEntityKind: ledgerTransactions.relatedEntityKind,
+      relatedEntityId: ledgerTransactions.relatedEntityId,
+    })
+    .from(ledgerTransactions)
+    .where(eq(ledgerTransactions.id, id))
+    .limit(1);
+  const t = rows[0];
+  if (!t) return null;
+
+  const postingRows = await db
+    .select({
+      id: postings.id,
+      side: postings.side,
+      amountPaise: postings.amountPaise,
+      accountCode: accounts.code,
+      accountName: accounts.name,
+      subledgerEntityType: postings.subledgerEntityType,
+      subledgerEntityId: postings.subledgerEntityId,
+    })
+    .from(postings)
+    .leftJoin(accounts, eq(accounts.id, postings.accountId))
+    .where(eq(postings.transactionId, id))
+    .orderBy(desc(postings.side));
+
+  const mappedPostings: TransactionPosting[] = postingRows.map((p) => ({
+    id: p.id,
+    accountCode: p.accountCode ?? '—',
+    accountName: p.accountName ?? '—',
+    debit: p.side === 'debit' ? p.amountPaise : null,
+    credit: p.side === 'credit' ? p.amountPaise : null,
+    dimensionRef: null,
+    memo: null,
+  }));
+
+  const amount = mappedPostings.reduce((sum, p) => sum + (p.debit ?? 0n), 0n);
+
+  const cpKind = t.relatedEntityKind;
+  let counterparty: Transaction['counterparty'] = null;
+  if (
+    t.relatedEntityId &&
+    (cpKind === 'client' || cpKind === 'vendor' || cpKind === 'employee' || cpKind === 'project')
+  ) {
+    counterparty = {
+      type: cpKind,
+      id: t.relatedEntityId,
+      label: await resolveEntityLabel(cpKind, t.relatedEntityId),
+    };
+  }
+
+  return {
+    id: t.id,
+    reference: t.externalRef,
+    kind: t.kind,
+    date: t.txnDate,
+    amount,
+    status: t.status as TransactionStatus,
+    counterparty,
+    memo: t.description ?? t.notes,
+    postings: mappedPostings,
+    sourceDocumentIds: t.sourceDocumentId ? [t.sourceDocumentId] : [],
+  };
+}
+
 export type CurrentUser = {
   id: string;
   fullName: string;
@@ -930,7 +1074,23 @@ export type CurrentUser = {
  */
 export async function getCurrentUser(): Promise<CurrentUser | null> {
   const ctx = await maybeCurrentUser();
-  if (!ctx) return null;
+  if (!ctx) {
+    // Dev fallback — mirror getActorContext()'s dev admin so the client-side
+    // capability checks (EntitySettingsSection, etc.) match what server
+    // actions actually allow when there is no auth session. OFF in prod
+    // unless ALLOW_DEV_ADMIN=true. Role is 'admin' (not partner) so the
+    // partner-only hard-delete stays gated, consistent with the server.
+    const allowDevAdmin =
+      process.env.NODE_ENV !== 'production' || process.env.ALLOW_DEV_ADMIN === 'true';
+    if (!allowDevAdmin) return null;
+    return {
+      id: '00000000-0000-0000-0000-000000000000',
+      fullName: 'Dev Admin (system)',
+      email: 'dev-admin@apar.local',
+      role: 'admin',
+      capabilities: Array.from(CAPABILITY_SET),
+    };
+  }
 
   const rows = await db
     .select({ id: users.id, fullName: users.fullName, email: users.email })

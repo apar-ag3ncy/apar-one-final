@@ -295,7 +295,9 @@ const CreateEmployeeSchema = z.object({
   employmentType: z.enum(['full_time', 'part_time', 'contract', 'intern', 'consultant']),
   status: z.enum(['prospective', 'active', 'on_leave', 'notice', 'separated']).optional(),
   designation: z.string().trim().max(160).optional(),
-  department: z.string().trim().max(120).optional(),
+  // Departments are dynamic free-text; normalise to lowercase so the picker
+  // list dedups ("Creative" / "creative") and display title-cases uniformly.
+  department: z.string().trim().toLowerCase().max(120).optional(),
   reportsToEmployeeId: z.string().uuid().optional(),
   joinedOn: z.string().regex(ISO_DATE, 'Joining date must be YYYY-MM-DD'),
   confirmedOn: z.string().regex(ISO_DATE).optional(),
@@ -602,5 +604,168 @@ export async function createEmployee(input: CreateEmployeeInput): Promise<Create
           ? e.message
           : 'Could not create the employee.';
     return { ok: false, message, errors: {} };
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/* updateEmployee — backs the OS "Edit teammate" modal + dashboard Edit        */
+/* -------------------------------------------------------------------------- */
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+const UpdateEmployeeSchema = z.object({
+  id: z.string().uuid(),
+  fullName: z.string().trim().min(1, 'Full name is required').optional(),
+  displayName: z.string().trim().max(120).nullable().optional(),
+  workEmail: z.string().trim().max(200).nullable().optional(),
+  personalEmail: z.string().trim().max(200).nullable().optional(),
+  phone: z.string().trim().max(40).nullable().optional(),
+  designation: z.string().trim().max(160).nullable().optional(),
+  department: z.string().trim().toLowerCase().max(120).nullable().optional(),
+  employmentType: z.enum(['full_time', 'part_time', 'contract', 'intern', 'consultant']).optional(),
+  status: z.enum(['prospective', 'active', 'on_leave', 'notice', 'separated']).optional(),
+  reportsToEmployeeId: z.string().uuid().nullable().optional(),
+  notes: z.string().trim().max(2000).nullable().optional(),
+});
+
+export type UpdateEmployeeInput = z.input<typeof UpdateEmployeeSchema>;
+
+export type UpdateEmployeeResult =
+  | { ok: true }
+  | { ok: false; message: string; errors: Record<string, string> };
+
+/**
+ * Patch the parent `employees` row. Polymorphic children (contacts /
+ * addresses / banking / tax identifiers / salary) are out of scope here —
+ * the profile window's deeper editors own those. This backs the OS
+ * "Edit teammate" quick-edit modal and the dashboard detail Edit dialog.
+ *
+ * Mirrors `updateVendor`: `null` clears a column, `undefined` leaves it
+ * untouched. `work_email` is unique, so a colliding value surfaces as a
+ * friendly field error rather than a 500. KYC masks, `employee_code`, and
+ * archive lifecycle are deliberately NOT editable here — those have their
+ * own gated paths (createEmployee / archiveEmployee / KYC reveal).
+ */
+export async function updateEmployee(input: UpdateEmployeeInput): Promise<UpdateEmployeeResult> {
+  const ctx = await getActorContext();
+  requireCapability(ctx, 'update_employee');
+
+  const parsed = UpdateEmployeeSchema.safeParse(input);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      message: 'Please fix the highlighted fields.',
+      errors: zodErrorsToPathMap(parsed.error),
+    };
+  }
+  const v = parsed.data;
+
+  // An employee cannot report to themselves.
+  if (v.reportsToEmployeeId && v.reportsToEmployeeId === v.id) {
+    return {
+      ok: false,
+      message: 'An employee cannot report to themselves.',
+      errors: { reportsToEmployeeId: 'Pick a different manager.' },
+    };
+  }
+
+  // Normalise the work email. Empty string clears it (NULL); a non-empty
+  // value is lower-cased and format-checked. `undefined` leaves it untouched.
+  const fieldErrors: Record<string, string> = {};
+  let workEmailPatch: string | null | undefined;
+  if (v.workEmail !== undefined) {
+    const trimmed = (v.workEmail ?? '').trim();
+    if (trimmed.length === 0) {
+      workEmailPatch = null;
+    } else if (!EMAIL_RE.test(trimmed)) {
+      fieldErrors.workEmail = 'Enter a valid work email.';
+    } else {
+      workEmailPatch = trimmed.toLowerCase();
+    }
+  }
+  if (Object.keys(fieldErrors).length > 0) {
+    return { ok: false, message: 'Please fix the highlighted fields.', errors: fieldErrors };
+  }
+
+  // Refuse a work-email change that collides with another (non-deleted) employee.
+  if (typeof workEmailPatch === 'string') {
+    const dup = await db
+      .select({ id: employees.id })
+      .from(employees)
+      .where(
+        and(
+          ne(employees.id, v.id),
+          isNull(employees.deletedAt),
+          eq(employees.workEmail, workEmailPatch),
+        ),
+      )
+      .limit(1);
+    if (dup.length > 0) {
+      return {
+        ok: false,
+        message: 'That work email is already in use.',
+        errors: { workEmail: 'Already used by another employee.' },
+      };
+    }
+  }
+
+  // Build the partial update. `null` clears the column; `undefined` leaves it.
+  const patch: Partial<typeof employees.$inferInsert> = { updatedBy: ctx.userId };
+  if (v.fullName !== undefined) patch.fullName = v.fullName;
+  if (v.displayName !== undefined) patch.displayName = v.displayName;
+  if (workEmailPatch !== undefined) patch.workEmail = workEmailPatch;
+  if (v.personalEmail !== undefined) patch.personalEmail = v.personalEmail;
+  if (v.phone !== undefined) patch.phone = v.phone;
+  if (v.designation !== undefined) patch.designation = v.designation;
+  if (v.department !== undefined) patch.department = v.department;
+  if (v.employmentType !== undefined) patch.employmentType = v.employmentType;
+  if (v.status !== undefined) patch.status = v.status;
+  if (v.reportsToEmployeeId !== undefined) patch.reportsToEmployeeId = v.reportsToEmployeeId;
+  if (v.notes !== undefined) patch.notes = v.notes;
+
+  try {
+    const result = await db
+      .update(employees)
+      .set(patch)
+      .where(and(eq(employees.id, v.id), isNull(employees.deletedAt)))
+      .returning({ id: employees.id, fullName: employees.fullName });
+    if (result.length === 0) {
+      return { ok: false, message: 'Employee not found.', errors: {} };
+    }
+
+    await logAudit({
+      actorId: ctx.userId,
+      entityType: 'employee',
+      entityId: v.id,
+      action: 'update',
+      changes: Object.fromEntries(
+        Object.entries(patch)
+          .filter(([k]) => k !== 'updatedBy')
+          .map(([k, val]) => [k, { before: null, after: val }]),
+      ),
+    });
+    await logActivity({
+      entityType: 'employee',
+      entityId: v.id,
+      actorId: ctx.userId,
+      kind: 'entity.updated',
+      summary: `Employee "${result[0]!.fullName}" updated`,
+    });
+
+    return { ok: true };
+  } catch (e) {
+    const raw = e instanceof Error ? e.message : '';
+    if (/work_email/i.test(raw) || /unique/i.test(raw)) {
+      return {
+        ok: false,
+        message: 'That work email is already in use.',
+        errors: { workEmail: 'Already used by another employee.' },
+      };
+    }
+    return {
+      ok: false,
+      message: e instanceof Error ? e.message : 'Could not update the employee.',
+      errors: {},
+    };
   }
 }

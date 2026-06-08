@@ -375,11 +375,9 @@ export function AttendanceApp() {
           >
             ‹
           </button>
-          <span className={`att-date-label${bulkDate === todayIso ? ' is-today' : ''}`}>
+          <span className={`att-date-label${bulkDate === todayIso ? 'is-today' : ''}`}>
             {bulkDateLabel}
-            {bulkDate === todayIso ? (
-              <span className="att-date-today-pill">Today</span>
-            ) : null}
+            {bulkDate === todayIso ? <span className="att-date-today-pill">Today</span> : null}
           </span>
           <button
             type="button"
@@ -465,8 +463,8 @@ export function AttendanceApp() {
                   return (
                     <th
                       key={d}
-                      className={`att-col-head${isToday ? ' is-today' : ''}${
-                        isSelected ? ' is-selected' : ''
+                      className={`att-col-head${isToday ? 'is-today' : ''}${
+                        isSelected ? 'is-selected' : ''
                       }`}
                       style={{
                         color:
@@ -536,10 +534,8 @@ export function AttendanceApp() {
                       <td
                         key={d}
                         className={`att-cell ${isOverride ? 'is-override' : 'is-default'}${
-                          isOpen ? ' is-open' : ''
-                        }${isToday ? ' is-today-col' : ''}${
-                          isSelected ? ' is-selected-col' : ''
-                        }`}
+                          isOpen ? 'is-open' : ''
+                        }${isToday ? 'is-today-col' : ''}${isSelected ? 'is-selected-col' : ''}`}
                         onClick={(e) =>
                           openPicker(e, r.employeeId, r.fullName, iso, status, isOverride)
                         }

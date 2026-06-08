@@ -153,8 +153,9 @@ async function runOne(
       // tax_reference_rates for kind='gst' active at the txn date.
       // Tolerance: 1 basis point. Warn-severity only.
       for (const p of template.postings) {
-        const metaItems = (p.metadata as { line_items?: Array<{ gst_rate_bps?: number }> } | undefined)
-          ?.line_items;
+        const metaItems = (
+          p.metadata as { line_items?: Array<{ gst_rate_bps?: number }> } | undefined
+        )?.line_items;
         if (!metaItems) continue;
         for (const it of metaItems) {
           if (typeof it.gst_rate_bps !== 'number') continue;
