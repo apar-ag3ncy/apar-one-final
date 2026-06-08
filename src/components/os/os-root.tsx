@@ -1,6 +1,14 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type CSSProperties,
+} from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { APP_REGISTRY, isPortalOnlyRole } from '@/lib/os/app-registry';
 import { osActions, useOsStore, type WindowState } from '@/lib/os/store';
@@ -19,7 +27,6 @@ import { Icon } from './icons';
 import { MenuBar } from './menubar';
 import { Window } from './window';
 import {
-  ClientDetail,
   ClientsApp,
   EmployeesApp,
   InboxApp,
@@ -27,7 +34,6 @@ import {
   ReportDetail,
   ReportsApp,
   SettingsApp,
-  VendorDetail,
   VendorsApp,
 } from './apps';
 // Phase 4 windows live as separate files so apps.tsx stops growing.
@@ -130,8 +136,8 @@ function Desktop({ signOut }: { signOut: () => void }) {
   const { currentUser } = useAuth();
   const user = currentUser!;
 
-  // Per-user settings (theme, dock size, dock gap).
-  const { settings, setSettings } = useUserSettings(user.id);
+  // Per-user settings (theme, dock size, dock gap, accent, default app).
+  const { settings, setSettings, resetSettings, settingsLoaded } = useUserSettings(user.id);
   // Per-user vendor data (vendors + invoices + documents).
   const vendorStore = useVendorStore(user.id);
   // Business data (clients/projects/employees/...) — looked up by entityId
@@ -241,6 +247,19 @@ function Desktop({ signOut }: { signOut: () => void }) {
     [user],
   );
 
+  // Auto-open the user's saved "default landing app" once on login (after the
+  // DB-backed settings have hydrated), if set, valid, and nothing is open yet.
+  const autoOpenedRef = useRef(false);
+  useEffect(() => {
+    if (autoOpenedRef.current || !settingsLoaded) return;
+    autoOpenedRef.current = true;
+    const appId = settings.defaultLandingApp;
+    if (!appId || windows.length > 0) return;
+    if (visibleApps.some((a) => a.id === appId)) {
+      openApp(appId as AppId);
+    }
+  }, [settingsLoaded, settings.defaultLandingApp, windows.length, visibleApps, openApp]);
+
   // Entity-detail openers. Each calls `openApp` with `position:
   // 'beside-focused'` so a click on an `<EntityRef>` inside one window
   // opens the referenced entity to the right — the multi-window
@@ -252,19 +271,6 @@ function Desktop({ signOut }: { signOut: () => void }) {
         title: `${client.name} — Client`,
         width: 760,
         height: 560,
-        position: 'beside-focused',
-      });
-    },
-    [openApp],
-  );
-
-  const openReportDetail = useCallback(
-    (report: Report) => {
-      openApp('reports', {
-        entityId: report.id,
-        title: `${report.label} — Report`,
-        width: 820,
-        height: 580,
         position: 'beside-focused',
       });
     },
@@ -371,11 +377,12 @@ function Desktop({ signOut }: { signOut: () => void }) {
     if (can(user, 'reports', 'view')) {
       list.push({
         icon: 'chart',
-        label: "Today's Cash Flow",
+        label: 'Cash Flow report',
         hint: 'Report',
         run: () => {
-          const cf = REPORTS.find((r) => r.id === 'r3');
-          if (cf) openReportDetail(cf);
+          if (typeof window !== 'undefined') {
+            window.open('/reports/cash-flow', '_blank', 'noopener,noreferrer');
+          }
         },
       });
       // LEDGER-SPEC §5 — the headline finance UI. Routed through the
@@ -386,6 +393,16 @@ function Desktop({ signOut }: { signOut: () => void }) {
         label: 'Per-client P&L',
         hint: 'Finance',
         run: () => openApp('reports', { entityId: 'per-client-pnl', title: 'Per-client P&L' }),
+      });
+      list.push({
+        icon: 'book',
+        label: 'Audit log',
+        hint: 'Logs',
+        run: () => {
+          if (typeof window !== 'undefined') {
+            window.open('/audit', '_blank', 'noopener,noreferrer');
+          }
+        },
       });
     }
     if (windows.length > 0) {
@@ -403,7 +420,7 @@ function Desktop({ signOut }: { signOut: () => void }) {
       run: () => signOut(),
     });
     return list;
-  }, [visibleApps, theme, user, openApp, openReportDetail, signOut, setTheme, windows.length]);
+  }, [visibleApps, theme, user, openApp, signOut, setTheme, windows.length]);
 
   // Resolve the detail entity for an entity-scoped window. Returns null
   // when the entity has been removed since the window was opened (e.g.
@@ -447,52 +464,31 @@ function Desktop({ signOut }: { signOut: () => void }) {
     }
 
     const entity = resolveEntity(w);
-    if (!entity) {
-      return (
-        <div
-          className="main"
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: 32,
-            color: 'var(--text-muted)',
-            textAlign: 'center',
-          }}
-        >
-          <div>
-            This record is no longer available.
-            <br />
-            Close this window and try again from the list.
-          </div>
+    const recordGone = (
+      <div
+        className="main"
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: 32,
+          color: 'var(--text-muted)',
+          textAlign: 'center',
+        }}
+      >
+        <div>
+          This record is no longer available.
+          <br />
+          Close this window and try again from the list.
         </div>
-      );
-    }
-    if (w.app === 'clients') {
-      return (
-        <div className="main">
-          <ClientDetail
-            client={entity as Client}
-            canEdit={can(user, 'clients', 'edit')}
-            canDelete={can(user, 'clients', 'delete')}
-            onCloseWindow={() => osActions.closeWindow(w.id)}
-          />
-        </div>
-      );
-    }
-    if (w.app === 'vendors') {
-      return (
-        <div className="main">
-          <VendorDetail
-            vendor={entity as Vendor}
-            store={vendorStore}
-            canEdit={can(user, 'vendors', 'edit')}
-            canDelete={can(user, 'vendors', 'delete')}
-            onCloseWindow={() => osActions.closeWindow(w.id)}
-          />
-        </div>
-      );
-    }
+      </div>
+    );
+    if (!entity) return recordGone;
+    // Clients & vendors are always opened by their real DB UUID (handled above
+    // by ClientWindow / VendorWindow). Reaching here means a stale, non-UUID
+    // seed id whose legacy detail view only persisted to localStorage — never
+    // render it (silent data-loss trap); show the unavailable state instead.
+    if (w.app === 'clients' || w.app === 'vendors') return recordGone;
     if (w.app === 'reports') {
       return (
         <div className="main">
@@ -512,6 +508,7 @@ function Desktop({ signOut }: { signOut: () => void }) {
       className={`os-root ${theme === 'dark' ? 'dark' : ''}`}
       data-theme={theme}
       data-reduced-motion={settings.reducedMotion ? 'true' : undefined}
+      style={{ '--accent': settings.accent } as CSSProperties}
     >
       <MenuBar
         activeApp={activeApp}
@@ -524,6 +521,7 @@ function Desktop({ signOut }: { signOut: () => void }) {
         onSignOut={signOut}
         onCloseAll={() => osActions.closeAllWindows()}
         hasOpenWindows={windows.length > 0}
+        onOpenSearch={() => setCmdkOpen(true)}
       />
 
       {/* Desktop icons — only when no windows are open. Filtered by view perm. */}
@@ -669,11 +667,17 @@ function Desktop({ signOut }: { signOut: () => void }) {
               }
               return (
                 <div className="main">
-                  <ReportsApp openReportDetail={openReportDetail} />
+                  <ReportsApp />
                 </div>
               );
             case 'settings':
-              return <SettingsApp settings={settings} onSettingsChange={setSettings} />;
+              return (
+                <SettingsApp
+                  settings={settings}
+                  onSettingsChange={setSettings}
+                  onResetSettings={resetSettings}
+                />
+              );
             case 'admin_console':
               return <AdminConsole />;
             default:

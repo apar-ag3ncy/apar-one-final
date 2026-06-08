@@ -3,6 +3,7 @@
 import { and, between, desc, eq, ilike, inArray, isNull, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 
+import { logAudit } from '@/lib/audit';
 import { db } from '@/lib/db/client';
 import { employees, officeExpenses, vendors } from '@/lib/db/schema';
 import { AppError } from '@/lib/errors';
@@ -317,6 +318,20 @@ export async function createOfficeExpense(
     .returning();
   if (!row) throw new AppError('internal', 'office expense insert returned no row');
 
+  await logAudit({
+    actorId: ctx.userId,
+    entityType: 'office_expense',
+    entityId: row.id,
+    action: 'insert',
+    changes: {
+      category: row.category,
+      description: row.description,
+      amountPaise: String(row.amountPaise),
+      gstPaise: String(row.gstPaise),
+      status: row.status,
+    },
+  });
+
   return hydrate(row);
 }
 
@@ -372,6 +387,14 @@ export async function updateOfficeExpense(
     .returning();
   if (!row) throw new AppError('not_found', 'Office expense not found.');
 
+  await logAudit({
+    actorId: ctx.userId,
+    entityType: 'office_expense',
+    entityId: row.id,
+    action: 'update',
+    changes: { fields: Object.keys(rest) },
+  });
+
   return hydrate(row);
 }
 
@@ -387,6 +410,14 @@ export async function deleteOfficeExpense(args: { id: string }): Promise<void> {
   if (result.length === 0) {
     throw new AppError('not_found', 'Office expense not found.');
   }
+
+  await logAudit({
+    actorId: ctx.userId,
+    entityType: 'office_expense',
+    entityId: parsed.id,
+    action: 'delete',
+    changes: { soft_delete: true },
+  });
 }
 
 async function hydrate(row: typeof officeExpenses.$inferSelect): Promise<OfficeExpenseRow> {

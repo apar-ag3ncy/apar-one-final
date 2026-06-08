@@ -239,6 +239,20 @@
       "when": 1780500000000,
       "tag": "0033_tds_gst_validation_enable",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1780500001000,
+      "tag": "0034_audit_all_business_tables",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1780500002000,
+      "tag": "0035_user_preferences",
+      "breakpoints": true
     }
   ]
 }

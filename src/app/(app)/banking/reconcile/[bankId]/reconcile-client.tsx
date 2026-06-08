@@ -80,7 +80,7 @@ export function ReconcileClient({
               {matched} matched · {unmatched} unmatched · {rows.length} rows total
             </p>
           </div>
-          <Button disabled={!allDone}>
+          <Button disabled title={allDone ? 'Finalising reconciliation — coming soon.' : undefined}>
             {allDone ? (
               <>
                 <CheckCircle2Icon className="mr-1.5 size-3.5" aria-hidden />

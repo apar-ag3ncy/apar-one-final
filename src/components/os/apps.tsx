@@ -10,7 +10,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import { REPORTS } from './data';
+import { APPS } from './data';
 import { useBusinessData } from './data-store';
 import { navigateBesideFocused } from './apps/navigate';
 import { EntityRef } from '@/components/entity/entity-ref';
@@ -24,6 +24,7 @@ import {
 import { departmentLabel } from '@/components/employees/types';
 import type { Employee as OsEmployee } from './types';
 import {
+  ACCENTS,
   DOCK_GAP_MAX,
   DOCK_GAP_MIN,
   DOCK_SIZE_MAX,
@@ -3496,29 +3497,113 @@ export function InboxApp() {
 /* Reports + Report detail                                                    */
 /* -------------------------------------------------------------------------- */
 
-export function ReportsApp({ openReportDetail }: { openReportDetail: (r: Report) => void }) {
+// Real, DB-backed reports catalog. Each tile opens the corresponding
+// dashboard report route (trial balance, P&L, AR/AP aging, etc.) which runs
+// against the live ledger — no fabricated KPI numbers. Grouped to match the
+// dashboard /reports catalog.
+const OS_REPORT_GROUPS: ReadonlyArray<{
+  heading: string;
+  reports: ReadonlyArray<{ slug: string; label: string; desc: string }>;
+}> = [
+  {
+    heading: 'Financial statements',
+    reports: [
+      {
+        slug: 'trial-balance',
+        label: 'Trial Balance',
+        desc: 'Debit & credit balances per account.',
+      },
+      { slug: 'balance-sheet', label: 'Balance Sheet', desc: 'Assets, liabilities & equity.' },
+      { slug: 'pnl', label: 'Profit & Loss', desc: 'Income and expenses over a period.' },
+      { slug: 'cash-flow', label: 'Cash Flow', desc: 'Cash inflows and outflows.' },
+    ],
+  },
+  {
+    heading: 'Receivables & payables',
+    reports: [
+      { slug: 'ar-aging', label: 'AR Aging', desc: 'Outstanding receivables by age.' },
+      { slug: 'ap-aging', label: 'AP Aging', desc: 'Outstanding payables by age.' },
+    ],
+  },
+  {
+    heading: 'Ledgers & statements',
+    reports: [
+      { slug: 'bank-book', label: 'Bank Book', desc: 'Bank movements + running balance.' },
+      { slug: 'statement', label: 'Statement of Account', desc: 'Per-party ledger statement.' },
+      { slug: 'per-client-pnl', label: 'Per-Client P&L', desc: 'Profitability by client.' },
+    ],
+  },
+];
+
+export function ReportsApp() {
+  const openReport = (slug: string) => {
+    if (typeof window !== 'undefined') {
+      window.open(`/reports/${slug}`, '_blank', 'noopener,noreferrer');
+    }
+  };
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
       <div className="main-header">
         <h2>Reports</h2>
-        <span className="sub">May 2026 · finance & ops</span>
-        <div className="grow" />
-        <button className="btn" type="button" disabled title="Period filter — coming soon.">
-          <Icon name="filter" size={13} />
-          FY26
-        </button>
-        <button className="btn" type="button" disabled title="Report export — coming soon.">
-          <Icon name="filetext" size={13} />
-          Export
-        </button>
+        <span className="sub">Live accounting & management reports</span>
       </div>
-      <div className="card-grid" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
-        {REPORTS.map((r) => (
-          <div key={r.id} className="report-tile" onClick={() => openReportDetail(r)}>
-            <div className="label">{r.label}</div>
-            <div className="value">{r.value}</div>
-            <div className="trend">{r.trend}</div>
-            <Sparkline data={r.spark} color={r.color} />
+      <div
+        style={{
+          flex: 1,
+          overflow: 'auto',
+          padding: 16,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 18,
+        }}
+      >
+        {OS_REPORT_GROUPS.map((group) => (
+          <div key={group.heading} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div
+              style={{
+                fontSize: 11,
+                fontWeight: 600,
+                textTransform: 'uppercase',
+                letterSpacing: '0.06em',
+                color: 'var(--text-muted)',
+              }}
+            >
+              {group.heading}
+            </div>
+            <div className="card-grid" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
+              {group.reports.map((r) => (
+                <div
+                  key={r.slug}
+                  className="report-tile"
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => openReport(r.slug)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      openReport(r.slug);
+                    }
+                  }}
+                  style={{ cursor: 'pointer' }}
+                  title={`Open ${r.label}`}
+                >
+                  <div className="label">{r.label}</div>
+                  <div
+                    style={{
+                      fontSize: 12,
+                      color: 'var(--text-muted)',
+                      marginTop: 4,
+                      lineHeight: 1.4,
+                    }}
+                  >
+                    {r.desc}
+                  </div>
+                  <div style={{ fontSize: 12, color: 'var(--accent, #E63A1F)', marginTop: 10 }}>
+                    Open report →
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         ))}
       </div>
@@ -3738,11 +3823,15 @@ type SettingsSection = {
 export function SettingsApp({
   settings,
   onSettingsChange,
+  onResetSettings,
 }: {
   settings: UserSettings;
   onSettingsChange: (patch: Partial<UserSettings>) => void;
+  onResetSettings?: () => void;
 }) {
-  const [section, setSection] = useState<SettingsSection['name']>('Appearance');
+  const [section, setSection] = useState<SettingsSection['name']>('General');
+  // Apps a user can pick as their landing app (admin-only apps excluded).
+  const landingApps = APPS.filter((a) => a.id !== 'admin_console');
   const sections: readonly SettingsSection[] = [
     { name: 'General', icon: 'settings' },
     { name: 'Appearance', icon: 'palette' },
@@ -3769,7 +3858,49 @@ export function SettingsApp({
         <div className="main-header">
           <h2>{section}</h2>
         </div>
-        {section === 'Appearance' ? (
+        {section === 'General' ? (
+          <div>
+            <div className="settings-row">
+              <div>
+                <div className="label">Default landing app</div>
+                <div className="desc">
+                  Automatically opened when you sign in. Saved to your profile and synced across
+                  devices.
+                </div>
+              </div>
+              <select
+                className="input"
+                style={{ maxWidth: 220 }}
+                value={settings.defaultLandingApp}
+                aria-label="Default landing app"
+                onChange={(e) => onSettingsChange({ defaultLandingApp: e.target.value })}
+              >
+                <option value="">None — empty desktop</option>
+                {landingApps.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="settings-row">
+              <div>
+                <div className="label">Reset preferences</div>
+                <div className="desc">
+                  Clear all saved settings on your profile and restore the defaults.
+                </div>
+              </div>
+              <button
+                className="btn"
+                type="button"
+                onClick={() => onResetSettings?.()}
+                disabled={!onResetSettings}
+              >
+                Reset to defaults
+              </button>
+            </div>
+          </div>
+        ) : section === 'Appearance' ? (
           <div>
             <div className="settings-row">
               <div>
@@ -3790,22 +3921,32 @@ export function SettingsApp({
             <div className="settings-row">
               <div>
                 <div className="label">Accent</div>
-                <div className="desc">Used for selected items, focus states and the wordmark.</div>
+                <div className="desc">Used for selected items, focus states and links.</div>
               </div>
-              <div style={{ display: 'flex', gap: 6 }}>
-                {['#E63A1F', '#7A4E2D', '#5B6677', '#2E8F5A'].map((c) => (
-                  <div
-                    key={c}
-                    style={{
-                      width: 22,
-                      height: 22,
-                      borderRadius: '50%',
-                      background: c,
-                      border: c === '#E63A1F' ? '2px solid var(--text)' : '2px solid transparent',
-                      cursor: 'default',
-                    }}
-                  />
-                ))}
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                {ACCENTS.map((c) => {
+                  const selected = settings.accent === c;
+                  return (
+                    <button
+                      key={c}
+                      type="button"
+                      aria-label={`Accent ${c}`}
+                      aria-pressed={selected}
+                      title={c}
+                      onClick={() => onSettingsChange({ accent: c })}
+                      style={{
+                        width: 22,
+                        height: 22,
+                        borderRadius: '50%',
+                        background: c,
+                        border: selected ? '2px solid var(--text)' : '2px solid transparent',
+                        boxShadow: selected ? '0 0 0 2px var(--content)' : undefined,
+                        cursor: 'pointer',
+                        padding: 0,
+                      }}
+                    />
+                  );
+                })}
               </div>
             </div>
             <div className="settings-row">

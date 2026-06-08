@@ -1,98 +1,42 @@
 'use client';
 
-// Bank reconciliation window — 1200×800 default per the brief.
-// Two-pane layout: imported bank statement lines on the left,
-// unreconciled ledger postings on the right, drag-to-match between them.
+// Bank reconciliation window.
 //
-// The window scaffolding (chrome, sizing, focus, drag) is the OS's job
-// and lives here. The unreconciled postings pane reuses B's shared
-// <TransactionList> so the row chrome matches every other ledger surface
-// (Rule 47). Bank-statement lines stay local until the importer ships.
-
-import { TransactionList } from '@/components/entity/transaction-list';
-import { navigateBesideFocused } from './navigate';
+// The statement importer + drag-to-match reconciliation engine are not built
+// yet (no `importBankStatement` action, no unreconciled-postings query). Rather
+// than show a fake two-pane reconcile UI with hardcoded-empty data — which reads
+// as "broken" — this surfaces an honest "not available yet" state. Swap this for
+// the real two-pane layout once the backend ships.
 
 export type BankReconWindowProps = {
   /** Optional bank-account id, encoded in the window URL as the `entityId`. */
   bankAccountId?: string;
 };
 
-export function BankReconWindow({ bankAccountId }: BankReconWindowProps) {
+export function BankReconWindow(_props: BankReconWindowProps) {
   return (
     <div
       className="main"
       style={{
-        display: 'grid',
-        gridTemplateColumns: '1fr 1fr',
-        gap: 1,
-        background: 'var(--border)',
         flex: 1,
-      }}
-    >
-      <Pane
-        title="Statement lines"
-        sub={bankAccountId ? `Account ${bankAccountId}` : 'No account selected'}
-        body={
-          <EmptyMessage
-            heading="Upload a bank statement"
-            body={
-              <>
-                Drag a CSV / OFX statement here, or wire the statement-import action once{' '}
-                <code>importBankStatement</code> ships.
-              </>
-            }
-          />
-        }
-      />
-      <Pane
-        title="Unreconciled postings"
-        sub="From the ledger"
-        body={
-          // Empty shared list — uses the same chrome as every other
-          // transactions surface. Once the backend supplies real
-          // unreconciled postings, swap the [] for the loaded set.
-          <TransactionList transactions={[]} scope="all" onNavigate={navigateBesideFocused} />
-        }
-      />
-    </div>
-  );
-}
-
-function Pane({ title, sub, body }: { title: string; sub: string; body: React.ReactNode }) {
-  return (
-    <div
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        background: 'var(--bg)',
-        minWidth: 0,
-      }}
-    >
-      <div className="main-header" style={{ borderBottom: '1px solid var(--border)' }}>
-        <h2>{title}</h2>
-        <span className="sub">{sub}</span>
-      </div>
-      <div style={{ flex: 1, overflow: 'auto' }}>{body}</div>
-    </div>
-  );
-}
-
-function EmptyMessage({ heading, body }: { heading: string; body: React.ReactNode }) {
-  return (
-    <div
-      style={{
-        height: '100%',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        padding: 24,
-        color: 'var(--text-muted)',
+        padding: 32,
         textAlign: 'center',
+        color: 'var(--text-muted)',
       }}
     >
-      <div style={{ maxWidth: 320 }}>
-        <div style={{ fontWeight: 600, color: 'var(--text)' }}>{heading}</div>
-        <div style={{ marginTop: 6, fontSize: 13, lineHeight: 1.5 }}>{body}</div>
+      <div style={{ maxWidth: 380 }}>
+        <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--text)' }}>
+          Bank reconciliation is coming soon
+        </div>
+        <div style={{ marginTop: 8, fontSize: 13, lineHeight: 1.6 }}>
+          Statement import (CSV / OFX) and drag-to-match reconciliation against ledger postings
+          aren&apos;t available yet. In the meantime, post and review bank transactions from the{' '}
+          <strong style={{ color: 'var(--text)' }}>Ledger</strong>, and use the{' '}
+          <strong style={{ color: 'var(--text)' }}>Bank Book</strong> report for running balances.
+        </div>
       </div>
     </div>
   );

@@ -4,10 +4,9 @@ import {
   TruckIcon,
   FolderKanbanIcon,
   UserCogIcon,
-  FileTextIcon,
-  BookOpenIcon,
   BarChart3Icon,
-  BookmarkIcon,
+  BanknoteIcon,
+  ScrollTextIcon,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -23,10 +22,9 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { label: 'Vendors', href: '/vendors', icon: TruckIcon },
   { label: 'Projects', href: '/projects', icon: FolderKanbanIcon },
   { label: 'Employees', href: '/employees', icon: UserCogIcon },
-  { label: 'Documents', href: '/documents', icon: FileTextIcon },
-  { label: 'Ledger', href: '/ledger', icon: BookOpenIcon },
+  { label: 'Payroll', href: '/payroll', icon: BanknoteIcon },
   { label: 'Reports', href: '/reports', icon: BarChart3Icon },
-  { label: 'Views', href: '/views', icon: BookmarkIcon },
+  { label: 'Audit log', href: '/audit', icon: ScrollTextIcon },
 ] as const;
 
 const LABEL_BY_HREF = new Map(NAV_ITEMS.map((item) => [item.href, item.label] as const));

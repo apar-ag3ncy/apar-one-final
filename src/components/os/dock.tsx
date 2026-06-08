@@ -114,14 +114,6 @@ export function Dock({
             </div>
           );
         })}
-        <div className="dock-sep" />
-        <div
-          className="dock-item"
-          style={{ width: itemSize, height: itemSize }}
-          onClick={() => onOpen('trash')}
-        >
-          <Icon name="trash" size={Math.round(24 * iconScale)} stroke={1.7} />
-        </div>
       </div>
       {ctx && (
         <div
@@ -138,27 +130,28 @@ export function Dock({
           >
             Open
           </div>
-          <div
-            className="row"
-            onClick={() => {
-              onContext('quit', ctx.app);
-              setCtx(null);
-            }}
-          >
-            Quit {ctx.app.name}
-          </div>
-          <div
-            className="row"
-            onClick={() => {
-              onContext('all', ctx.app);
-              setCtx(null);
-            }}
-          >
-            Show All Windows
-          </div>
-          <div className="row" style={{ color: 'var(--text-dim)' }}>
-            Options ›
-          </div>
+          {runningSet.has(ctx.app.id) && (
+            <>
+              <div
+                className="row"
+                onClick={() => {
+                  onContext('quit', ctx.app);
+                  setCtx(null);
+                }}
+              >
+                Quit {ctx.app.name}
+              </div>
+              <div
+                className="row"
+                onClick={() => {
+                  onContext('all', ctx.app);
+                  setCtx(null);
+                }}
+              >
+                Show All Windows
+              </div>
+            </>
+          )}
         </div>
       )}
     </div>

@@ -19,6 +19,7 @@ type Props = {
   onSignOut: () => void;
   onCloseAll: () => void;
   hasOpenWindows: boolean;
+  onOpenSearch: () => void;
 };
 
 export function MenuBar({
@@ -30,6 +31,7 @@ export function MenuBar({
   onSignOut,
   onCloseAll,
   hasOpenWindows,
+  onOpenSearch,
 }: Props) {
   const [open, setOpen] = useState<string | null>(null);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
@@ -75,8 +77,8 @@ export function MenuBar({
       {
         label: 'New Window',
         shortcut: '⌘N',
-        live: true,
-        action: () => onAction('open', activeApp?.id),
+        live: activeApp != null,
+        action: activeApp ? () => onAction('open', activeApp.id) : undefined,
       },
       { label: 'Open…', shortcut: '⌘O' },
       { label: 'Close Window', shortcut: '⌘W' },
@@ -213,10 +215,18 @@ export function MenuBar({
         >
           <Icon name="close" size={13} stroke={2.2} />
         </button>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--text-muted)' }}>
+        <button
+          type="button"
+          className="menubar-action"
+          title="Search (⌘K)"
+          aria-label="Open command palette"
+          onClick={(e) => {
+            e.stopPropagation();
+            onOpenSearch();
+          }}
+        >
           <Icon name="search" size={13} />
-          <Icon name="bell" size={13} />
-        </div>
+        </button>
         <div className="clock" suppressHydrationWarning>
           {now ? `${date} · ${time}` : ''}
         </div>

@@ -3,7 +3,10 @@ import { notFound } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { VendorDetailTabs } from '@/components/vendors/vendor-detail-tabs';
 import { getVendor } from '@/lib/server-stub/entity-actions';
+import { getActorContext } from '@/lib/server/actor';
+import { hasCapability } from '@/lib/rbac';
 import { ProfileHeader } from '@/components/entity/profile-header';
+import { VendorEditButton } from '@/components/vendors/vendor-edit-button';
 
 type Props = { params: Promise<{ id: string }> };
 
@@ -15,9 +18,10 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
 export default async function VendorDetailPage({ params }: Props) {
   const { id } = await params;
-  // TODO(backend): swap for getVendor(id) once Backend ships the query helper.
-  const vendor = await getVendor(id);
+  const [vendor, actor] = await Promise.all([getVendor(id), getActorContext()]);
   if (!vendor) notFound();
+
+  const canEdit = hasCapability(actor, 'update_vendor');
 
   return (
     <>
@@ -34,19 +38,13 @@ export default async function VendorDetailPage({ params }: Props) {
         }}
         back={{ href: '/vendors', label: 'All vendors' }}
         actions={
-          <>
-            <Button
-              size="sm"
-              variant="outline"
-              disabled
-              title="Server action pending (Backend agent)."
-            >
+          canEdit ? (
+            <VendorEditButton vendor={vendor} />
+          ) : (
+            <Button size="sm" variant="outline" disabled title="Your role can't edit vendors.">
               Edit
             </Button>
-            <Button size="sm" disabled title="Server action pending (Backend agent).">
-              Record payment
-            </Button>
-          </>
+          )
         }
       />
       <VendorDetailTabs vendor={vendor} />

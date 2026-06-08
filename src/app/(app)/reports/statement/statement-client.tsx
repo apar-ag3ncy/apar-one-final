@@ -170,11 +170,9 @@ export function StatementClient({
               </TableHeader>
               <TableBody>
                 {rows.map((r) => (
-                  <TableRow
-                    key={r.transactionId}
-                    className="hover:bg-muted/40 cursor-pointer"
-                    onClick={() => onNavigate({ type: 'transaction', id: r.transactionId })}
-                  >
+                  <TableRow key={r.transactionId} className="hover:bg-muted/40">
+                    {/* Read-only: no dashboard transaction-detail route exists to
+                        drill into (the OS ledger window provides drill-down). */}
                     <TableCell className="text-muted-foreground text-xs whitespace-nowrap">
                       {r.date}
                     </TableCell>

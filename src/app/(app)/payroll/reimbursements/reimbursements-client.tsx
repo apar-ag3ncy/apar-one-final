@@ -29,13 +29,8 @@ export function ReimbursementsClient({ rows }: { rows: readonly Row[] }) {
     ),
     status: r.status,
   }));
-  return (
-    <ApprovalQueue
-      title="Reimbursements"
-      rows={adapted}
-      canApprove
-      // TODO(backend): wire onApprove to A.approveReimbursement(id)
-      // and onReject to A.rejectReimbursement(id, reason).
-    />
-  );
+  // Read-only preview until the reimbursement queue is served from the DB
+  // (approveReimbursement/rejectReimbursement need real row ids) — so no
+  // no-op approve/reject buttons are shown.
+  return <ApprovalQueue title="Reimbursements" rows={adapted} />;
 }
