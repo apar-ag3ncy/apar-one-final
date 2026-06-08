@@ -63,6 +63,9 @@ export * from './attendance';
 // Office expenses (lightweight system-of-record for everyday outflows)
 export * from './office_expenses';
 
+// Department registry (managed taxonomy for the Employees module)
+export * from './departments';
+
 // Billing module (Phase 1)
 export * from './service_items';
 export * from './party_billing_profiles';

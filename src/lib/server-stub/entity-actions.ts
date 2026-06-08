@@ -31,6 +31,7 @@ import {
   accounts,
   bills,
   clients,
+  departments,
   employees,
   entityActivityLog,
   entityBankAccounts,
@@ -51,7 +52,6 @@ import { updateProject as updateProjectAction } from '@/lib/server/entities/proj
 import { revealBank as revealBankFromVault, revealKyc as revealKycFromVault } from '@/lib/storage';
 import type { Client, ClientPoc, ClientPriority, ClientStatus } from '@/components/clients/types';
 import type { Vendor, VendorCategory, VendorStatus, TdsSection } from '@/components/vendors/types';
-import { KNOWN_DEPARTMENTS } from '@/components/employees/types';
 import type {
   Employee,
   EmployeeStatus,
@@ -286,19 +286,26 @@ function mapDepartment(raw: string | null): Department {
 }
 
 /**
- * Distinct departments currently in use across employees, merged with the
- * known baseline, deduped (case-insensitive) and sorted — powers the
- * dynamic department picker on the create/edit forms.
+ * Department names for the create/edit form picker. Sourced from the managed
+ * `departments` registry, unioned with any distinct department still in use on
+ * employees (defensive — covers a row not yet registered), deduped
+ * case-insensitively and sorted.
  */
 export async function listDepartments(): Promise<readonly string[]> {
   await getActorContext();
-  const rows = await db
-    .select({ department: employees.department })
-    .from(employees)
-    .where(isNull(employees.deletedAt));
-  const set = new Map<string, string>(); // lowercased key → first-seen value
-  for (const k of KNOWN_DEPARTMENTS) set.set(k.toLowerCase(), k);
-  for (const r of rows) {
+  const [deptRows, empRows] = await Promise.all([
+    db.select({ name: departments.name }).from(departments).where(isNull(departments.deletedAt)),
+    db
+      .select({ department: employees.department })
+      .from(employees)
+      .where(isNull(employees.deletedAt)),
+  ]);
+  const set = new Map<string, string>(); // lowercased key → stored value
+  for (const r of deptRows) {
+    const d = (r.name ?? '').trim();
+    if (d) set.set(d.toLowerCase(), d.toLowerCase());
+  }
+  for (const r of empRows) {
     const d = (r.department ?? '').trim();
     if (d) set.set(d.toLowerCase(), d.toLowerCase());
   }

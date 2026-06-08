@@ -107,10 +107,44 @@ const DEFAULT_W = 880;
 const DEFAULT_H = 580;
 const DOCK_GUTTER = 96; // bottom inset for the macOS dock
 const TOP_GUTTER = 36; // menubar height
+const EDGE_GUTTER = 16; // breathing room from the viewport edges
+const MIN_W = 480; // mirror the interactive-resize minimums (window.tsx)
+const MIN_H = 360;
 
 function viewport(): { vw: number; vh: number } {
   if (typeof window === 'undefined') return { vw: 1440, vh: 900 };
   return { vw: window.innerWidth, vh: window.innerHeight };
+}
+
+/**
+ * Cap a window's size to the usable desktop area so it can never open larger
+ * than the screen (which would push its bottom/right — and the content there —
+ * permanently off-screen). Floors at the resize minimums so the window is
+ * still usable on tiny viewports.
+ */
+function clampSize(w: number, h: number): { width: number; height: number } {
+  const { vw, vh } = viewport();
+  const maxW = Math.max(MIN_W, vw - EDGE_GUTTER * 2);
+  const maxH = Math.max(MIN_H, vh - TOP_GUTTER - DOCK_GUTTER - EDGE_GUTTER * 2);
+  return { width: Math.min(w, maxW), height: Math.min(h, maxH) };
+}
+
+/**
+ * Pull a window's top-left corner so the whole frame (given its w/h) stays
+ * inside the viewport — below the menubar, above the dock, and within both
+ * side edges. Idempotent: a window already on-screen is left unchanged.
+ */
+function clampPosition(x: number, y: number, w: number, h: number): { x: number; y: number } {
+  const { vw, vh } = viewport();
+  const usableH = vh - TOP_GUTTER - DOCK_GUTTER;
+  const minX = EDGE_GUTTER;
+  const maxX = Math.max(minX, vw - w - EDGE_GUTTER);
+  const minY = TOP_GUTTER + EDGE_GUTTER;
+  const maxY = Math.max(minY, TOP_GUTTER + usableH - h - EDGE_GUTTER);
+  return {
+    x: Math.min(Math.max(minX, x), maxX),
+    y: Math.min(Math.max(minY, y), maxY),
+  };
 }
 
 function placeFor(
@@ -121,28 +155,22 @@ function placeFor(
   focused: WindowState | null,
 ) {
   const { vw, vh } = viewport();
-  const usableH = vh - TOP_GUTTER - DOCK_GUTTER;
+  let x: number;
+  let y: number;
   if (position === 'beside-focused' && focused) {
-    // Sit to the right of the focused window; clamp inside the viewport.
-    const rightEdge = focused.x + focused.width;
-    let x = rightEdge + 16;
-    if (x + w > vw - 16) x = Math.max(16, vw - w - 16);
-    let y = focused.y;
-    if (y + h > TOP_GUTTER + usableH - 16)
-      y = Math.max(TOP_GUTTER + 16, TOP_GUTTER + usableH - h - 16);
-    return { x, y };
+    // Prefer sitting to the right of the focused window…
+    x = focused.x + focused.width + 16;
+    y = focused.y;
+  } else if (position === 'cascade') {
+    x = 120 + (count % 5) * 30;
+    y = TOP_GUTTER + 34 + (count % 5) * 24;
+  } else {
+    // center (with mild cascade for repeat openings)
+    x = Math.round((vw - w) / 2) + (count % 4) * 18;
+    y = Math.round((vh - h - DOCK_GUTTER) / 2) + (count % 4) * 14;
   }
-  if (position === 'cascade') {
-    return {
-      x: Math.max(60, Math.min(vw - w - 60, 120 + (count % 5) * 30)),
-      y: Math.max(60, TOP_GUTTER + 34 + (count % 5) * 24),
-    };
-  }
-  // center (with mild cascade for repeat openings)
-  return {
-    x: Math.max(16, Math.round((vw - w) / 2) + (count % 4) * 18),
-    y: Math.max(TOP_GUTTER + 16, Math.round((vh - h - DOCK_GUTTER) / 2) + (count % 4) * 14),
-  };
+  // …but always clamp so the full frame is on-screen regardless of branch.
+  return clampPosition(x, y, w, h);
 }
 
 let WIN_SEQ = 0;
@@ -163,8 +191,9 @@ function focusedWindow(): WindowState | null {
 
 function openWindow(input: OpenWindowInput): string {
   const position: WindowPosition = input.position ?? 'center';
-  const width = input.width ?? DEFAULT_W;
-  const height = input.height ?? DEFAULT_H;
+  // Clamp to the viewport so a generous per-app default size never opens
+  // bigger than the screen — the whole window (and its content) stays visible.
+  const { width, height } = clampSize(input.width ?? DEFAULT_W, input.height ?? DEFAULT_H);
 
   // Dedupe: a non-entity app (e.g. settings) reuses an existing window.
   if (!input.alwaysNew && !input.entityId) {
@@ -304,8 +333,15 @@ function setTitle(id: string, title: string) {
  * appear without flicker.
  */
 function hydrate(windows: WindowState[], focusedId: string | null) {
-  const maxZ = windows.reduce((m, w) => (w.zIndex > m ? w.zIndex : m), state.nextZ);
-  setState({ windows, focusedId, nextZ: maxZ });
+  // URL-restored geometry can come from a larger monitor; clamp each window
+  // to this viewport so a shared deep-link never restores an off-screen frame.
+  const clamped = windows.map((w) => {
+    const { width, height } = clampSize(w.width, w.height);
+    const { x, y } = clampPosition(w.x, w.y, width, height);
+    return { ...w, width, height, x, y };
+  });
+  const maxZ = clamped.reduce((m, w) => (w.zIndex > m ? w.zIndex : m), state.nextZ);
+  setState({ windows: clamped, focusedId, nextZ: maxZ });
 }
 
 export const osActions = {
@@ -353,4 +389,9 @@ export function __resetOsStoreForTests(): void {
   state = { windows: [], focusedId: null, nextZ: 100 };
   WIN_SEQ = 0;
   emit();
+}
+
+/** Test-only snapshot of the raw store state. DO NOT use from app code. */
+export function __getOsStateForTests(): OsStoreState {
+  return state;
 }

@@ -253,6 +253,13 @@
       "when": 1780500002000,
       "tag": "0035_user_preferences",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1780600002000,
+      "tag": "0036_departments",
+      "breakpoints": true
     }
   ]
 }

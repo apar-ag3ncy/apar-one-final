@@ -88,6 +88,7 @@ export function OfficeLedgerWindow() {
           noun="cash movements"
           balanceMeaning="Positive = cash on hand + bank balance"
           rangeLabel={`${fromDate} → ${toDate}`}
+          exportName={`office-ledger-${fromDate}_to_${toDate}`}
           onSelectTransaction={(txnId) =>
             osActions.openWindow({
               app: 'transactions',

@@ -12,6 +12,7 @@
 // every Window without a shadcn / Tailwind dependency.
 
 import { formatINR } from '@/components/shared/format-inr';
+import { exportRows, paiseToRupees, type ExportFormat } from '@/lib/client/export-rows';
 import type { Statement, StatementLine } from '@/lib/server/ledger/statements';
 
 export type StatementOfAccountProps = {
@@ -24,6 +25,11 @@ export type StatementOfAccountProps = {
   rangeLabel?: string;
   /** Optional click handler — used to deep-link into the transaction window. */
   onSelectTransaction?: (txnId: string) => void;
+  /**
+   * Base filename (no extension) for the CSV / Excel export. When set, an
+   * Export control appears once the statement has rows. Omit to hide export.
+   */
+  exportName?: string;
 };
 
 export function StatementOfAccount({
@@ -32,11 +38,40 @@ export function StatementOfAccount({
   noun = 'postings',
   rangeLabel,
   onSelectTransaction,
+  exportName,
 }: StatementOfAccountProps) {
   if (!statement) {
     return <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0 }}>Loading {noun}…</p>;
   }
   const { closingBalancePaise, lines } = statement;
+
+  function handleExport(format: ExportFormat) {
+    const headers = [
+      'Date',
+      'Reference',
+      'Kind',
+      'Account code',
+      'Account',
+      'Status',
+      'Memo',
+      'Debit',
+      'Credit',
+      'Balance',
+    ];
+    const data: Record<string, string | number>[] = lines.map((l) => ({
+      Date: l.txnDate.slice(0, 10),
+      Reference: l.reference,
+      Kind: l.kind.replace(/_/g, ' '),
+      'Account code': l.accountCode,
+      Account: l.accountName,
+      Status: l.status,
+      Memo: l.description ?? '',
+      Debit: l.side === 'debit' ? paiseToRupees(l.amountPaise) : 0,
+      Credit: l.side === 'credit' ? paiseToRupees(l.amountPaise) : 0,
+      Balance: paiseToRupees(l.runningBalancePaise),
+    }));
+    exportRows(data, headers, exportName ?? 'ledger', format, 'Ledger');
+  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -81,8 +116,41 @@ export function StatementOfAccount({
             {balanceMeaning}
           </div>
         </div>
-        {rangeLabel ? (
-          <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{rangeLabel}</div>
+        {rangeLabel || (exportName && lines.length > 0) ? (
+          <div
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'flex-end',
+              gap: 6,
+            }}
+          >
+            {rangeLabel ? (
+              <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{rangeLabel}</div>
+            ) : null}
+            {exportName && lines.length > 0 ? (
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button
+                  type="button"
+                  className="btn"
+                  style={{ fontSize: 11, padding: '3px 8px' }}
+                  onClick={() => handleExport('csv')}
+                  title="Download these ledger entries as a CSV file"
+                >
+                  Export CSV
+                </button>
+                <button
+                  type="button"
+                  className="btn"
+                  style={{ fontSize: 11, padding: '3px 8px' }}
+                  onClick={() => handleExport('xlsx')}
+                  title="Download these ledger entries as an Excel (.xlsx) file"
+                >
+                  Export Excel
+                </button>
+              </div>
+            ) : null}
+          </div>
         ) : null}
       </header>
 

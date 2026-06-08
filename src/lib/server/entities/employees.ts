@@ -19,6 +19,7 @@ import {
 import { AppError } from '@/lib/errors';
 import { requireCapability } from '@/lib/rbac';
 import { getActorContext } from '@/lib/server/actor';
+import { ensureDepartmentRegistered } from '@/lib/server/entities/department-registry';
 import { IFSC_RE, PAN_RE, last4, maskAadhaar, maskPAN } from '@/lib/validators';
 
 /**
@@ -586,6 +587,9 @@ export async function createEmployee(input: CreateEmployeeInput): Promise<Create
       summary: `Employee "${v.fullName}" (${employeeCode}) created`,
     });
 
+    // Keep the managed department registry complete when a new one is typed.
+    await ensureDepartmentRegistered(v.department, ctx.userId);
+
     return { ok: true, id: newId };
   } catch (e) {
     // Unique violation on employee_code surfaces as a friendly field error.
@@ -751,6 +755,9 @@ export async function updateEmployee(input: UpdateEmployeeInput): Promise<Update
       kind: 'entity.updated',
       summary: `Employee "${result[0]!.fullName}" updated`,
     });
+
+    // Keep the managed department registry complete when a new one is typed.
+    if (v.department !== undefined) await ensureDepartmentRegistered(v.department, ctx.userId);
 
     return { ok: true };
   } catch (e) {

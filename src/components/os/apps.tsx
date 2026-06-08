@@ -69,6 +69,13 @@ import {
   type TeamMember,
 } from '@/lib/server/entities/team';
 import {
+  createDepartment,
+  deleteDepartment,
+  listDepartmentsDetailed,
+  renameDepartment,
+  type DepartmentRow,
+} from '@/lib/server/entities/departments';
+import {
   getGlobalReminderSchedule,
   saveGlobalReminderSchedule,
   type GlobalReminderSchedule,
@@ -3033,6 +3040,7 @@ export function EmployeesApp({
 }) {
   const [filterDept, setFilterDept] = useState<string>('all');
   const [showNew, setShowNew] = useState(false);
+  const [showDepts, setShowDepts] = useState(false);
   const [editing, setEditing] = useState<OsEmployee | null>(null);
   const [confirmDel, setConfirmDel] = useState<OsEmployee | null>(null);
 
@@ -3103,6 +3111,20 @@ export function EmployeesApp({
             <option key={d}>{d}</option>
           ))}
         </select>
+        <button
+          className="btn"
+          type="button"
+          disabled={!canEdit}
+          onClick={() => setShowDepts(true)}
+          title={
+            canEdit
+              ? 'Add, rename or remove departments'
+              : 'You need edit permission to manage departments.'
+          }
+        >
+          <Icon name="folder" size={13} />
+          Departments
+        </button>
         <button
           className="btn primary"
           type="button"
@@ -3187,6 +3209,15 @@ export function EmployeesApp({
         )}
       </div>
 
+      {showDepts && (
+        <DepartmentsModal
+          canEdit={canEdit}
+          onClose={() => setShowDepts(false)}
+          onChanged={() => {
+            void refreshEmployeeList();
+          }}
+        />
+      )}
       {showNew && (
         <EmployeeFormModal
           mode="create"
@@ -3355,6 +3386,252 @@ function EmployeeFormModal({
           </button>
         </div>
       </form>
+    </Modal>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Manage Departments                                                         */
+/* -------------------------------------------------------------------------- */
+
+function DepartmentsModal({
+  canEdit,
+  onClose,
+  onChanged,
+}: {
+  canEdit: boolean;
+  onClose: () => void;
+  onChanged: () => void;
+}) {
+  const [rows, setRows] = useState<readonly DepartmentRow[] | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [newName, setNewName] = useState('');
+  const [addError, setAddError] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editValue, setEditValue] = useState('');
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [adding, startAdd] = useTransition();
+
+  const load = () => {
+    listDepartmentsDetailed()
+      .then((r) => setRows(r))
+      .catch(() => setLoadError('Could not load departments. You may not have permission.'));
+  };
+  useEffect(() => {
+    let cancelled = false;
+    listDepartmentsDetailed()
+      .then((r) => {
+        if (!cancelled) setRows(r);
+      })
+      .catch(() => {
+        if (!cancelled) setLoadError('Could not load departments. You may not have permission.');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const add = () => {
+    setAddError(null);
+    const name = newName.trim();
+    if (!name) {
+      setAddError('Enter a department name.');
+      return;
+    }
+    startAdd(async () => {
+      const res = await createDepartment(name);
+      if (!res.ok) {
+        setAddError(res.errors?.name ?? res.message);
+        toast.error(res.message);
+        return;
+      }
+      setNewName('');
+      toast.success(`Added “${departmentLabel(name)}”.`);
+      load();
+      onChanged();
+    });
+  };
+
+  const startEdit = (d: DepartmentRow) => {
+    setEditingId(d.id);
+    setEditValue(d.label);
+  };
+
+  const saveRename = async (d: DepartmentRow) => {
+    const next = editValue.trim();
+    if (!next) return;
+    setBusyId(d.id);
+    const res = await renameDepartment(d.id, next);
+    setBusyId(null);
+    if (!res.ok) {
+      toast.error(res.message);
+      return;
+    }
+    setEditingId(null);
+    toast.success(`Renamed to “${departmentLabel(next)}”.`);
+    load();
+    onChanged();
+  };
+
+  const remove = async (d: DepartmentRow) => {
+    setBusyId(d.id);
+    const res = await deleteDepartment(d.id);
+    setBusyId(null);
+    if (!res.ok) {
+      toast.error(res.message);
+      return;
+    }
+    toast.success(`Removed “${d.label}”.`);
+    load();
+    onChanged();
+  };
+
+  return (
+    <Modal title="Manage Departments" onClose={onClose} width={520}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>
+          Add, rename, or remove the departments teammates can be assigned to. Renaming updates
+          everyone in that department; a department can’t be removed while people are still in it.
+        </div>
+
+        {canEdit && (
+          <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+            <div style={{ flex: 1 }}>
+              <input
+                className="input"
+                style={{ width: '100%' }}
+                value={newName}
+                maxLength={120}
+                placeholder="New department (e.g. People Ops)"
+                aria-label="New department name"
+                onChange={(e) => setNewName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    add();
+                  }
+                }}
+              />
+              {addError ? (
+                <div style={{ fontSize: 11.5, color: 'var(--apar-red)', marginTop: 4 }}>
+                  {addError}
+                </div>
+              ) : null}
+            </div>
+            <button className="btn primary" type="button" onClick={add} disabled={adding}>
+              <Icon name="plus" size={13} />
+              {adding ? 'Adding…' : 'Add'}
+            </button>
+          </div>
+        )}
+
+        {loadError ? (
+          <div style={{ fontSize: 13, color: 'var(--text-muted)', padding: '8px 0' }}>
+            {loadError}
+          </div>
+        ) : !rows ? (
+          <div style={{ fontSize: 13, color: 'var(--text-muted)', padding: '8px 0' }}>
+            Loading departments…
+          </div>
+        ) : rows.length === 0 ? (
+          <div style={{ fontSize: 13, color: 'var(--text-muted)', padding: '8px 0' }}>
+            No departments yet — add the first one above.
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column' }}>
+            {rows.map((d) => {
+              const isEditing = editingId === d.id;
+              const busy = busyId === d.id;
+              return (
+                <div
+                  key={d.id}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 10,
+                    padding: '9px 0',
+                    borderBottom: '1px solid var(--border)',
+                  }}
+                >
+                  {isEditing ? (
+                    <input
+                      className="input"
+                      style={{ flex: 1 }}
+                      value={editValue}
+                      maxLength={120}
+                      autoFocus
+                      aria-label={`Rename ${d.label}`}
+                      onChange={(e) => setEditValue(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          void saveRename(d);
+                        } else if (e.key === 'Escape') {
+                          setEditingId(null);
+                        }
+                      }}
+                    />
+                  ) : (
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13.5, fontWeight: 500 }}>{d.label}</div>
+                      <div style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>
+                        {d.employeeCount} {d.employeeCount === 1 ? 'person' : 'people'}
+                      </div>
+                    </div>
+                  )}
+
+                  {canEdit &&
+                    (isEditing ? (
+                      <>
+                        <button
+                          className="btn primary"
+                          type="button"
+                          disabled={busy}
+                          onClick={() => void saveRename(d)}
+                        >
+                          {busy ? 'Saving…' : 'Save'}
+                        </button>
+                        <button
+                          className="btn"
+                          type="button"
+                          disabled={busy}
+                          onClick={() => setEditingId(null)}
+                        >
+                          Cancel
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <button
+                          className="btn"
+                          type="button"
+                          title="Rename department"
+                          disabled={busy}
+                          onClick={() => startEdit(d)}
+                        >
+                          <Icon name="edit" size={13} />
+                        </button>
+                        <button
+                          className="btn"
+                          type="button"
+                          title={
+                            d.employeeCount > 0
+                              ? 'Move people out before removing'
+                              : 'Remove department'
+                          }
+                          disabled={busy || d.employeeCount > 0}
+                          onClick={() => void remove(d)}
+                        >
+                          <Icon name="trash" size={13} />
+                        </button>
+                      </>
+                    ))}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
     </Modal>
   );
 }
@@ -3560,8 +3837,17 @@ const OS_REPORT_GROUPS: ReadonlyArray<{
   },
 ];
 
-export function ReportsApp() {
-  const openReport = (slug: string) => {
+export function ReportsApp({
+  onOpenReport,
+}: {
+  /** Open a report inside the OS. Falls back to a new browser tab if absent. */
+  onOpenReport?: (slug: string, label: string) => void;
+} = {}) {
+  const openReport = (slug: string, label: string) => {
+    if (onOpenReport) {
+      onOpenReport(slug, label);
+      return;
+    }
     if (typeof window !== 'undefined') {
       window.open(`/reports/${slug}`, '_blank', 'noopener,noreferrer');
     }
@@ -3602,11 +3888,11 @@ export function ReportsApp() {
                   className="report-tile"
                   role="button"
                   tabIndex={0}
-                  onClick={() => openReport(r.slug)}
+                  onClick={() => openReport(r.slug, r.label)}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' || e.key === ' ') {
                       e.preventDefault();
-                      openReport(r.slug);
+                      openReport(r.slug, r.label);
                     }
                   }}
                   style={{ cursor: 'pointer' }}

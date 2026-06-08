@@ -2,10 +2,11 @@
 
 import { useRouter } from 'next/navigation';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
+import { ExportMenu } from '@/components/shared/export-menu';
+import type { ExportFormat } from '@/lib/client/export-rows';
 
 export type ReportShellProps = {
   /** As-of date in YYYY-MM-DD. */
@@ -16,8 +17,8 @@ export type ReportShellProps = {
   showIncludeReversed?: boolean;
   /** Base path for URL updates. */
   basePath: string;
-  /** Optional CSV exporter. */
-  onExportCsv?: () => void;
+  /** Optional exporter — renders an Export (CSV / Excel) menu when provided. */
+  onExport?: (format: ExportFormat) => void;
   children: React.ReactNode;
 };
 
@@ -31,7 +32,7 @@ export function ReportShell({
   includeReversed,
   showIncludeReversed,
   basePath,
-  onExportCsv,
+  onExport,
   children,
 }: ReportShellProps) {
   const router = useRouter();
@@ -67,11 +68,9 @@ export function ReportShell({
               Include reversed
             </label>
           ) : null}
-          {onExportCsv ? (
+          {onExport ? (
             <div className="ml-auto">
-              <Button variant="outline" size="sm" onClick={onExportCsv}>
-                Export CSV
-              </Button>
+              <ExportMenu onExport={onExport} />
             </div>
           ) : null}
         </CardHeader>

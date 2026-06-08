@@ -682,6 +682,7 @@ function ClientLedgerBody({ clientId }: { clientId: string }) {
       statement={statement}
       noun="ledger entries"
       balanceMeaning="Positive = client owes us (Trade Receivables 1200)"
+      exportName={`client-ledger-${clientId}`}
       onSelectTransaction={(txnId) =>
         osActions.openWindow({
           app: 'transactions',

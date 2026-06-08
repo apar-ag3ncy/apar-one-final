@@ -47,6 +47,12 @@ import { ProjectWindow } from './apps/project-window';
 import { VendorWindow } from './apps/vendor-window';
 import { AttendanceApp } from './apps/attendance-app';
 import { PerClientPnLWindow } from './apps/per-client-pnl-window';
+import { TrialBalanceWindow } from './apps/trial-balance-window';
+import { BalanceSheetWindow } from './apps/balance-sheet-window';
+import { PnLWindow } from './apps/pnl-window';
+import { AgingWindow } from './apps/aging-window';
+import { StatementWindow } from './apps/statement-window';
+import { CashFlowWindow } from './apps/cash-flow-window';
 import { OfficeLedgerWindow } from './apps/office-ledger-window';
 import { OfficeUtilitiesWindow } from './apps/office-utilities-window';
 import { ClientLedgerWindow } from './apps/client-ledger-window';
@@ -304,6 +310,16 @@ function Desktop({ signOut }: { signOut: () => void }) {
     [openApp],
   );
 
+  // Open a report inside the OS (native window) instead of a new browser tab.
+  // Routes through `openApp` so the reports.view capability check still runs;
+  // the per-slug body is dispatched in renderBody()'s `case 'reports'`.
+  const openReport = useCallback(
+    (slug: string, label: string) => {
+      openApp('reports', { entityId: slug, title: label, position: 'beside-focused' });
+    },
+    [openApp],
+  );
+
   const visibleWindows = windows.filter((w) => !w.isMinimized);
   const activeWindow: WindowState | null = focusedId
     ? (visibleWindows.find((w) => w.id === focusedId) ?? null)
@@ -389,25 +405,27 @@ function Desktop({ signOut }: { signOut: () => void }) {
       });
     }
     if (can(user, 'reports', 'view')) {
-      list.push({
-        icon: 'chart',
-        label: 'Cash Flow report',
-        hint: 'Report',
-        run: () => {
-          if (typeof window !== 'undefined') {
-            window.open('/reports/cash-flow', '_blank', 'noopener,noreferrer');
-          }
-        },
-      });
-      // LEDGER-SPEC §5 — the headline finance UI. Routed through the
-      // 'reports' app with a fixed entityId; renderBody picks up the
-      // per-client window body.
-      list.push({
-        icon: 'chart',
-        label: 'Per-client P&L',
-        hint: 'Finance',
-        run: () => openApp('reports', { entityId: 'per-client-pnl', title: 'Per-client P&L' }),
-      });
+      // All reports open as native OS windows (renderBody's `case 'reports'`
+      // dispatches the per-slug body) instead of a new browser tab.
+      const reportActions: ReadonlyArray<{ slug: string; label: string }> = [
+        { slug: 'trial-balance', label: 'Trial Balance' },
+        { slug: 'balance-sheet', label: 'Balance Sheet' },
+        { slug: 'pnl', label: 'Profit & Loss' },
+        { slug: 'ar-aging', label: 'AR Aging' },
+        { slug: 'ap-aging', label: 'AP Aging' },
+        { slug: 'bank-book', label: 'Bank Book' },
+        { slug: 'statement', label: 'Statement of Account' },
+        { slug: 'per-client-pnl', label: 'Per-client P&L' },
+        { slug: 'cash-flow', label: 'Cash Flow' },
+      ];
+      for (const r of reportActions) {
+        list.push({
+          icon: 'chart',
+          label: r.label,
+          hint: 'Report',
+          run: () => openReport(r.slug, r.label),
+        });
+      }
       list.push({
         icon: 'book',
         label: 'Audit log',
@@ -434,7 +452,7 @@ function Desktop({ signOut }: { signOut: () => void }) {
       run: () => signOut(),
     });
     return list;
-  }, [visibleApps, theme, user, openApp, signOut, setTheme, windows.length]);
+  }, [visibleApps, theme, user, openApp, openReport, signOut, setTheme, windows.length]);
 
   // Resolve the detail entity for an entity-scoped window. Returns null
   // when the entity has been removed since the window was opened (e.g.
@@ -583,12 +601,13 @@ function Desktop({ signOut }: { signOut: () => void }) {
           if (w.app === 'bank_recon') {
             return <BankReconWindow bankAccountId={w.entityId} />;
           }
-          // The 'ledger' app uses `entityId` as a routing key (not as
-          // an entity uuid lookup), e.g. 'office' / 'office-utilities'
-          // / 'client:<uuid>' / 'vendor:<uuid>'. Skip the resolveEntity
-          // path so it doesn't fall back to "no longer available" —
-          // the switch below handles every shape.
-          if (w.entityId && w.app !== 'ledger') return renderDetail(w);
+          // The 'ledger' and 'reports' apps use `entityId` as a routing key
+          // (not an entity uuid lookup) — e.g. ledger 'office'/'client:<uuid>'
+          // and reports 'trial-balance'/'statement'/etc. Skip the
+          // resolveEntity path (which would fall back to "no longer
+          // available" or the stale fake-data ReportDetail) — the switch
+          // below handles every report/ledger shape natively.
+          if (w.entityId && w.app !== 'ledger' && w.app !== 'reports') return renderDetail(w);
           switch (w.app) {
             case 'clients':
               return (
@@ -673,17 +692,46 @@ function Desktop({ signOut }: { signOut: () => void }) {
               }
               return <LedgerWindow />;
             }
-            case 'reports':
-              // Per-Client P&L drills into a separate window body — opened
-              // either from the ReportsApp report tile or via a deep-link.
-              if (w.entityId === 'per-client-pnl') {
-                return <PerClientPnLWindow />;
+            case 'reports': {
+              // Each report renders natively inside the OS (no new browser
+              // tab). The catalog (no entityId) lists them; a slug entityId
+              // selects the report body. All share the live ledger actions.
+              switch (w.entityId) {
+                case undefined:
+                case '':
+                  return (
+                    <div className="main">
+                      <ReportsApp onOpenReport={openReport} />
+                    </div>
+                  );
+                case 'trial-balance':
+                  return <TrialBalanceWindow />;
+                case 'balance-sheet':
+                  return <BalanceSheetWindow />;
+                case 'pnl':
+                  return <PnLWindow />;
+                case 'ar-aging':
+                  return <AgingWindow side="receivable" />;
+                case 'ap-aging':
+                  return <AgingWindow side="payable" />;
+                case 'statement':
+                  return <StatementWindow />;
+                case 'per-client-pnl':
+                  return <PerClientPnLWindow />;
+                // The Office Ledger (cash + bank, running balance) IS the
+                // live bank book — reuse it rather than ship a stub.
+                case 'bank-book':
+                  return <OfficeLedgerWindow />;
+                case 'cash-flow':
+                  return <CashFlowWindow />;
+                default:
+                  return (
+                    <div className="main">
+                      <ReportsApp onOpenReport={openReport} />
+                    </div>
+                  );
               }
-              return (
-                <div className="main">
-                  <ReportsApp />
-                </div>
-              );
+            }
             case 'settings':
               return (
                 <SettingsApp

@@ -12,6 +12,7 @@ import { formatINR } from '@/components/shared/format-inr';
 import { EntityRef } from '@/components/entity/entity-ref';
 import { ReportShell } from '@/components/shared/report-shell';
 import { useEntityNavigate } from '@/lib/client/use-navigate';
+import { exportRows, paiseToRupees, type ExportFormat } from '@/lib/client/export-rows';
 import type { AgingRow } from '@/lib/server-stub/ledger-types';
 
 export type AgingClientProps = {
@@ -34,38 +35,33 @@ export function AgingClient({ side, rows, asOfDate, basePath }: AgingClientProps
     { '0-30': 0n, '31-60': 0n, '61-90': 0n, '90+': 0n, total: 0n },
   );
 
-  function exportCsv() {
-    const header = [
-      side === 'receivable' ? 'Client' : 'Vendor',
-      '0-30',
-      '31-60',
-      '61-90',
-      '90+',
-      'Total',
-    ].join(',');
-    const lines = rows.map((r) =>
-      [
-        r.entityName,
-        paiseToString(r.byBucket['0-30']),
-        paiseToString(r.byBucket['31-60']),
-        paiseToString(r.byBucket['61-90']),
-        paiseToString(r.byBucket['90+']),
-        paiseToString(r.totalPaise),
-      ].join(','),
-    );
-    const blob = new Blob([[header, ...lines].join('\n')], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${side === 'receivable' ? 'ar' : 'ap'}-aging-${asOfDate}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+  function handleExport(format: ExportFormat) {
+    const entityLabel = side === 'receivable' ? 'Client' : 'Vendor';
+    const headers = [entityLabel, '0-30', '31-60', '61-90', '90+', 'Total'];
+    const data: Record<string, string | number>[] = rows.map((r) => ({
+      [entityLabel]: r.entityName,
+      '0-30': paiseToRupees(r.byBucket['0-30']),
+      '31-60': paiseToRupees(r.byBucket['31-60']),
+      '61-90': paiseToRupees(r.byBucket['61-90']),
+      '90+': paiseToRupees(r.byBucket['90+']),
+      Total: paiseToRupees(r.totalPaise),
+    }));
+    data.push({
+      [entityLabel]: 'Totals',
+      '0-30': paiseToRupees(totals['0-30']),
+      '31-60': paiseToRupees(totals['31-60']),
+      '61-90': paiseToRupees(totals['61-90']),
+      '90+': paiseToRupees(totals['90+']),
+      Total: paiseToRupees(totals.total),
+    });
+    const name = `${side === 'receivable' ? 'ar' : 'ap'}-aging-${asOfDate}`;
+    exportRows(data, headers, name, format, side === 'receivable' ? 'AR Aging' : 'AP Aging');
   }
 
   const entityType = side === 'receivable' ? 'client' : 'vendor';
 
   return (
-    <ReportShell asOfDate={asOfDate} basePath={basePath} onExportCsv={exportCsv}>
+    <ReportShell asOfDate={asOfDate} basePath={basePath} onExport={handleExport}>
       <Table>
         <TableHeader>
           <TableRow className="bg-muted/40 hover:bg-muted/40">
@@ -127,10 +123,4 @@ export function AgingClient({ side, rows, asOfDate, basePath }: AgingClientProps
       </Table>
     </ReportShell>
   );
-}
-
-function paiseToString(paise: bigint): string {
-  const whole = paise / 100n;
-  const rem = (paise % 100n).toString().padStart(2, '0');
-  return `${whole.toString()}.${rem}`;
 }

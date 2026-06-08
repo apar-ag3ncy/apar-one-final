@@ -18,12 +18,13 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { formatINR } from '@/components/shared/format-inr';
+import { ExportMenu } from '@/components/shared/export-menu';
 import { EntityRef } from '@/components/entity/entity-ref';
 import { useEntityNavigate } from '@/lib/client/use-navigate';
+import { exportRows, paiseToRupees, type ExportFormat } from '@/lib/client/export-rows';
 import type { StatementRow } from '@/lib/server-stub/ledger-types';
 
 export type StatementClientProps = {
@@ -57,28 +58,18 @@ export function StatementClient({
     router.push(`/reports/statement?${next.toString()}`);
   }
 
-  function exportCsv() {
-    const header = ['Date', 'Reference', 'Kind', 'Memo', 'Debit', 'Credit', 'Running balance'].join(
-      ',',
-    );
-    const lines = rows.map((r) =>
-      [
-        r.date,
-        r.reference,
-        r.kind,
-        escapeCsv(r.memo ?? ''),
-        paiseToString(r.debitPaise),
-        paiseToString(r.creditPaise),
-        paiseToString(r.runningBalancePaise),
-      ].join(','),
-    );
-    const blob = new Blob([[header, ...lines].join('\n')], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `statement-${side}-${id}-${fromDate}-${toDate}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+  function handleExport(format: ExportFormat) {
+    const headers = ['Date', 'Reference', 'Kind', 'Memo', 'Debit', 'Credit', 'Running balance'];
+    const data: Record<string, string | number>[] = rows.map((r) => ({
+      Date: r.date,
+      Reference: r.reference,
+      Kind: r.kind,
+      Memo: r.memo ?? '',
+      Debit: paiseToRupees(r.debitPaise),
+      Credit: paiseToRupees(r.creditPaise),
+      'Running balance': paiseToRupees(r.runningBalancePaise),
+    }));
+    exportRows(data, headers, `statement-${side}-${id}-${fromDate}-${toDate}`, format, 'Statement');
   }
 
   const options = side === 'client' ? clients : vendors;
@@ -129,9 +120,7 @@ export function StatementClient({
             />
           </div>
           <div className="ml-auto">
-            <Button variant="outline" size="sm" onClick={exportCsv}>
-              Export CSV
-            </Button>
+            <ExportMenu onExport={handleExport} disabled={rows.length === 0} />
           </div>
         </CardHeader>
       </Card>
@@ -199,19 +188,4 @@ export function StatementClient({
       </Card>
     </div>
   );
-}
-
-function escapeCsv(s: string): string {
-  if (s.includes(',') || s.includes('"') || s.includes('\n')) {
-    return `"${s.replace(/"/g, '""')}"`;
-  }
-  return s;
-}
-
-function paiseToString(paise: bigint): string {
-  const negative = paise < 0n;
-  const abs = negative ? -paise : paise;
-  const whole = abs / 100n;
-  const rem = (abs % 100n).toString().padStart(2, '0');
-  return `${negative ? '-' : ''}${whole.toString()}.${rem}`;
 }

@@ -389,6 +389,7 @@ function VendorLedgerBody({ vendorId }: { vendorId: string }) {
       statement={statement}
       noun="ledger entries"
       balanceMeaning="Positive = we owe the vendor (Trade Payables 2110)"
+      exportName={`vendor-ledger-${vendorId}`}
       onSelectTransaction={(txnId) =>
         osActions.openWindow({
           app: 'transactions',
