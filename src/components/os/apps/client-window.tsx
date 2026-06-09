@@ -12,6 +12,7 @@ import { ContactsSection } from '@/components/entity/contacts-section';
 import { EntitySettingsSection } from '@/components/entity/entity-settings-section';
 import { ClientEditDialog } from './client-edit-dialog';
 import { DocumentsSection } from '@/components/entity/documents-section';
+import { ClientInvoicesSection } from '@/components/entity/client-invoices-section';
 import { ClientTransactionsSection } from '@/components/entity/client-transactions-section';
 import { ClientExpensesOnBehalfSection } from '@/components/entity/vendor-bills-section';
 import { ActivityFeed } from '@/components/entity/activity-feed';
@@ -46,6 +47,7 @@ type ClientTab =
   | 'contacts'
   | 'projects'
   | 'documents'
+  | 'invoices'
   | 'transactions'
   | 'expenses'
   | 'ledger'
@@ -57,6 +59,7 @@ const TAB_LABELS: Record<ClientTab, string> = {
   contacts: 'Contacts',
   projects: 'Projects',
   documents: 'Documents',
+  invoices: 'Invoices',
   transactions: 'Transactions',
   expenses: 'Expenses on behalf',
   ledger: 'Ledger',
@@ -151,6 +154,7 @@ export function ClientWindow({ clientId, onClose }: ClientWindowProps) {
     'contacts',
     'projects',
     'documents',
+    'invoices',
     'transactions',
     'expenses',
     'ledger',
@@ -200,6 +204,9 @@ export function ClientWindow({ clientId, onClose }: ClientWindowProps) {
             entityName={client.name}
             onUploaded={() => setReloadKey((k) => k + 1)}
           />
+        ) : null}
+        {tab === 'invoices' ? (
+          <ClientInvoicesSection clientId={client.id} clientName={client.name} />
         ) : null}
         {tab === 'transactions' ? (
           <ClientTransactionsSection clientId={client.id} clientName={client.name} />

@@ -1,6 +1,6 @@
 import 'server-only';
 
-import { Document, Page, StyleSheet, Text, View, renderToBuffer } from '@react-pdf/renderer';
+import { Document, Image, Page, StyleSheet, Text, View, renderToBuffer } from '@react-pdf/renderer';
 import * as React from 'react';
 
 import { formatINR } from '@/lib/money';
@@ -81,7 +81,48 @@ export type InvoicePdfData = {
   } | null;
   terms: string | null;
   notes: string | null;
+  /**
+   * Optional theme overlay (from the selected/ default `invoice_themes` row,
+   * resolved by `loadInvoicePdfData`). Brand tokens only — the layout is
+   * unchanged. Absent → the template's neutral defaults are used.
+   */
+  themeOverrides?: {
+    primaryColor?: string | null;
+    secondaryColor?: string | null;
+    accentColor?: string | null;
+    /** Must be a react-pdf built-in family; clamped in `resolveTheme`. */
+    fontFamily?: string | null;
+    headerText?: string | null;
+    footerText?: string | null;
+    /** `data:image/...;base64,...` for the brand logo, or null. */
+    logoDataUri?: string | null;
+  } | null;
 };
+
+/** react-pdf can only lay out its three built-in font families on the server. */
+const BUILTIN_FONTS = new Set(['Helvetica', 'Times-Roman', 'Courier']);
+
+type ResolvedTheme = {
+  primary: string;
+  accent: string;
+  font: string;
+  headerText: string;
+  footerText: string;
+  logoDataUri: string | null;
+};
+
+/** Merge the optional theme overlay onto neutral defaults. */
+function resolveTheme(o: InvoicePdfData['themeOverrides']): ResolvedTheme {
+  const font = o?.fontFamily && BUILTIN_FONTS.has(o.fontFamily) ? o.fontFamily : 'Helvetica';
+  return {
+    primary: o?.primaryColor || '#0f172a',
+    accent: o?.accentColor || '#f3f4f6',
+    font,
+    headerText: o?.headerText || 'TAX INVOICE',
+    footerText: o?.footerText || 'Computer-generated; no signature required.',
+    logoDataUri: o?.logoDataUri ?? null,
+  };
+}
 
 export function totalsRowsFor(data: InvoicePdfData): Array<{ label: string; valuePaise: bigint }> {
   const rows: Array<{ label: string; valuePaise: bigint }> = [
@@ -201,29 +242,30 @@ export async function renderInvoicePdf(data: InvoicePdfData): Promise<Uint8Array
 }
 
 export function InvoiceDocument({ data }: { data: InvoicePdfData }): React.JSX.Element {
+  const theme = resolveTheme(data.themeOverrides);
   return (
     <Document
       title={`Invoice ${data.documentNumber}`}
       author={data.supplier.name}
       subject={`Tax Invoice (Rule 46) — ${data.documentNumber}`}
     >
-      <Page size="A4" style={styles.page}>
-        <Header data={data} />
-        <View style={styles.divider} />
+      <Page size="A4" style={[styles.page, { fontFamily: theme.font }]}>
+        <Header data={data} theme={theme} />
+        <View style={[styles.divider, { backgroundColor: theme.primary, height: 2 }]} />
         <Parties data={data} />
         {data.isReverseCharge ? (
           <Text style={styles.reverseChargeFlag}>
             Reverse charge applicable — recipient pays GST under §9(3)/9(4) of the CGST Act.
           </Text>
         ) : null}
-        <LinesTable data={data} />
-        <Totals data={data} />
+        <LinesTable data={data} theme={theme} />
+        <Totals data={data} theme={theme} />
         {data.paymentLink ? <PaymentBlock link={data.paymentLink} /> : null}
         <Footer data={data} />
         <Text
           style={styles.footer}
           render={({ pageNumber, totalPages }) =>
-            `${data.supplier.name} — Tax Invoice ${data.documentNumber} — Page ${pageNumber} of ${totalPages} — Computer-generated; no signature required.`
+            `${data.supplier.name} — ${theme.headerText} ${data.documentNumber} — Page ${pageNumber} of ${totalPages} — ${theme.footerText}`
           }
           fixed
         />
@@ -232,11 +274,26 @@ export function InvoiceDocument({ data }: { data: InvoicePdfData }): React.JSX.E
   );
 }
 
-function Header({ data }: { data: InvoicePdfData }): React.JSX.Element {
+function Header({
+  data,
+  theme,
+}: {
+  data: InvoicePdfData;
+  theme: ResolvedTheme;
+}): React.JSX.Element {
   return (
     <View style={styles.headerRow}>
       <View style={styles.supplierBlock}>
-        <Text style={styles.supplierName}>{data.supplier.name}</Text>
+        {theme.logoDataUri ? (
+          // react-pdf's <Image> is a PDF primitive, not an HTML <img> — it has
+          // no `alt` prop.
+          // eslint-disable-next-line jsx-a11y/alt-text
+          <Image
+            src={theme.logoDataUri}
+            style={{ maxHeight: 48, maxWidth: 160, marginBottom: 6, objectFit: 'contain' }}
+          />
+        ) : null}
+        <Text style={[styles.supplierName, { color: theme.primary }]}>{data.supplier.name}</Text>
         <Text>{data.supplier.address}</Text>
         {data.supplier.gstin ? <Text>GSTIN: {data.supplier.gstin}</Text> : null}
         {data.supplier.pan ? <Text>PAN: {data.supplier.pan}</Text> : null}
@@ -245,7 +302,7 @@ function Header({ data }: { data: InvoicePdfData }): React.JSX.Element {
         {data.supplier.contactPhone ? <Text>{data.supplier.contactPhone}</Text> : null}
       </View>
       <View style={styles.metaBlock}>
-        <Text style={styles.metaTitle}>TAX INVOICE</Text>
+        <Text style={[styles.metaTitle, { color: theme.primary }]}>{theme.headerText}</Text>
         <View style={styles.metaRow}>
           <Text style={styles.metaLabel}>No.</Text>
           <Text>{data.documentNumber}</Text>
@@ -289,10 +346,16 @@ function Parties({ data }: { data: InvoicePdfData }): React.JSX.Element {
   );
 }
 
-function LinesTable({ data }: { data: InvoicePdfData }): React.JSX.Element {
+function LinesTable({
+  data,
+  theme,
+}: {
+  data: InvoicePdfData;
+  theme: ResolvedTheme;
+}): React.JSX.Element {
   return (
     <View>
-      <View style={styles.tableHeader}>
+      <View style={[styles.tableHeader, { backgroundColor: theme.accent }]}>
         <Text style={styles.colNo}>#</Text>
         <Text style={styles.colDesc}>Description</Text>
         <Text style={styles.colSac}>SAC</Text>
@@ -321,14 +384,26 @@ function LinesTable({ data }: { data: InvoicePdfData }): React.JSX.Element {
   );
 }
 
-function Totals({ data }: { data: InvoicePdfData }): React.JSX.Element {
+function Totals({
+  data,
+  theme,
+}: {
+  data: InvoicePdfData;
+  theme: ResolvedTheme;
+}): React.JSX.Element {
   const rows = totalsRowsFor(data);
   const grandIdx = rows.length - 1;
   return (
     <View style={styles.totalsBlock}>
       {rows.map((r, i) =>
         i === grandIdx ? (
-          <View key={r.label} style={styles.grandTotalRow}>
+          <View
+            key={r.label}
+            style={[
+              styles.grandTotalRow,
+              { borderTop: `2pt solid ${theme.primary}`, color: theme.primary },
+            ]}
+          >
             <Text>{r.label}</Text>
             <Text>{formatINR(r.valuePaise)}</Text>
           </View>

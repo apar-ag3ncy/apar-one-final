@@ -7,13 +7,23 @@ import { logActivity } from '@/lib/activity';
 import { logAudit } from '@/lib/audit';
 import { fyStartForDate } from '@/lib/billing/fy';
 import { db, type DbClient } from '@/lib/db/client';
-import { invoices, paymentAllocations, receipts } from '@/lib/db/schema';
+import {
+  clients,
+  entityAddresses,
+  entityTaxIdentifiers,
+  invoices,
+  organizations,
+  paymentAllocations,
+  receipts,
+} from '@/lib/db/schema';
 import { AppError } from '@/lib/errors';
 import { requireCapability } from '@/lib/rbac';
 import { getActorContext } from '@/lib/server/actor';
 import { createDraftTransaction, postTransaction } from '@/lib/server/ledger';
 
 import { loadBillingSettings, nextDocumentNumber, withNumberingRetry } from './numbering';
+import { renderPaymentReceiptPdf, type PaymentReceiptPdfData } from './pdf/payment-receipt';
+import { uploadBillingPdf } from './pdf/upload';
 
 /**
  * Customer-payment receipts. Phase 4.5.
@@ -103,42 +113,62 @@ export async function recordManualReceipt(
   const settings = await loadBillingSettings();
   const fyStart = fyStartForDate(v.receiptDate, settings.fyStartMonth);
 
-  // Step 1 — allocate the receipt-number + insert the receipts row + post
-  // the ledger. We do this inside the numbering-retry wrapper because two
-  // concurrent recordManualReceipt calls could collide on the same number.
-  const { receiptRow, transactionId } = await withNumberingRetry(async () =>
-    db.transaction(async (tx) => insertReceiptAndPost(tx as unknown as DbClient, ctx, v, fyStart)),
+  // Step 1 — allocate the receipt number + insert the receipts row, NOT yet
+  // posted. Numbering-retry guards against concurrent number collisions.
+  const receipt = await withNumberingRetry(async () =>
+    db.transaction(async (tx) => insertReceiptRow(tx as unknown as DbClient, ctx, v, fyStart)),
   );
 
-  // Step 2 — if pre-allocations supplied, run them now. allocateReceipt
-  // handles its own validation + invoice-state updates.
+  // Step 2 — generate the payment-receipt PDF and store it BEFORE posting, so
+  // the ledger transaction carries a source_document_id. The `document_missing`
+  // control (validation.ts) blocks any doc-less posting; this mirrors the
+  // document-then-post order sendInvoice already uses. Storage I/O runs outside
+  // a DB transaction.
+  const pdfData = await assemblePaymentReceiptData(v, receipt.receiptNumber);
+  const pdfBytes = await renderPaymentReceiptPdf(pdfData);
+  const { documentId } = await uploadBillingPdf({
+    ownerId: receipt.id,
+    attachToEntity: { entityType: 'client', entityId: v.clientId },
+    documentNumber: receipt.receiptNumber,
+    category: 'receipt_voucher',
+    pdfBytes,
+    actorId: ctx.userId,
+  });
+
+  // Step 3 — post the ledger with the receipt document attached, and back-link
+  // the posted transaction + source document onto the receipt row.
+  const transactionId = await db.transaction(async (tx) =>
+    postReceiptTransaction(tx as unknown as DbClient, ctx, v, receipt, documentId),
+  );
+
+  // Step 4 — pre-allocations, if supplied. allocateReceipt handles its own
+  // validation + invoice-state updates.
   let allocatedPaise = 0n;
   let affectedInvoices: RecordManualReceiptResult['affectedInvoices'] = [];
   if (v.allocations.length > 0) {
-    const result = await allocateReceipt(receiptRow.id, v.allocations);
+    const result = await allocateReceipt(receipt.id, v.allocations);
     allocatedPaise = result.allocatedPaise;
     affectedInvoices = result.affectedInvoices;
   }
 
   return {
-    id: receiptRow.id,
-    receiptNumber: receiptRow.receiptNumber,
+    id: receipt.id,
+    receiptNumber: receipt.receiptNumber,
     transactionId,
     allocatedPaise,
     affectedInvoices,
   };
 }
 
-async function insertReceiptAndPost(
+/** Allocate the receipt number + insert the receipts row (not yet posted). */
+async function insertReceiptRow(
   tx: DbClient,
   ctx: Awaited<ReturnType<typeof getActorContext>>,
   v: z.infer<typeof RecordManualReceiptInputSchema>,
   fyStart: string,
-): Promise<{ receiptRow: { id: string; receiptNumber: string }; transactionId: string }> {
+): Promise<{ id: string; receiptNumber: string }> {
   const { documentNumber: receiptNumber } = await nextDocumentNumber('receipt', fyStart, tx);
 
-  // Insert receipt row first WITHOUT postedTransactionId; we'll back-link
-  // once the ledger txn is in.
   const [row] = await tx
     .insert(receipts)
     .values({
@@ -160,7 +190,33 @@ async function insertReceiptAndPost(
     .returning({ id: receipts.id, receiptNumber: receipts.receiptNumber });
   if (!row) throw new AppError('internal', 'receipts.insert returned no row');
 
-  // Post the ledger txn. externalRef is unique-per-receipt by construction.
+  await logAudit(
+    {
+      actorId: ctx.userId,
+      entityType: 'receipt',
+      entityId: row.id,
+      action: 'insert',
+      changes: { receipt_number: receiptNumber, total_paise: v.totalPaise.toString() },
+    },
+    tx as unknown as typeof db,
+  );
+
+  return row;
+}
+
+/**
+ * Post the client_payment_received ledger txn (Dr 1120 Bank / Cr 1200 AR),
+ * passing the just-generated receipt PDF as the source document so the
+ * `document_missing` control is satisfied, then back-link the posted txn +
+ * source document onto the receipts row.
+ */
+async function postReceiptTransaction(
+  tx: DbClient,
+  ctx: Awaited<ReturnType<typeof getActorContext>>,
+  v: z.infer<typeof RecordManualReceiptInputSchema>,
+  receipt: { id: string; receiptNumber: string },
+  receiptDocumentId: string,
+): Promise<string> {
   const draft = await createDraftTransaction(
     ctx,
     {
@@ -169,7 +225,8 @@ async function insertReceiptAndPost(
         clientId: v.clientId,
         bankAccountId: v.bankAccountId!, // non-null per the cash check above
         amountPaise: v.totalPaise,
-        externalRef: `receipt:${receiptNumber}`,
+        receiptDocumentId,
+        externalRef: `receipt:${receipt.receiptNumber}`,
         txnDate: v.receiptDate,
         invoiceAllocations: [], // tracked in payment_allocations; metadata-light here
         notes: v.notes ?? null,
@@ -183,11 +240,14 @@ async function insertReceiptAndPost(
     tx as unknown as typeof db,
   );
 
-  // Back-link the txn id on the receipts row.
   await tx
     .update(receipts)
-    .set({ postedTransactionId: draft.transactionId, updatedBy: ctx.userId })
-    .where(eq(receipts.id, row.id));
+    .set({
+      postedTransactionId: draft.transactionId,
+      sourceDocumentId: receiptDocumentId,
+      updatedBy: ctx.userId,
+    })
+    .where(eq(receipts.id, receipt.id));
 
   await logActivity(
     {
@@ -195,30 +255,101 @@ async function insertReceiptAndPost(
       entityId: v.clientId,
       actorId: ctx.userId,
       kind: 'payment.received',
-      summary: `Receipt ${receiptNumber} for ₹${v.totalPaise.toString()} paise (${v.method})`,
+      summary: `Receipt ${receipt.receiptNumber} for ₹${v.totalPaise.toString()} paise (${v.method})`,
       payload: {
-        receipt_id: row.id,
-        receipt_number: receiptNumber,
+        receipt_id: receipt.id,
+        receipt_number: receipt.receiptNumber,
         total_paise: v.totalPaise.toString(),
         method: v.method,
         posted_transaction_id: draft.transactionId,
+        source_document_id: receiptDocumentId,
       },
     },
     tx as unknown as typeof db,
   );
 
-  await logAudit(
-    {
-      actorId: ctx.userId,
-      entityType: 'receipt',
-      entityId: row.id,
-      action: 'insert',
-      changes: { receipt_number: receiptNumber, total_paise: v.totalPaise.toString() },
-    },
-    tx as unknown as typeof db,
-  );
+  return draft.transactionId;
+}
 
-  return { receiptRow: row, transactionId: draft.transactionId };
+/** Assemble the payment-receipt PDF snapshot (supplier, recipient, applied invoices). */
+async function assemblePaymentReceiptData(
+  v: z.infer<typeof RecordManualReceiptInputSchema>,
+  receiptNumber: string,
+): Promise<PaymentReceiptPdfData> {
+  const [org] = await db.select().from(organizations).limit(1);
+  if (!org) {
+    throw new AppError('internal', "organizations table empty; seed Apār's organization row.");
+  }
+  const [client] = await db.select().from(clients).where(eq(clients.id, v.clientId)).limit(1);
+  if (!client) throw new AppError('not_found', `client ${v.clientId} not found`);
+
+  const addresses = await db
+    .select()
+    .from(entityAddresses)
+    .where(and(eq(entityAddresses.entityType, 'client'), eq(entityAddresses.entityId, v.clientId)))
+    .orderBy(asc(entityAddresses.kind));
+  const addr = addresses.find((a) => a.kind === 'registered') ?? addresses[0] ?? null;
+
+  const [gstinRow] = await db
+    .select({ value: entityTaxIdentifiers.maskedValue })
+    .from(entityTaxIdentifiers)
+    .where(
+      and(
+        eq(entityTaxIdentifiers.entityType, 'client'),
+        eq(entityTaxIdentifiers.entityId, v.clientId),
+        eq(entityTaxIdentifiers.kind, 'gstin'),
+      ),
+    )
+    .limit(1);
+
+  const allocations: PaymentReceiptPdfData['allocations'] = [];
+  let appliedPaise = 0n;
+  if (v.allocations.length > 0) {
+    const ids = v.allocations.map((a) => a.invoiceId);
+    const rows = await db
+      .select({ id: invoices.id, documentNumber: invoices.documentNumber })
+      .from(invoices)
+      .where(inArray(invoices.id, ids));
+    const numById = new Map(rows.map((r) => [r.id, r.documentNumber]));
+    for (const a of v.allocations) {
+      allocations.push({
+        documentNumber: numById.get(a.invoiceId) ?? a.invoiceId,
+        allocatedPaise: a.allocatedPaise,
+      });
+      appliedPaise += a.allocatedPaise;
+    }
+  }
+
+  const supplierStateCode = org.gstin && org.gstin.length >= 2 ? org.gstin.slice(0, 2) : '27';
+
+  return {
+    supplier: {
+      name: org.displayName ?? org.legalName,
+      address: org.registeredAddress ?? '',
+      gstin: org.gstin ?? null,
+      pan: org.pan ?? null,
+      stateCode: supplierStateCode,
+    },
+    recipient: {
+      name: client.name,
+      addressLines: addr
+        ? [
+            addr.line1,
+            addr.line2 ?? '',
+            [addr.city, addr.stateCode, addr.postalCode].filter(Boolean).join(', '),
+          ].filter((s) => s && s.length > 0)
+        : [],
+      gstin: gstinRow?.value ?? null,
+    },
+    receiptNumber,
+    receiptDate: v.receiptDate,
+    amountPaise: v.totalPaise,
+    method: v.method,
+    bankLabel: null,
+    allocations,
+    unappliedPaise: v.totalPaise - appliedPaise,
+    notes: v.notes ?? null,
+  };
 }
 
 /* -------------------------------------------------------------------------- */

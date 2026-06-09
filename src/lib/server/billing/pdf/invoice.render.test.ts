@@ -72,4 +72,37 @@ describe('renderInvoicePdf', () => {
     expect(bytes[2]).toBe(0x44);
     expect(bytes[3]).toBe(0x46);
   }, 20_000); // @react-pdf/renderer first-call cold start is slow
+
+  it('renders a themed invoice (brand colours + serif font + custom header) to a valid PDF', async () => {
+    const themed: InvoicePdfData = {
+      ...fixture,
+      themeOverrides: {
+        primaryColor: '#1f6b3b',
+        secondaryColor: '#0f3a20',
+        accentColor: '#a4d8b3',
+        fontFamily: 'Times-Roman',
+        headerText: 'TAX INVOICE',
+        footerText: 'Computer-generated; no signature required.',
+        // 1×1 transparent PNG data-URI — exercises the <Image> logo path.
+        logoDataUri:
+          'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+      },
+    };
+    const bytes = await renderInvoicePdf(themed);
+    expect(bytes.byteLength).toBeGreaterThan(1024);
+    expect(bytes[0]).toBe(0x25); // %
+    expect(bytes[1]).toBe(0x50); // P
+    expect(bytes[2]).toBe(0x44); // D
+    expect(bytes[3]).toBe(0x46); // F
+  }, 20_000);
+
+  it('clamps a non-built-in font to a safe family instead of throwing', async () => {
+    const themed: InvoicePdfData = {
+      ...fixture,
+      themeOverrides: { fontFamily: 'Calibri Light' },
+    };
+    const bytes = await renderInvoicePdf(themed);
+    expect(bytes[0]).toBe(0x25);
+    expect(bytes[3]).toBe(0x46);
+  }, 20_000);
 });

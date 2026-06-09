@@ -260,6 +260,27 @@
       "when": 1780600002000,
       "tag": "0036_departments",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1780600003000,
+      "tag": "0037_invoice_themes",
+      "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1780600004000,
+      "tag": "0038_invoice_theme_capability",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1780600005000,
+      "tag": "0039_invoice_theme_immutability",
+      "breakpoints": true
     }
   ]
 }

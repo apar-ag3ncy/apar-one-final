@@ -78,6 +78,7 @@ export const CAPABILITIES = [
   'manage_party_billing_profile',
   'view_gst_reports',
   'manage_tax_reference_sections',
+  'manage_invoice_themes',
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];
@@ -150,6 +151,7 @@ export const CAPABILITY_LABELS: Record<Capability, string> = {
   manage_party_billing_profile: 'Manage party billing profiles',
   view_gst_reports: 'View GST reports',
   manage_tax_reference_sections: 'Manage TDS/tax reference sections',
+  manage_invoice_themes: 'Manage invoice themes',
 };
 
 export type Role = 'partner' | 'admin' | 'manager' | 'accountant' | 'employee' | 'viewer';
@@ -198,6 +200,7 @@ export const DEFAULT_GRANTS: Record<Exclude<Role, 'partner'>, readonly Capabilit
     'manage_service_items',
     'manage_party_billing_profile',
     'view_gst_reports',
+    'manage_invoice_themes',
   ],
   manager: [
     'create_client',

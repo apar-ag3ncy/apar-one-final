@@ -69,6 +69,7 @@ export * from './departments';
 // Billing module (Phase 1)
 export * from './service_items';
 export * from './party_billing_profiles';
+export * from './invoice_themes';
 export * from './invoices';
 export * from './invoice_lines';
 export * from './estimates';
