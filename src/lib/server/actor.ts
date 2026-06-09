@@ -61,8 +61,11 @@ export async function getActorContext(): Promise<CurrentUserContext> {
   // on the deployment to opt-in (e.g. internal demo of apar-one-final
   // before the Supabase Auth login flow is wired up). Anyone hitting the
   // app gets admin capabilities, so only enable on private deployments.
-  const allowDevAdmin =
-    process.env.NODE_ENV !== 'production' || process.env.ALLOW_DEV_ADMIN === 'true';
+  // TEMPORARY (no login flow yet): fall back to the dev-admin in ALL
+  // environments so the deployed app is usable without a session. Opt OUT by
+  // setting ALLOW_DEV_ADMIN='false' once a real Supabase Auth login lands — at
+  // which point this whole dev fallback should be deleted (see file header).
+  const allowDevAdmin = process.env.ALLOW_DEV_ADMIN !== 'false';
 
   if (allowDevAdmin) {
     // Self-heal: if migration 0014 hasn't been applied for any reason
