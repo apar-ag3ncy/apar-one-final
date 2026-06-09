@@ -375,7 +375,7 @@ export function OfficeApp({
             isFiltered={search !== '' || activeCategory !== 'all' || statusFilter !== 'all'}
           />
         ) : (
-          <table className="table">
+          <table className="table" style={{ minWidth: 760 }}>
             <thead>
               <tr>
                 <th>Date</th>

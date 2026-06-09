@@ -463,60 +463,62 @@ function PermissionGrid({
       >
         <div style={{ fontWeight: 600 }}>Permissions</div>
       </div>
-      <table className="table" style={{ fontSize: 13 }}>
-        <thead>
-          <tr>
-            <th>App</th>
-            {ACTIONS.map((a) => (
-              <th key={a} style={{ textAlign: 'center', width: 96 }}>
-                {a}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {PERMISSIONED_APPS.map((id) => {
-            const app = APPS.find((a) => a.id === id);
-            if (!app) return null;
-            return (
-              <tr key={id}>
-                <td>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                    <span
-                      className="avatar"
-                      style={{
-                        width: 28,
-                        height: 28,
-                        background: 'var(--apar-red-soft)',
-                        color: 'var(--apar-red)',
-                        borderRadius: 8,
-                      }}
-                    >
-                      <Icon name={app.icon} size={14} />
-                    </span>
-                    <span style={{ fontWeight: 500 }}>{app.name}</span>
-                  </div>
-                </td>
-                {ACTIONS.map((a) => {
-                  const on = user.permissions[id]?.[a] ?? false;
-                  return (
-                    <td key={a} style={{ textAlign: 'center' }}>
-                      <div
-                        className={`toggle ${on ? 'on' : ''}`}
-                        style={{ display: 'inline-block', cursor: 'pointer' }}
-                        onClick={() => onToggle(id, a, !on)}
-                        role="switch"
-                        aria-checked={on}
-                        aria-label={`${a} ${app.name}`}
-                      />
-                    </td>
-                  );
-                })}
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+      <div style={{ overflowX: 'auto' }}>
+        <table className="table" style={{ fontSize: 13, minWidth: 460 }}>
+          <thead>
+            <tr>
+              <th>App</th>
+              {ACTIONS.map((a) => (
+                <th key={a} style={{ textAlign: 'center', width: 96 }}>
+                  {a}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {PERMISSIONED_APPS.map((id) => {
+              const app = APPS.find((a) => a.id === id);
+              if (!app) return null;
+              return (
+                <tr key={id}>
+                  <td>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <span
+                        className="avatar"
+                        style={{
+                          width: 28,
+                          height: 28,
+                          background: 'var(--apar-red-soft)',
+                          color: 'var(--apar-red)',
+                          borderRadius: 8,
+                        }}
+                      >
+                        <Icon name={app.icon} size={14} />
+                      </span>
+                      <span style={{ fontWeight: 500 }}>{app.name}</span>
+                    </div>
+                  </td>
+                  {ACTIONS.map((a) => {
+                    const on = user.permissions[id]?.[a] ?? false;
+                    return (
+                      <td key={a} style={{ textAlign: 'center' }}>
+                        <div
+                          className={`toggle ${on ? 'on' : ''}`}
+                          style={{ display: 'inline-block', cursor: 'pointer' }}
+                          onClick={() => onToggle(id, a, !on)}
+                          role="switch"
+                          aria-checked={on}
+                          aria-label={`${a} ${app.name}`}
+                        />
+                      </td>
+                    );
+                  })}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

@@ -3234,7 +3234,11 @@ export function EmployeesApp({
 
       <div
         className="card-grid"
-        style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))' }}
+        style={{
+          gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))',
+          flex: 1,
+          minHeight: 0,
+        }}
       >
         {rows === null ? (
           <div
