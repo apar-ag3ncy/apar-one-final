@@ -25,9 +25,16 @@ const ORDER: readonly ProjectDbStatus[] = [
 export function ProjectStatusChanger({
   projectId,
   value,
+  onChanged,
 }: {
   projectId: string;
   value: ProjectDbStatus;
+  /**
+   * Called after a successful status change. In the OS shell the window is
+   * mounted outside the RSC route tree, so `router.refresh()` is a no-op —
+   * callers pass this to re-run their own data fetch.
+   */
+  onChanged?: () => void;
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -40,6 +47,7 @@ export function ProjectStatusChanger({
         await setProjectStatus(projectId, nextStatus);
         toast.success(`Status set to ${PROJECT_DB_STATUS_LABELS[nextStatus]}`);
         router.refresh();
+        onChanged?.();
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Could not update status';
         toast.error(message);

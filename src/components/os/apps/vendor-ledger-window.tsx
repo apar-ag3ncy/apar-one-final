@@ -7,6 +7,7 @@
 import { useEffect, useMemo, useState } from 'react';
 
 import { StatementOfAccount } from '@/components/entity/statement-of-account';
+import { exportSlug } from '@/lib/client/export-rows';
 import { getVendorStatement, type Statement } from '@/lib/server/ledger/statements';
 import { getVendor } from '@/lib/server-stub/entity-actions';
 import { osActions } from '@/lib/os/store';
@@ -111,6 +112,7 @@ export function VendorLedgerWindow({ vendorId }: { vendorId: string }) {
           noun="ledger entries"
           balanceMeaning="Positive = we owe the vendor (Trade Payables 2110)"
           rangeLabel={`${fromDate} → ${toDate}`}
+          exportName={`vendor-ledger-${exportSlug(vendorName || vendorId)}-${fromDate}_to_${toDate}`}
           onSelectTransaction={(txnId) =>
             osActions.openWindow({
               app: 'transactions',

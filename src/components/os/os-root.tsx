@@ -1,33 +1,38 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type CSSProperties,
+} from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { APP_REGISTRY, isPortalOnlyRole } from '@/lib/os/app-registry';
 import { osActions, useOsStore, type WindowState } from '@/lib/os/store';
 import { useWindowUrlSync } from '@/lib/url/per-window-nuqs';
 import { AdminConsole } from './auth/admin-console';
 import { LockScreen } from './auth/lock-screen';
-import { useAuth } from './auth/store';
+import { useAuth, SUPER_ADMIN_USER_ID } from './auth/store';
 import { can } from './auth/types';
 import { useUserSettings, type UserSettings } from './auth/session-store';
 import { useVendorStore } from './auth/vendor-store';
 import { CommandPalette } from './command-palette';
 import { useBusinessData } from './data-store';
-import { APPS, REPORTS } from './data';
+import { APPS } from './data';
 import { Dock } from './dock';
 import { Icon } from './icons';
 import { MenuBar } from './menubar';
 import { Window } from './window';
 import {
-  ClientDetail,
   ClientsApp,
   EmployeesApp,
   InboxApp,
   ProjectsApp,
-  ReportDetail,
   ReportsApp,
   SettingsApp,
-  VendorDetail,
   VendorsApp,
 } from './apps';
 // Phase 4 windows live as separate files so apps.tsx stops growing.
@@ -41,12 +46,18 @@ import { ProjectWindow } from './apps/project-window';
 import { VendorWindow } from './apps/vendor-window';
 import { AttendanceApp } from './apps/attendance-app';
 import { PerClientPnLWindow } from './apps/per-client-pnl-window';
+import { TrialBalanceWindow } from './apps/trial-balance-window';
+import { BalanceSheetWindow } from './apps/balance-sheet-window';
+import { PnLWindow } from './apps/pnl-window';
+import { AgingWindow } from './apps/aging-window';
+import { StatementWindow } from './apps/statement-window';
+import { CashFlowWindow } from './apps/cash-flow-window';
 import { OfficeLedgerWindow } from './apps/office-ledger-window';
 import { OfficeUtilitiesWindow } from './apps/office-utilities-window';
 import { ClientLedgerWindow } from './apps/client-ledger-window';
 import { VendorLedgerWindow } from './apps/vendor-ledger-window';
 import { OfficeApp } from './apps/office-app';
-import type { AppDef, AppId, Client, CmdAction, DockBounds, Report, Vendor } from './types';
+import type { AppDef, AppId, Client, CmdAction, DockBounds, Vendor } from './types';
 
 export function OsRoot() {
   const { currentUser, signOut } = useAuth();
@@ -127,11 +138,25 @@ export function OsRoot() {
 /* -------------------------------------------------------------------------- */
 
 function Desktop({ signOut }: { signOut: () => void }) {
-  const { currentUser } = useAuth();
+  const { currentUser, updateSuperAdmin, updateUser } = useAuth();
   const user = currentUser!;
 
-  // Per-user settings (theme, dock size, dock gap).
-  const { settings, setSettings } = useUserSettings(user.id);
+  // Keep the OS session's display name in step with an Account save (which
+  // writes the real users table). Super admin's record is edited via its own
+  // path; everyone else through updateUser.
+  const setDisplayName = useCallback(
+    (fullName: string) => {
+      if (user.id === SUPER_ADMIN_USER_ID) {
+        updateSuperAdmin({ fullName });
+      } else {
+        updateUser(user.id, { fullName });
+      }
+    },
+    [user.id, updateSuperAdmin, updateUser],
+  );
+
+  // Per-user settings (theme, dock size, dock gap, accent, default app).
+  const { settings, setSettings, resetSettings, settingsLoaded } = useUserSettings(user.id);
   // Per-user vendor data (vendors + invoices + documents).
   const vendorStore = useVendorStore(user.id);
   // Business data (clients/projects/employees/...) — looked up by entityId
@@ -241,6 +266,19 @@ function Desktop({ signOut }: { signOut: () => void }) {
     [user],
   );
 
+  // Auto-open the user's saved "default landing app" once on login (after the
+  // DB-backed settings have hydrated), if set, valid, and nothing is open yet.
+  const autoOpenedRef = useRef(false);
+  useEffect(() => {
+    if (autoOpenedRef.current || !settingsLoaded) return;
+    autoOpenedRef.current = true;
+    const appId = settings.defaultLandingApp;
+    if (!appId || windows.length > 0) return;
+    if (visibleApps.some((a) => a.id === appId)) {
+      openApp(appId as AppId);
+    }
+  }, [settingsLoaded, settings.defaultLandingApp, windows.length, visibleApps, openApp]);
+
   // Entity-detail openers. Each calls `openApp` with `position:
   // 'beside-focused'` so a click on an `<EntityRef>` inside one window
   // opens the referenced entity to the right — the multi-window
@@ -258,19 +296,6 @@ function Desktop({ signOut }: { signOut: () => void }) {
     [openApp],
   );
 
-  const openReportDetail = useCallback(
-    (report: Report) => {
-      openApp('reports', {
-        entityId: report.id,
-        title: `${report.label} — Report`,
-        width: 820,
-        height: 580,
-        position: 'beside-focused',
-      });
-    },
-    [openApp],
-  );
-
   const openVendorDetail = useCallback(
     (vendor: Vendor) => {
       openApp('vendors', {
@@ -280,6 +305,16 @@ function Desktop({ signOut }: { signOut: () => void }) {
         height: 580,
         position: 'beside-focused',
       });
+    },
+    [openApp],
+  );
+
+  // Open a report inside the OS (native window) instead of a new browser tab.
+  // Routes through `openApp` so the reports.view capability check still runs;
+  // the per-slug body is dispatched in renderBody()'s `case 'reports'`.
+  const openReport = useCallback(
+    (slug: string, label: string) => {
+      openApp('reports', { entityId: slug, title: label, position: 'beside-focused' });
     },
     [openApp],
   );
@@ -369,23 +404,36 @@ function Desktop({ signOut }: { signOut: () => void }) {
       });
     }
     if (can(user, 'reports', 'view')) {
+      // All reports open as native OS windows (renderBody's `case 'reports'`
+      // dispatches the per-slug body) instead of a new browser tab.
+      const reportActions: ReadonlyArray<{ slug: string; label: string }> = [
+        { slug: 'trial-balance', label: 'Trial Balance' },
+        { slug: 'balance-sheet', label: 'Balance Sheet' },
+        { slug: 'pnl', label: 'Profit & Loss' },
+        { slug: 'ar-aging', label: 'AR Aging' },
+        { slug: 'ap-aging', label: 'AP Aging' },
+        { slug: 'bank-book', label: 'Bank Book' },
+        { slug: 'statement', label: 'Statement of Account' },
+        { slug: 'per-client-pnl', label: 'Per-client P&L' },
+        { slug: 'cash-flow', label: 'Cash Flow' },
+      ];
+      for (const r of reportActions) {
+        list.push({
+          icon: 'chart',
+          label: r.label,
+          hint: 'Report',
+          run: () => openReport(r.slug, r.label),
+        });
+      }
       list.push({
-        icon: 'chart',
-        label: "Today's Cash Flow",
-        hint: 'Report',
+        icon: 'book',
+        label: 'Audit log',
+        hint: 'Logs',
         run: () => {
-          const cf = REPORTS.find((r) => r.id === 'r3');
-          if (cf) openReportDetail(cf);
+          if (typeof window !== 'undefined') {
+            window.open('/audit', '_blank', 'noopener,noreferrer');
+          }
         },
-      });
-      // LEDGER-SPEC §5 — the headline finance UI. Routed through the
-      // 'reports' app with a fixed entityId; renderBody picks up the
-      // per-client window body.
-      list.push({
-        icon: 'chart',
-        label: 'Per-client P&L',
-        hint: 'Finance',
-        run: () => openApp('reports', { entityId: 'per-client-pnl', title: 'Per-client P&L' }),
       });
     }
     if (windows.length > 0) {
@@ -403,20 +451,18 @@ function Desktop({ signOut }: { signOut: () => void }) {
       run: () => signOut(),
     });
     return list;
-  }, [visibleApps, theme, user, openApp, openReportDetail, signOut, setTheme, windows.length]);
+  }, [visibleApps, theme, user, openApp, openReport, signOut, setTheme, windows.length]);
 
   // Resolve the detail entity for an entity-scoped window. Returns null
   // when the entity has been removed since the window was opened (e.g.
   // user deleted a client — we show a "no longer available" placeholder).
-  function resolveEntity(w: WindowState): Client | Vendor | Report | null {
+  function resolveEntity(w: WindowState): Client | Vendor | null {
     if (!w.entityId) return null;
     switch (w.app) {
       case 'clients':
         return businessData.clients.find((c) => c.id === w.entityId) ?? null;
       case 'vendors':
         return vendorStore.vendors.find((v) => v.id === w.entityId) ?? null;
-      case 'reports':
-        return REPORTS.find((r) => r.id === w.entityId) ?? null;
       default:
         return null;
     }
@@ -431,74 +477,47 @@ function Desktop({ signOut }: { signOut: () => void }) {
       w.entityId &&
       /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(w.entityId)
     ) {
+      const onClose = () => osActions.closeWindow(w.id);
       if (w.app === 'clients') {
-        return <ClientWindow clientId={w.entityId} />;
+        return <ClientWindow clientId={w.entityId} onClose={onClose} />;
       }
       if (w.app === 'vendors') {
-        return <VendorWindow vendorId={w.entityId} />;
+        return <VendorWindow vendorId={w.entityId} onClose={onClose} />;
       }
       if (w.app === 'employees') {
-        return <EmployeeWindow employeeId={w.entityId} />;
+        return <EmployeeWindow employeeId={w.entityId} onClose={onClose} />;
       }
       if (w.app === 'projects') {
-        return <ProjectWindow projectId={w.entityId} />;
+        return <ProjectWindow projectId={w.entityId} onClose={onClose} />;
       }
     }
 
     const entity = resolveEntity(w);
-    if (!entity) {
-      return (
-        <div
-          className="main"
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: 32,
-            color: 'var(--text-muted)',
-            textAlign: 'center',
-          }}
-        >
-          <div>
-            This record is no longer available.
-            <br />
-            Close this window and try again from the list.
-          </div>
+    const recordGone = (
+      <div
+        className="main"
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: 32,
+          color: 'var(--text-muted)',
+          textAlign: 'center',
+        }}
+      >
+        <div>
+          This record is no longer available.
+          <br />
+          Close this window and try again from the list.
         </div>
-      );
-    }
-    if (w.app === 'clients') {
-      return (
-        <div className="main">
-          <ClientDetail
-            client={entity as Client}
-            canEdit={can(user, 'clients', 'edit')}
-            canDelete={can(user, 'clients', 'delete')}
-            onCloseWindow={() => osActions.closeWindow(w.id)}
-          />
-        </div>
-      );
-    }
-    if (w.app === 'vendors') {
-      return (
-        <div className="main">
-          <VendorDetail
-            vendor={entity as Vendor}
-            store={vendorStore}
-            canEdit={can(user, 'vendors', 'edit')}
-            canDelete={can(user, 'vendors', 'delete')}
-            onCloseWindow={() => osActions.closeWindow(w.id)}
-          />
-        </div>
-      );
-    }
-    if (w.app === 'reports') {
-      return (
-        <div className="main">
-          <ReportDetail report={entity as Report} />
-        </div>
-      );
-    }
+      </div>
+    );
+    if (!entity) return recordGone;
+    // Clients & vendors are always opened by their real DB UUID (handled above
+    // by ClientWindow / VendorWindow). Reaching here means a stale, non-UUID
+    // seed id whose legacy detail view only persisted to localStorage — never
+    // render it (silent data-loss trap); show the unavailable state instead.
+    if (w.app === 'clients' || w.app === 'vendors') return recordGone;
     return null;
   }
 
@@ -511,6 +530,7 @@ function Desktop({ signOut }: { signOut: () => void }) {
       className={`os-root ${theme === 'dark' ? 'dark' : ''}`}
       data-theme={theme}
       data-reduced-motion={settings.reducedMotion ? 'true' : undefined}
+      style={{ '--accent': settings.accent } as CSSProperties}
     >
       <MenuBar
         activeApp={activeApp}
@@ -523,6 +543,7 @@ function Desktop({ signOut }: { signOut: () => void }) {
         onSignOut={signOut}
         onCloseAll={() => osActions.closeAllWindows()}
         hasOpenWindows={windows.length > 0}
+        onOpenSearch={() => setCmdkOpen(true)}
       />
 
       {/* Desktop icons — only when no windows are open. Filtered by view perm. */}
@@ -570,12 +591,13 @@ function Desktop({ signOut }: { signOut: () => void }) {
           if (w.app === 'bank_recon') {
             return <BankReconWindow bankAccountId={w.entityId} />;
           }
-          // The 'ledger' app uses `entityId` as a routing key (not as
-          // an entity uuid lookup), e.g. 'office' / 'office-utilities'
-          // / 'client:<uuid>' / 'vendor:<uuid>'. Skip the resolveEntity
-          // path so it doesn't fall back to "no longer available" —
-          // the switch below handles every shape.
-          if (w.entityId && w.app !== 'ledger') return renderDetail(w);
+          // The 'ledger' and 'reports' apps use `entityId` as a routing key
+          // (not an entity uuid lookup) — e.g. ledger 'office'/'client:<uuid>'
+          // and reports 'trial-balance'/'statement'/etc. Skip the
+          // resolveEntity path (which would fall back to "no longer
+          // available") — the switch below handles every report/ledger shape
+          // natively.
+          if (w.entityId && w.app !== 'ledger' && w.app !== 'reports') return renderDetail(w);
           switch (w.app) {
             case 'clients':
               return (
@@ -660,19 +682,64 @@ function Desktop({ signOut }: { signOut: () => void }) {
               }
               return <LedgerWindow />;
             }
-            case 'reports':
-              // Per-Client P&L drills into a separate window body — opened
-              // either from the ReportsApp report tile or via a deep-link.
-              if (w.entityId === 'per-client-pnl') {
-                return <PerClientPnLWindow />;
+            case 'reports': {
+              // Each report renders natively inside the OS (no new browser
+              // tab). The catalog (no entityId) lists them; a slug entityId
+              // selects the report body. All share the live ledger actions.
+              switch (w.entityId) {
+                case undefined:
+                case '':
+                  return (
+                    <div className="main">
+                      <ReportsApp onOpenReport={openReport} />
+                    </div>
+                  );
+                case 'trial-balance':
+                  return <TrialBalanceWindow />;
+                case 'balance-sheet':
+                  return <BalanceSheetWindow />;
+                case 'pnl':
+                  return <PnLWindow />;
+                case 'ar-aging':
+                  return <AgingWindow side="receivable" />;
+                case 'ap-aging':
+                  return <AgingWindow side="payable" />;
+                case 'statement':
+                  return <StatementWindow />;
+                case 'per-client-pnl':
+                  return <PerClientPnLWindow />;
+                // The Office Ledger (cash + bank, running balance) IS the
+                // live bank book — reuse it with bank-book labels rather
+                // than ship a stub.
+                case 'bank-book':
+                  return (
+                    <OfficeLedgerWindow
+                      title="Bank Book"
+                      subtitle="Bank + cash movements (accounts 1110 + 1120) in date order, with a running balance. Posted transactions only."
+                      exportPrefix="bank-book"
+                    />
+                  );
+                case 'cash-flow':
+                  return <CashFlowWindow />;
+                default:
+                  return (
+                    <div className="main">
+                      <ReportsApp onOpenReport={openReport} />
+                    </div>
+                  );
               }
-              return (
-                <div className="main">
-                  <ReportsApp openReportDetail={openReportDetail} />
-                </div>
-              );
+            }
             case 'settings':
-              return <SettingsApp settings={settings} onSettingsChange={setSettings} />;
+              return (
+                <SettingsApp
+                  settings={settings}
+                  onSettingsChange={setSettings}
+                  onResetSettings={resetSettings}
+                  currentUserRole={user.role}
+                  onSignOut={signOut}
+                  onDisplayNameChange={setDisplayName}
+                />
+              );
             case 'admin_console':
               return <AdminConsole />;
             default:

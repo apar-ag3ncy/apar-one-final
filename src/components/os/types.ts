@@ -48,6 +48,8 @@ export type Client = {
   name: string;
   industry: string;
   manager: string;
+  /** Account-manager user id (null = unassigned). Drives the edit picker. */
+  managerId?: string | null;
   status: string;
   activity: string;
   logo: string;
@@ -160,14 +162,10 @@ export type InboxDoc = {
 // `postings` tables — LEDGER-SPEC §0.1 + §5). The OS no longer ships fake
 // transaction data.
 
-export type Report = {
-  id: string;
-  label: string;
-  value: string;
-  trend: string;
-  spark: number[];
-  color: string;
-};
+// `Report` (fabricated-KPI sparkline shape) was removed once reports began
+// rendering as native OS windows backed by the live ledger. The old
+// fake-data `ReportDetail` / `REPORTS` path it described is gone — real
+// reports route through the per-report windows in `./apps/*-window.tsx`.
 
 // `WindowState` + `DetailKind` retired in Phase 2. The canonical shape
 // now lives at `@/lib/os/store` and carries `entityId` / `tab` instead of

@@ -40,7 +40,7 @@ export type Props = {
 
 export function SalaryStructuresClient({ employees }: Props) {
   const [employeeId, setEmployeeId] = useState(employees[0]?.id ?? '');
-  const [version, setVersion] = useState(2);
+  const version = 2;
   const [effectiveFrom, setEffectiveFrom] = useState('2026-04-01');
   const [components, setComponents] = useState<Component[]>(() =>
     STARTER_COMPONENTS.map((c) => ({ ...c })),
@@ -105,11 +105,11 @@ export function SalaryStructuresClient({ employees }: Props) {
           </div>
           <div className="ml-auto flex items-center gap-2">
             <StatusBadge tone="info" label={`v${version} (draft)`} dot={false} />
-            <Button variant="outline" size="sm">
+            <Button variant="outline" size="sm" disabled title="Version history — coming soon.">
               <HistoryIcon className="mr-1.5 size-3.5" aria-hidden />
               History
             </Button>
-            <Button size="sm" onClick={() => setVersion((v) => v + 1)}>
+            <Button size="sm" disabled title="Saving salary structures — coming soon.">
               Save as v{version + 1}
             </Button>
           </div>

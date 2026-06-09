@@ -9,6 +9,7 @@
 import { useEffect, useState } from 'react';
 
 import { ActivityFeed } from '@/components/entity/activity-feed';
+import { EntitySettingsSection } from '@/components/entity/entity-settings-section';
 import { DocumentsSection } from '@/components/entity/documents-section';
 import { TransactionList, type Transaction } from '@/components/entity/transaction-list';
 import { ProjectStatusChanger } from '@/components/projects/project-status-changer';
@@ -25,15 +26,17 @@ import { navigateBesideFocused } from './navigate';
 
 export type ProjectWindowProps = {
   projectId: string;
+  onClose?: () => void;
 };
 
-type ProjectTab = 'overview' | 'transactions' | 'documents' | 'activity';
+type ProjectTab = 'overview' | 'transactions' | 'documents' | 'activity' | 'settings';
 
 const TAB_LABELS: Record<ProjectTab, string> = {
   overview: 'Overview',
   transactions: 'Transactions',
   documents: 'Documents',
   activity: 'Activity',
+  settings: 'Settings',
 };
 
 const PROJECT_STATUS_TONE: Record<ProjectStatus, { bg: string; fg: string; label: string }> = {
@@ -55,7 +58,7 @@ type State =
   | { kind: 'error'; message: string }
   | { kind: 'ready'; project: Project; feed: Feed };
 
-export function ProjectWindow({ projectId }: ProjectWindowProps) {
+export function ProjectWindow({ projectId, onClose }: ProjectWindowProps) {
   const [state, setState] = useState<State>({ kind: 'loading' });
   const [tab, setTab] = useState<ProjectTab>('overview');
   const [reloadKey, setReloadKey] = useState(0);
@@ -94,11 +97,17 @@ export function ProjectWindow({ projectId }: ProjectWindowProps) {
   }
 
   const { project, feed } = state;
-  const tabs: readonly ProjectTab[] = ['overview', 'transactions', 'documents', 'activity'];
+  const tabs: readonly ProjectTab[] = [
+    'overview',
+    'transactions',
+    'documents',
+    'activity',
+    'settings',
+  ];
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-      <Header project={project} />
+      <Header project={project} onStatusChanged={() => setReloadKey((k) => k + 1)} />
       <div className="tabs">
         {tabs.map((t) => (
           <div key={t} className={`tab ${tab === t ? 'active' : ''}`} onClick={() => setTab(t)}>
@@ -121,6 +130,16 @@ export function ProjectWindow({ projectId }: ProjectWindowProps) {
           />
         ) : null}
         {tab === 'activity' ? <ActivityBody projectId={project.id} /> : null}
+        {tab === 'settings' ? (
+          <EntitySettingsSection
+            kind="project"
+            entityId={project.id}
+            entityName={project.name}
+            isArchived={project.status === 'closed'}
+            onChanged={() => setReloadKey((k) => k + 1)}
+            onDeleted={onClose}
+          />
+        ) : null}
       </div>
     </div>
   );
@@ -130,7 +149,7 @@ export function ProjectWindow({ projectId }: ProjectWindowProps) {
 /* Header                                                                      */
 /* -------------------------------------------------------------------------- */
 
-function Header({ project }: { project: Project }) {
+function Header({ project, onStatusChanged }: { project: Project; onStatusChanged?: () => void }) {
   const tone = PROJECT_STATUS_TONE[project.status];
   return (
     <div
@@ -205,7 +224,11 @@ function Header({ project }: { project: Project }) {
         </div>
       </div>
       <div style={{ flexShrink: 0 }}>
-        <ProjectStatusChanger projectId={project.id} value={project.dbStatus} />
+        <ProjectStatusChanger
+          projectId={project.id}
+          value={project.dbStatus}
+          onChanged={onStatusChanged}
+        />
       </div>
     </div>
   );

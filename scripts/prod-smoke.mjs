@@ -13,7 +13,10 @@ const OUT = path.resolve('./.screenshots-prod');
 fs.mkdirSync(OUT, { recursive: true });
 
 const browser = await chromium.launch({ channel: 'chrome', args: ['--no-sandbox'] });
-const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 2 });
+const ctx = await browser.newContext({
+  viewport: { width: 1440, height: 900 },
+  deviceScaleFactor: 2,
+});
 const page = await ctx.newPage();
 
 const events = [];
@@ -21,7 +24,9 @@ page.on('pageerror', (err) => events.push(`pageerror: ${err.message}`));
 page.on('console', (msg) => {
   if (msg.type() === 'error') events.push(`console.error: ${msg.text()}`);
 });
-page.on('requestfailed', (req) => events.push(`requestfailed: ${req.url()} — ${req.failure()?.errorText ?? ''}`));
+page.on('requestfailed', (req) =>
+  events.push(`requestfailed: ${req.url()} — ${req.failure()?.errorText ?? ''}`),
+);
 
 async function shot(name) {
   const file = path.join(OUT, `${name}.png`);
@@ -66,7 +71,8 @@ try {
     const imgCount = await page.locator('.menubar .wordmark img').count();
     if (imgCount < 2) throw new Error(`expected 2 wordmark img variants, got ${imgCount}`);
     const lightSrc = await page.locator('.menubar .wordmark-img--light').getAttribute('src');
-    if (!lightSrc?.includes('apar-orange.svg')) throw new Error(`light wordmark src wrong: ${lightSrc}`);
+    if (!lightSrc?.includes('apar-orange.svg'))
+      throw new Error(`light wordmark src wrong: ${lightSrc}`);
   });
 
   await step('Menubar admin avatar is brand mark', async () => {
@@ -98,7 +104,8 @@ try {
 
   await step('Vendor archive button labelled correctly', async () => {
     const archive = page.locator('.window .row-with-actions [title="Archive vendor"]').first();
-    if (!(await archive.count())) throw new Error('Archive vendor button missing or still says Delete');
+    if (!(await archive.count()))
+      throw new Error('Archive vendor button missing or still says Delete');
   });
 
   await step('Open Attendance', async () => {
@@ -165,12 +172,15 @@ try {
     // `.os-root` — otherwise the selector misses.
     await page.goto(`${BASE}/os`, { waitUntil: 'networkidle' });
     await page.waitForSelector('.os-root .menubar', { timeout: 10000 });
-    await page.evaluate(() => document.querySelector('.os-root')?.setAttribute('data-theme', 'dark'));
+    await page.evaluate(() =>
+      document.querySelector('.os-root')?.setAttribute('data-theme', 'dark'),
+    );
     await page.waitForTimeout(300);
     await shot('07-dark');
     const darkVis = await page.locator('.menubar .wordmark-img--dark').isVisible();
     const lightVis = await page.locator('.menubar .wordmark-img--light').isVisible();
-    if (!darkVis || lightVis) throw new Error(`wordmark toggle broke (dark=${darkVis} light=${lightVis})`);
+    if (!darkVis || lightVis)
+      throw new Error(`wordmark toggle broke (dark=${darkVis} light=${lightVis})`);
   });
 
   console.log('\n— ALL CHECKS PASSED —');

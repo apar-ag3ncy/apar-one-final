@@ -295,10 +295,9 @@ const PERIOD_STATUS_REAL_TO_STUB: Record<string, Period['status']> = {
 };
 
 function fiscalLabel(fiscalYear: number, month: number): string {
-  const monthShort = new Date(Date.UTC(2000, ((month - 1 + 3) % 12), 1)).toLocaleDateString(
-    'en-IN',
-    { month: 'short' },
-  );
+  const monthShort = new Date(Date.UTC(2000, (month - 1 + 3) % 12, 1)).toLocaleDateString('en-IN', {
+    month: 'short',
+  });
   // Indian FY: April = month 1 of the fiscal year. Display as "FY26-04 (Apr)".
   const fy = String(fiscalYear).slice(-2);
   return `FY${fy}-${String(month).padStart(2, '0')} (${monthShort})`;
@@ -345,7 +344,10 @@ export async function setPeriodStatus(args: {
     });
     return { ok: true };
   } catch (e) {
-    return { ok: false, message: e instanceof Error ? e.message : 'Could not change period status.' };
+    return {
+      ok: false,
+      message: e instanceof Error ? e.message : 'Could not change period status.',
+    };
   }
 }
 

@@ -215,7 +215,12 @@ export async function postTransaction(
       );
     }
     const [period] = await tx
-      .select({ id: periods.id, status: periods.status, fiscalYear: periods.fiscalYear, month: periods.month })
+      .select({
+        id: periods.id,
+        status: periods.status,
+        fiscalYear: periods.fiscalYear,
+        month: periods.month,
+      })
       .from(periods)
       .where(eq(periods.id, row.periodId))
       .limit(1);

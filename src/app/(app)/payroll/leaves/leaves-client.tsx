@@ -31,5 +31,8 @@ export function LeavesClient({ rows }: { rows: readonly Row[] }) {
     ),
     status: r.status,
   }));
-  return <ApprovalQueue title="Leave applications" rows={adapted} canApprove />;
+  // Read-only preview: approve/reject is wired once the leave queue is served
+  // from the DB (no real row ids to act on yet), so we don't render no-op
+  // approve/reject buttons.
+  return <ApprovalQueue title="Leave applications" rows={adapted} />;
 }

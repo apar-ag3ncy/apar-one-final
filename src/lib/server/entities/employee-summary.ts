@@ -45,12 +45,20 @@ export type EmployeeSummary = {
   employee: {
     id: string;
     fullName: string;
+    displayName: string | null;
     designation: string | null;
     department: string | null;
     employmentType: string;
     status: string;
+    isArchived: boolean;
     joinedOn: string;
+    confirmedOn: string | null;
+    separatedOn: string | null;
+    noticePeriodDays: string | null;
+    reportsToEmployeeId: string | null;
+    contractStatus: string;
     workEmail: string | null;
+    personalEmail: string | null;
     phone: string | null;
     maskedPan: string | null;
     maskedAadhaar: string | null;
@@ -167,12 +175,20 @@ export async function getEmployeeSummary(employeeId: string): Promise<EmployeeSu
     employee: {
       id: emp.id,
       fullName: emp.fullName,
+      displayName: emp.displayName,
       designation: emp.designation,
       department: emp.department,
       employmentType: emp.employmentType,
       status: emp.status,
+      isArchived: emp.isArchived,
       joinedOn: emp.joinedOn,
+      confirmedOn: emp.confirmedOn,
+      separatedOn: emp.separatedOn,
+      noticePeriodDays: emp.noticePeriodDays,
+      reportsToEmployeeId: emp.reportsToEmployeeId,
+      contractStatus: emp.contractStatus,
       workEmail: emp.workEmail,
+      personalEmail: emp.personalEmail,
       phone: emp.phone,
       maskedPan: emp.maskedPan,
       maskedAadhaar: emp.maskedAadhaar,

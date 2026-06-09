@@ -1,16 +1,7 @@
 'use client';
 
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
-import {
-  Area,
-  AreaChart,
-  CartesianGrid,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from 'recharts';
-import { REPORTS } from './data';
+import { useEffect, useRef, useState, useTransition, type FormEvent, type ReactNode } from 'react';
+import { APPS } from './data';
 import { useBusinessData } from './data-store';
 import { navigateBesideFocused } from './apps/navigate';
 import { EntityRef } from '@/components/entity/entity-ref';
@@ -18,13 +9,17 @@ import {
   listClients as listDbClients,
   listEmployees as listDbEmployees,
   listVendors as listDbVendors,
+  listUsers as listDbUsers,
+  listDepartments as listDbDepartments,
 } from '@/lib/server-stub/entity-actions';
-import type { Employee as OsEmployee } from './types';
+import { departmentLabel, type Employee as HrEmployee } from '@/components/employees/types';
 import {
+  ACCENTS,
   DOCK_GAP_MAX,
   DOCK_GAP_MIN,
   DOCK_SIZE_MAX,
   DOCK_SIZE_MIN,
+  type NotificationSettings,
   type UserSettings,
 } from './auth/session-store';
 import { formatINR, initials, paiseToDecimalRupees, parseRupeesToPaise } from './format';
@@ -32,7 +27,6 @@ import { Icon, type IconName } from './icons';
 import type {
   Client,
   Project,
-  Report,
   Vendor,
   VendorDocument,
   VendorDocumentKind,
@@ -48,9 +42,45 @@ import {
   type ProjectListRow,
 } from '@/lib/server/entities/projects';
 import { archiveVendor, createVendor, updateVendor } from '@/lib/server/entities/vendors';
-import { archiveClient, createClient } from '@/lib/server/entities/clients';
-import { createEmployee } from '@/lib/server/entities/employees';
-import { listEmployeeOptions, type EntityOption } from '@/lib/server/entities/options';
+import { archiveClient, createClient, updateClient } from '@/lib/server/entities/clients';
+import {
+  archiveEmployee,
+  createEmployee,
+  getEmployeeEditable,
+  updateEmployee,
+  type EditableEmployee,
+} from '@/lib/server/entities/employees';
+import {
+  getMyProfile,
+  getMySecurity,
+  updateMyProfile,
+  type MyProfile,
+  type MySecurity,
+} from '@/lib/server/entities/account';
+import {
+  listTeamMembers,
+  setUserActive,
+  setUserRole,
+  type TeamMember,
+} from '@/lib/server/entities/team';
+import {
+  createDepartment,
+  deleteDepartment,
+  listDepartmentsDetailed,
+  renameDepartment,
+  type DepartmentRow,
+} from '@/lib/server/entities/departments';
+import {
+  getGlobalReminderSchedule,
+  saveGlobalReminderSchedule,
+  type GlobalReminderSchedule,
+} from '@/lib/server/billing/reminders';
+import {
+  getActivityDigestConfig,
+  saveActivityDigestConfig,
+  sendActivityDigestNow,
+  type ActivityDigestConfigView,
+} from '@/lib/server/entities/activity-digest';
 import {
   listRecentDocuments,
   type RecentDocumentRow,
@@ -196,7 +226,6 @@ export function ClientsApp({
   canEdit?: boolean;
   canDelete?: boolean;
 }) {
-  const { updateClient } = useBusinessData();
   const [search, setSearch] = useState('');
   const [showNew, setShowNew] = useState(false);
   const [editing, setEditing] = useState<Client | null>(null);
@@ -212,28 +241,31 @@ export function ClientsApp({
 
   async function fetchClientList(): Promise<readonly Client[]> {
     const rows = await listDbClients();
-    return rows
-      // Archived clients drop out of the active directory but stay
-      // queryable from anywhere they're referenced (projects, txns,
-      // invoices) where the UI renders them as "<name> (ex-client)".
-      .filter((r) => r.status !== 'archived')
-      .map(
-        (r): Client => ({
-          id: r.id,
-          name: r.name,
-          industry: r.industry || '—',
-          status: DB_TO_OS_CLIENT_STATUS[r.status] ?? 'Active',
-          manager: r.accountManager || '—',
-          activity: r.lastActivityAt
-            ? new Date(r.lastActivityAt).toLocaleDateString('en-IN', {
-                day: '2-digit',
-                month: 'short',
-              })
-            : '—',
-          logo: logoForName(r.name),
-          tone: toneForName(r.name),
-        }),
-      );
+    return (
+      rows
+        // Archived clients drop out of the active directory but stay
+        // queryable from anywhere they're referenced (projects, txns,
+        // invoices) where the UI renders them as "<name> (ex-client)".
+        .filter((r) => r.status !== 'archived')
+        .map(
+          (r): Client => ({
+            id: r.id,
+            name: r.name,
+            industry: r.industry || '—',
+            status: DB_TO_OS_CLIENT_STATUS[r.status] ?? 'Active',
+            manager: r.accountManager || '—',
+            managerId: r.accountManagerId,
+            activity: r.lastActivityAt
+              ? new Date(r.lastActivityAt).toLocaleDateString('en-IN', {
+                  day: '2-digit',
+                  month: 'short',
+                })
+              : '—',
+            logo: logoForName(r.name),
+            tone: toneForName(r.name),
+          }),
+        )
+    );
   }
 
   useEffect(() => {
@@ -367,11 +399,17 @@ export function ClientsApp({
               <tr>
                 <td
                   colSpan={6}
-                  style={{ textAlign: 'center', padding: 28, color: 'var(--text-muted)' }}
+                  style={{
+                    textAlign: 'center',
+                    padding: 28,
+                    color: loadError ? 'var(--text-error, #c33)' : 'var(--text-muted)',
+                  }}
                 >
-                  {data.clients.length === 0
-                    ? 'No clients yet — click "New Client" to add the first.'
-                    : `No clients match "${search}".`}
+                  {loadError
+                    ? `Couldn't load clients: ${loadError}`
+                    : data.clients.length === 0
+                      ? 'No clients yet — click "New Client" to add the first.'
+                      : `No clients match "${search}".`}
                 </td>
               </tr>
             )}
@@ -388,6 +426,7 @@ export function ClientsApp({
               name: input.name,
               industry: input.industry || undefined,
               status: OS_TO_DB_CLIENT_STATUS[input.status] ?? 'active',
+              accountManagerId: input.managerId ?? undefined,
             });
             if (!result.ok) {
               toast.error(result.message);
@@ -407,9 +446,22 @@ export function ClientsApp({
           mode="edit"
           initial={editing}
           onClose={() => setEditing(null)}
-          onSubmit={(input) => {
-            updateClient(editing.id, input);
+          onSubmit={async (input) => {
+            const result = await updateClient({
+              id: editing.id,
+              name: input.name,
+              industry: input.industry || null,
+              status: OS_TO_DB_CLIENT_STATUS[input.status] ?? undefined,
+              accountManagerId: input.managerId,
+            });
+            if (!result.ok) {
+              toast.error(result.message);
+              return;
+            }
             setEditing(null);
+            const next = await fetchClientList().catch(() => null);
+            if (next) setDbClients(next);
+            toast.success(`Updated ${input.name}.`);
           }}
         />
       )}
@@ -441,9 +493,8 @@ export function ClientsApp({
 type ClientFormValues = {
   name: string;
   industry: string;
-  manager: string;
+  managerId: string | null;
   status: string;
-  logo?: string;
 };
 
 function ClientFormModal({
@@ -459,15 +510,15 @@ function ClientFormModal({
 }) {
   const [name, setName] = useState(initial?.name ?? '');
   const [industry, setIndustry] = useState(initial?.industry ?? '');
-  const [manager, setManager] = useState(initial?.manager ?? '');
+  const [managerId, setManagerId] = useState<string>(initial?.managerId ?? '');
   const [status, setStatus] = useState(initial?.status ?? CLIENT_STATUSES[0]!);
-  const [logo, setLogo] = useState(initial?.logo ?? '');
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const nameRef = useRef<HTMLInputElement | null>(null);
 
-  // Real team members for the Account-manager picker (was a static seed).
-  const [employees, setEmployees] = useState<readonly EntityOption[]>([]);
+  // Real team members for the Account-manager picker. Account manager is a
+  // FK to users.id (not employees), so this lists system users.
+  const [managers, setManagers] = useState<readonly { id: string; name: string }[]>([]);
 
   useEffect(() => {
     nameRef.current?.focus();
@@ -475,9 +526,9 @@ function ClientFormModal({
 
   useEffect(() => {
     let active = true;
-    listEmployeeOptions()
+    listDbUsers()
       .then((rows) => {
-        if (active) setEmployees(rows);
+        if (active) setManagers(rows.map((u) => ({ id: u.id, name: u.fullName })));
       })
       .catch(() => {});
     return () => {
@@ -497,9 +548,8 @@ function ClientFormModal({
       await onSubmit({
         name: n,
         industry: industry.trim(),
-        manager: manager.trim() || 'Unassigned',
+        managerId: managerId || null,
         status,
-        logo: logo.trim() || undefined,
       });
     } finally {
       setBusy(false);
@@ -536,24 +586,14 @@ function ClientFormModal({
           </select>
         </Field>
         <Field label="Account manager">
-          <select value={manager} onChange={(e) => setManager(e.target.value)}>
+          <select value={managerId} onChange={(e) => setManagerId(e.target.value)}>
             <option value="">— Unassigned —</option>
-            {employees.map((e) => (
-              <option key={e.id} value={e.label}>
-                {e.label}
-                {e.sub ? ` · ${e.sub}` : ''}
+            {managers.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.name}
               </option>
             ))}
           </select>
-        </Field>
-        <Field label="Logo initials" hint="Up to 4 characters. Defaults to the name's initials.">
-          <input
-            value={logo}
-            onChange={(e) => setLogo(e.target.value.toUpperCase())}
-            maxLength={4}
-            placeholder="AP"
-            className="font-mono"
-          />
         </Field>
         {err && <div className="os-form-error">{err}</div>}
         <div className="os-form-actions">
@@ -1037,28 +1077,30 @@ export function VendorsApp({
 
   async function fetchVendorList(): Promise<readonly Vendor[]> {
     const rows = await listDbVendors();
-    return rows
-      // Archived vendors drop out of the active directory. Bills,
-      // expenses, and documents that reference them still resolve the
-      // name and show an "(ex-vendor)" suffix.
-      .filter((r) => !r.isArchived)
-      .map(
-        (r): Vendor => ({
-          id: r.id,
-          name: r.name,
-          cat: r.category ? r.category.charAt(0).toUpperCase() + r.category.slice(1) : 'Other',
-          outstanding: r.outstandingPaise,
-          last: r.lastTxnAt
-            ? new Date(r.lastTxnAt).toLocaleDateString('en-IN', {
-                day: '2-digit',
-                month: 'short',
-              })
-            : '—',
-          gstin: r.gstin ?? undefined,
-          pan: r.pan ?? undefined,
-          notes: r.notes ?? undefined,
-        }),
-      );
+    return (
+      rows
+        // Archived vendors drop out of the active directory. Bills,
+        // expenses, and documents that reference them still resolve the
+        // name and show an "(ex-vendor)" suffix.
+        .filter((r) => !r.isArchived)
+        .map(
+          (r): Vendor => ({
+            id: r.id,
+            name: r.name,
+            cat: r.category ? r.category.charAt(0).toUpperCase() + r.category.slice(1) : 'Other',
+            outstanding: r.outstandingPaise,
+            last: r.lastTxnAt
+              ? new Date(r.lastTxnAt).toLocaleDateString('en-IN', {
+                  day: '2-digit',
+                  month: 'short',
+                })
+              : '—',
+            gstin: r.gstin ?? undefined,
+            pan: r.pan ?? undefined,
+            notes: r.notes ?? undefined,
+          }),
+        )
+    );
   }
 
   useEffect(() => {
@@ -1911,7 +1953,7 @@ function Modal({
             <Icon name="close" size={13} />
           </button>
         </div>
-        {children}
+        <div className="os-modal-body">{children}</div>
       </div>
     </div>
   );
@@ -2084,16 +2126,21 @@ function VendorFormModal({
             ))}
           </select>
         </Field>
-        <Field label="Payment terms (days)">
-          <input
-            type="number"
-            min={0}
-            max={180}
-            value={terms}
-            onChange={(e) => setTerms(e.target.value)}
-            placeholder="30"
-          />
-        </Field>
+        {/* Payment terms persist on create (party-billing profile) but the
+            quick-edit only patches the vendors row, so it's create-only to
+            avoid a field that silently doesn't save. Edit it from billing. */}
+        {mode === 'create' ? (
+          <Field label="Payment terms (days)">
+            <input
+              type="number"
+              min={0}
+              max={180}
+              value={terms}
+              onChange={(e) => setTerms(e.target.value)}
+              placeholder="30"
+            />
+          </Field>
+        ) : null}
         <Field label="GSTIN" hint="Captured, never computed. 15 chars.">
           <input
             value={gstin}
@@ -2112,29 +2159,37 @@ function VendorFormModal({
             maxLength={10}
           />
         </Field>
-        <Field label="Email" full>
-          <input
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            placeholder="billing@vendor.com"
-          />
-        </Field>
-        <Field label="Phone">
-          <input
-            value={phone}
-            onChange={(e) => setPhone(e.target.value)}
-            placeholder="+91 98xxxxxxxx"
-          />
-        </Field>
-        <Field label="Address" full>
-          <textarea
-            rows={2}
-            value={address}
-            onChange={(e) => setAddress(e.target.value)}
-            placeholder="Registered office address"
-          />
-        </Field>
+        {/* Contact + address live in child tables (entity_contacts /
+            entity_addresses). They're captured on create; edit them from the
+            vendor window's Contacts tab. Hidden on edit so the form never
+            shows a field that won't save. */}
+        {mode === 'create' ? (
+          <>
+            <Field label="Email" full>
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="billing@vendor.com"
+              />
+            </Field>
+            <Field label="Phone">
+              <input
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+                placeholder="+91 98xxxxxxxx"
+              />
+            </Field>
+            <Field label="Address" full>
+              <textarea
+                rows={2}
+                value={address}
+                onChange={(e) => setAddress(e.target.value)}
+                placeholder="Registered office address"
+              />
+            </Field>
+          </>
+        ) : null}
         <Field label="Notes" full>
           <textarea
             rows={2}
@@ -2756,8 +2811,14 @@ export function ProjectsApp({
                 name: input.name,
                 clientId: input.clientId,
                 leadEmployeeId: input.leadEmployeeId ?? null,
-                col: input.col,
-                fee: input.fee,
+                // Only send status when the column actually changed — the
+                // col↔status map is lossy (won→Proposed→pitch,
+                // cancelled→Completed→completed), so an unchanged column
+                // would silently corrupt the real DB status.
+                ...(input.col !== editing.col ? { col: input.col } : {}),
+                // Only send fee when it actually changed — a blank/0 fee on
+                // edit would otherwise wipe the captured fee.
+                ...(input.fee !== editing.fee ? { fee: input.fee } : {}),
               });
             }
             setEditing(null);
@@ -2965,7 +3026,22 @@ function ProjectFormModal({
 /* Employees                                                                  */
 /* -------------------------------------------------------------------------- */
 
-const DEPARTMENTS: readonly string[] = ['Accounts', 'Strategy', 'Creative', 'Finance', 'People'];
+type EmpStatusUi = 'active' | 'notice' | 'separated';
+
+const EMP_STATUS_META: Record<EmpStatusUi, { label: string; fg: string; bg: string }> = {
+  active: { label: 'Active', fg: '#2e8f5a', bg: 'rgba(46,143,90,0.12)' },
+  notice: { label: 'Notice', fg: '#c46a28', bg: 'rgba(196,106,40,0.14)' },
+  separated: { label: 'Separated', fg: 'var(--text-muted)', bg: 'var(--content-2)' },
+};
+
+const EMP_TYPE_LABEL: Record<string, string> = {
+  full_time: 'Full-time',
+  part_time: 'Part-time',
+  contractor: 'Contractor',
+  intern: 'Intern',
+};
+
+type DirRow = HrEmployee & { tone: string; managerName: string | null };
 
 export function EmployeesApp({
   canEdit = true,
@@ -2974,35 +3050,41 @@ export function EmployeesApp({
   canEdit?: boolean;
   canDelete?: boolean;
 }) {
-  const { updateEmployee, removeEmployee } = useBusinessData();
-  const [filterDept, setFilterDept] = useState<string>('all');
+  const [rows, setRows] = useState<readonly DirRow[] | null>(null);
+  const [search, setSearch] = useState('');
+  const [filterDept, setFilterDept] = useState('all');
+  const [filterStatus, setFilterStatus] = useState<'all' | EmpStatusUi>('all');
+  const [filterType, setFilterType] = useState('all');
+  const [sortBy, setSortBy] = useState<'name' | 'joined' | 'dept'>('name');
+  const [showInactive, setShowInactive] = useState(false);
   const [showNew, setShowNew] = useState(false);
-  const [editing, setEditing] = useState<OsEmployee | null>(null);
-  const [confirmDel, setConfirmDel] = useState<OsEmployee | null>(null);
+  const [showDepts, setShowDepts] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [confirmDel, setConfirmDel] = useState<DirRow | null>(null);
 
-  // Real DB-backed list. Mirrors the ClientsApp / VendorsApp swap so
-  // clicking an employee card passes a real UUID into the openWindow
-  // route → EmployeeWindow renders with the §8.4 personal dashboard.
-  const [dbEmployees, setDbEmployees] = useState<readonly OsEmployee[] | null>(null);
+  // Real DB-backed list. Clicking a card passes a real UUID into the
+  // openWindow route → EmployeeWindow renders the §8.4 dashboard. Edits go
+  // straight to the DB (create/updateEmployee / archiveEmployee) then refetch.
+  async function fetchEmployeeList(): Promise<readonly DirRow[]> {
+    const list = await listDbEmployees();
+    const nameById = new Map(list.map((r) => [r.id, r.fullName]));
+    return list.map((r) => ({
+      ...r,
+      tone: toneForName(r.fullName),
+      managerName: r.reportsTo ? (nameById.get(r.reportsTo) ?? null) : null,
+    }));
+  }
 
-  async function fetchEmployeeList(): Promise<readonly OsEmployee[]> {
-    const rows = await listDbEmployees();
-    return rows.map(
-      (r): OsEmployee => ({
-        id: r.id,
-        name: r.fullName,
-        role: r.designation || '—',
-        dept: r.department.charAt(0).toUpperCase() + r.department.slice(1),
-        tone: toneForName(r.fullName),
-      }),
-    );
+  async function refreshEmployeeList() {
+    const next = await fetchEmployeeList().catch(() => null);
+    if (next) setRows(next);
   }
 
   useEffect(() => {
     let cancelled = false;
     fetchEmployeeList()
       .then((mapped) => {
-        if (!cancelled) setDbEmployees(mapped);
+        if (!cancelled) setRows(mapped);
       })
       .catch(() => {
         /* fall through to empty list */
@@ -3012,30 +3094,58 @@ export function EmployeesApp({
     };
   }, []);
 
-  const data = { employees: dbEmployees ?? [] };
-  const visible =
-    filterDept === 'all' ? data.employees : data.employees.filter((e) => e.dept === filterDept);
-  const depts = new Set(data.employees.map((e) => e.dept));
+  const all = rows ?? [];
+  const deptOptions = Array.from(
+    new Set(all.map((e) => departmentLabel(e.department)).filter((d) => d && d !== '—')),
+  ).sort();
+  const q = search.trim().toLowerCase();
+  const filtered = all
+    .filter((e) => (showInactive || filterStatus === 'separated' ? true : e.status !== 'separated'))
+    .filter((e) => (filterStatus === 'all' ? true : e.status === filterStatus))
+    .filter((e) => (filterType === 'all' ? true : e.employmentType === filterType))
+    .filter((e) => (filterDept === 'all' ? true : departmentLabel(e.department) === filterDept))
+    .filter((e) =>
+      q === ''
+        ? true
+        : [e.fullName, e.designation, departmentLabel(e.department), e.workEmail].some((v) =>
+            (v ?? '').toLowerCase().includes(q),
+          ),
+    );
+  const visible = [...filtered].sort((a, b) => {
+    if (sortBy === 'joined') return b.joinedAt.getTime() - a.joinedAt.getTime();
+    if (sortBy === 'dept')
+      return (
+        departmentLabel(a.department).localeCompare(departmentLabel(b.department)) ||
+        a.fullName.localeCompare(b.fullName)
+      );
+    return a.fullName.localeCompare(b.fullName);
+  });
+  const activeCount = all.filter((e) => e.status === 'active').length;
+  const roster = all.map((e) => ({ id: e.id, name: e.fullName }));
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
       <div className="main-header">
         <h2>Team</h2>
         <span className="sub">
-          {data.employees.length} people · {depts.size} department{depts.size === 1 ? '' : 's'}
+          {all.length} {all.length === 1 ? 'person' : 'people'} · {activeCount} active ·{' '}
+          {deptOptions.length} dept{deptOptions.length === 1 ? '' : 's'}
         </span>
         <div className="grow" />
-        <select
-          value={filterDept}
-          onChange={(e) => setFilterDept(e.target.value)}
-          className="header-select"
-          aria-label="Filter by department"
+        <button
+          className="btn"
+          type="button"
+          disabled={!canEdit}
+          onClick={() => setShowDepts(true)}
+          title={
+            canEdit
+              ? 'Add, rename or remove departments'
+              : 'You need edit permission to manage departments.'
+          }
         >
-          <option value="all">All departments</option>
-          {[...depts].map((d) => (
-            <option key={d}>{d}</option>
-          ))}
-        </select>
+          <Icon name="folder" size={13} />
+          Departments
+        </button>
         <button
           className="btn primary"
           type="button"
@@ -3047,64 +3157,90 @@ export function EmployeesApp({
           Invite
         </button>
       </div>
+
+      <div
+        style={{
+          display: 'flex',
+          gap: 8,
+          alignItems: 'center',
+          flexWrap: 'wrap',
+          padding: '10px 16px',
+          borderBottom: '1px solid var(--border)',
+        }}
+      >
+        <input
+          className="input"
+          style={{ flex: '1 1 200px', minWidth: 160 }}
+          placeholder="Search name, role, email…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          aria-label="Search team"
+        />
+        <select
+          className="input"
+          value={filterStatus}
+          onChange={(e) => setFilterStatus(e.target.value as 'all' | EmpStatusUi)}
+          aria-label="Filter by status"
+        >
+          <option value="all">All statuses</option>
+          <option value="active">Active</option>
+          <option value="notice">Notice</option>
+          <option value="separated">Separated</option>
+        </select>
+        <select
+          className="input"
+          value={filterType}
+          onChange={(e) => setFilterType(e.target.value)}
+          aria-label="Filter by employment type"
+        >
+          <option value="all">All types</option>
+          <option value="full_time">Full-time</option>
+          <option value="part_time">Part-time</option>
+          <option value="contractor">Contractor</option>
+          <option value="intern">Intern</option>
+        </select>
+        <select
+          className="input"
+          value={filterDept}
+          onChange={(e) => setFilterDept(e.target.value)}
+          aria-label="Filter by department"
+        >
+          <option value="all">All departments</option>
+          {deptOptions.map((d) => (
+            <option key={d}>{d}</option>
+          ))}
+        </select>
+        <select
+          className="input"
+          value={sortBy}
+          onChange={(e) => setSortBy(e.target.value as 'name' | 'joined' | 'dept')}
+          aria-label="Sort by"
+        >
+          <option value="name">Sort: Name</option>
+          <option value="joined">Sort: Joined</option>
+          <option value="dept">Sort: Department</option>
+        </select>
+        <button
+          type="button"
+          className={`toggle ${showInactive ? 'on' : ''}`}
+          role="switch"
+          aria-checked={showInactive}
+          aria-label="Show separated teammates"
+          title="Show separated / archived teammates"
+          onClick={() => setShowInactive((v) => !v)}
+        />
+        <span style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>Show inactive</span>
+      </div>
+
       <div
         className="card-grid"
-        style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))' }}
+        style={{
+          gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))',
+          flex: 1,
+          minHeight: 0,
+        }}
       >
-        {visible.map((e) => (
-          <div
-            key={e.id}
-            className="emp-card emp-card-actionable"
-            role="button"
-            tabIndex={0}
-            onClick={() => navigateBesideFocused({ type: 'employee', id: e.id })}
-            onKeyDown={(ev) => {
-              if (ev.key === 'Enter' || ev.key === ' ') {
-                ev.preventDefault();
-                navigateBesideFocused({ type: 'employee', id: e.id });
-              }
-            }}
-            style={{ cursor: 'pointer' }}
-            title={`Open ${e.name}'s profile`}
-          >
-            <div
-              className="avatar"
-              style={{ width: 44, height: 44, fontSize: 14, background: e.tone, borderRadius: 12 }}
-            >
-              {initials(e.name)}
-            </div>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div className="name">{e.name}</div>
-              <div className="role">{e.role}</div>
-              <div className="dept">{e.dept}</div>
-            </div>
-            {(canEdit || canDelete) && (
-              <div className="emp-card-actions" onClick={(ev) => ev.stopPropagation()}>
-                {canEdit && (
-                  <button
-                    type="button"
-                    className="emp-card-btn"
-                    title="Edit teammate"
-                    onClick={() => setEditing(e)}
-                  >
-                    <Icon name="edit" size={12} />
-                  </button>
-                )}
-                {canDelete && (
-                  <button
-                    type="button"
-                    className="emp-card-btn emp-card-delete"
-                    title="Remove from team"
-                    onClick={() => setConfirmDel(e)}
-                  >
-                    <Icon name="trash" size={12} />
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
-        ))}
-        {visible.length === 0 && (
+        {rows === null ? (
           <div
             style={{
               gridColumn: '1 / -1',
@@ -3113,60 +3249,199 @@ export function EmployeesApp({
               color: 'var(--text-muted)',
             }}
           >
-            {data.employees.length === 0
+            Loading team…
+          </div>
+        ) : (
+          visible.map((e) => {
+            const sm = EMP_STATUS_META[e.status];
+            return (
+              <div
+                key={e.id}
+                className="emp-card emp-card-actionable"
+                role="button"
+                tabIndex={0}
+                onClick={() => navigateBesideFocused({ type: 'employee', id: e.id })}
+                onKeyDown={(ev) => {
+                  if (ev.key === 'Enter' || ev.key === ' ') {
+                    ev.preventDefault();
+                    navigateBesideFocused({ type: 'employee', id: e.id });
+                  }
+                }}
+                style={{
+                  cursor: 'pointer',
+                  alignItems: 'flex-start',
+                  opacity: e.status === 'separated' ? 0.7 : 1,
+                }}
+                title={`Open ${e.fullName}'s profile`}
+              >
+                <div
+                  className="avatar"
+                  style={{
+                    width: 44,
+                    height: 44,
+                    fontSize: 14,
+                    background: e.tone,
+                    borderRadius: 12,
+                  }}
+                >
+                  {initials(e.fullName)}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <div
+                      className="name"
+                      style={{
+                        minWidth: 0,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {e.fullName}
+                    </div>
+                    <span
+                      style={{
+                        fontSize: 10,
+                        fontWeight: 600,
+                        padding: '1px 7px',
+                        borderRadius: 999,
+                        color: sm.fg,
+                        background: sm.bg,
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {sm.label}
+                    </span>
+                  </div>
+                  <div className="role">{e.designation || '—'}</div>
+                  <div className="dept">
+                    {departmentLabel(e.department)} ·{' '}
+                    {EMP_TYPE_LABEL[e.employmentType] ?? e.employmentType}
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 11,
+                      color: 'var(--text-muted)',
+                      marginTop: 3,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 1,
+                    }}
+                  >
+                    {e.workEmail ? (
+                      <span
+                        style={{
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {e.workEmail}
+                      </span>
+                    ) : null}
+                    <span>
+                      Joined{' '}
+                      {e.joinedAt.toLocaleDateString('en-IN', { month: 'short', year: 'numeric' })}
+                      {e.managerName ? ` · ↳ ${e.managerName}` : ''}
+                    </span>
+                  </div>
+                </div>
+                {(canEdit || canDelete) && (
+                  <div className="emp-card-actions" onClick={(ev) => ev.stopPropagation()}>
+                    {canEdit && (
+                      <button
+                        type="button"
+                        className="emp-card-btn"
+                        title="Edit profile"
+                        onClick={() => setEditingId(e.id)}
+                      >
+                        <Icon name="edit" size={12} />
+                      </button>
+                    )}
+                    {canDelete && e.status !== 'separated' && (
+                      <button
+                        type="button"
+                        className="emp-card-btn emp-card-delete"
+                        title="Remove from team"
+                        onClick={() => setConfirmDel(e)}
+                      >
+                        <Icon name="trash" size={12} />
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })
+        )}
+        {rows !== null && visible.length === 0 && (
+          <div
+            style={{
+              gridColumn: '1 / -1',
+              padding: 28,
+              textAlign: 'center',
+              color: 'var(--text-muted)',
+            }}
+          >
+            {all.length === 0
               ? 'No teammates yet — click "Invite" to add the first.'
-              : `No one in ${filterDept}.`}
+              : 'No teammates match these filters.'}
           </div>
         )}
       </div>
 
-      {showNew && (
-        <EmployeeFormModal
-          mode="create"
-          onClose={() => setShowNew(false)}
-          onSubmit={async (input) => {
-            // Quick invite — sensible defaults; HR fills KYC / salary /
-            // contract in the full wizard (/employees/new) or the window.
-            const result = await createEmployee({
-              fullName: input.name,
-              designation: input.role || undefined,
-              department: input.dept || undefined,
-              employmentType: 'full_time',
-              joinedOn: new Date().toISOString().slice(0, 10),
-            });
-            if (!result.ok) {
-              toast.error(result.message);
-              return;
-            }
-            setShowNew(false);
-            const next = await fetchEmployeeList().catch(() => null);
-            if (next) setDbEmployees(next);
-            navigateBesideFocused({ type: 'employee', id: result.id });
-            toast.success(`${input.name} added to the team.`);
+      {showDepts && (
+        <DepartmentsModal
+          canEdit={canEdit}
+          onClose={() => setShowDepts(false)}
+          onChanged={() => {
+            void refreshEmployeeList();
           }}
         />
       )}
-      {editing && (
-        <EmployeeFormModal
+      {showNew && (
+        <EmployeeProfileEditor
+          mode="create"
+          roster={roster}
+          onClose={() => setShowNew(false)}
+          onSaved={async (id, name) => {
+            setShowNew(false);
+            await refreshEmployeeList();
+            if (id) navigateBesideFocused({ type: 'employee', id });
+            toast.success(`${name} added to the team.`);
+          }}
+        />
+      )}
+      {editingId && (
+        <EmployeeProfileEditor
           mode="edit"
-          initial={editing}
-          onClose={() => setEditing(null)}
-          onSubmit={(input) => {
-            updateEmployee(editing.id, input);
-            setEditing(null);
+          employeeId={editingId}
+          roster={roster.filter((r) => r.id !== editingId)}
+          onClose={() => setEditingId(null)}
+          onSaved={async (_id, name) => {
+            setEditingId(null);
+            await refreshEmployeeList();
+            toast.success(`Updated ${name}.`);
           }}
         />
       )}
       {confirmDel && (
         <ConfirmDialog
-          title={`Remove ${confirmDel.name} from the team?`}
-          message="They'll disappear from the team directory. Projects and ledger entries that reference them aren't affected."
+          title={`Remove ${confirmDel.fullName} from the team?`}
+          message="They'll disappear from the active team directory. Projects and ledger entries that reference them aren't affected, and they can be restored later."
           destructive
           confirmLabel="Remove"
           onCancel={() => setConfirmDel(null)}
-          onConfirm={() => {
-            removeEmployee(confirmDel.id);
+          onConfirm={async () => {
+            const name = confirmDel.fullName;
             setConfirmDel(null);
+            try {
+              await archiveEmployee(confirmDel.id);
+              await refreshEmployeeList();
+              toast.success(`Removed ${name} from the team.`);
+            } catch (e) {
+              toast.error(e instanceof Error ? e.message : 'Could not remove the teammate.');
+            }
           }}
         />
       )}
@@ -3174,74 +3449,616 @@ export function EmployeesApp({
   );
 }
 
-function EmployeeFormModal({
+/* -------------------------------------------------------------------------- */
+/* Employee profile editor — full create + edit form (OS)                      */
+/* -------------------------------------------------------------------------- */
+
+type EmpType = 'full_time' | 'part_time' | 'contract' | 'intern' | 'consultant';
+type EmpStatus = 'prospective' | 'active' | 'on_leave' | 'notice' | 'separated';
+
+const EMP_TYPE_OPTIONS: { value: EmpType; label: string }[] = [
+  { value: 'full_time', label: 'Full-time' },
+  { value: 'part_time', label: 'Part-time' },
+  { value: 'contract', label: 'Contract' },
+  { value: 'intern', label: 'Intern' },
+  { value: 'consultant', label: 'Consultant' },
+];
+const EMP_STATUS_OPTIONS: { value: EmpStatus; label: string }[] = [
+  { value: 'prospective', label: 'Prospective' },
+  { value: 'active', label: 'Active' },
+  { value: 'on_leave', label: 'On leave' },
+  { value: 'notice', label: 'Notice' },
+  { value: 'separated', label: 'Separated' },
+];
+
+type EditorForm = {
+  fullName: string;
+  displayName: string;
+  designation: string;
+  department: string;
+  employmentType: EmpType;
+  status: EmpStatus;
+  workEmail: string;
+  personalEmail: string;
+  phone: string;
+  reportsToEmployeeId: string;
+  joinedOn: string;
+  confirmedOn: string;
+  separatedOn: string;
+  noticePeriodDays: string;
+  notes: string;
+};
+
+function todayIso(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+const EMPTY_EDITOR_FORM: EditorForm = {
+  fullName: '',
+  displayName: '',
+  designation: '',
+  department: '',
+  employmentType: 'full_time',
+  status: 'active',
+  workEmail: '',
+  personalEmail: '',
+  phone: '',
+  reportsToEmployeeId: '',
+  joinedOn: '',
+  confirmedOn: '',
+  separatedOn: '',
+  noticePeriodDays: '',
+  notes: '',
+};
+
+function editableToForm(e: EditableEmployee): EditorForm {
+  return {
+    fullName: e.fullName,
+    displayName: e.displayName ?? '',
+    designation: e.designation ?? '',
+    department: e.department ? departmentLabel(e.department) : '',
+    employmentType: e.employmentType,
+    status: e.status,
+    workEmail: e.workEmail ?? '',
+    personalEmail: e.personalEmail ?? '',
+    phone: e.phone ?? '',
+    reportsToEmployeeId: e.reportsToEmployeeId ?? '',
+    joinedOn: e.joinedOn,
+    confirmedOn: e.confirmedOn ?? '',
+    separatedOn: e.separatedOn ?? '',
+    noticePeriodDays: e.noticePeriodDays ?? '',
+    notes: e.notes ?? '',
+  };
+}
+
+function FieldErr({ msg }: { msg: string }) {
+  return <div style={{ fontSize: 11, color: 'var(--apar-red)', marginTop: 3 }}>{msg}</div>;
+}
+
+export function EmployeeProfileEditor({
   mode,
-  initial,
+  employeeId,
+  roster,
   onClose,
-  onSubmit,
+  onSaved,
 }: {
   mode: 'create' | 'edit';
-  initial?: { name?: string; role?: string; dept?: string };
+  employeeId?: string;
+  roster: readonly { id: string; name: string }[];
   onClose: () => void;
-  onSubmit: (input: { name: string; role: string; dept: string }) => void;
+  onSaved: (id: string | null, name: string) => void | Promise<void>;
 }) {
-  const [name, setName] = useState(initial?.name ?? '');
-  const [role, setRole] = useState(initial?.role ?? '');
-  const [dept, setDept] = useState(initial?.dept ?? DEPARTMENTS[0]!);
-  const [err, setErr] = useState<string | null>(null);
-  const nameRef = useRef<HTMLInputElement | null>(null);
+  const [form, setForm] = useState<EditorForm>(() =>
+    mode === 'create' ? { ...EMPTY_EDITOR_FORM, joinedOn: todayIso() } : EMPTY_EDITOR_FORM,
+  );
+  const [loading, setLoading] = useState(mode === 'edit');
+  const [departments, setDepartments] = useState<readonly string[]>([]);
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    nameRef.current?.focus();
+    let active = true;
+    listDbDepartments()
+      .then((d) => {
+        if (active) setDepartments(d);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
   }, []);
 
-  const submit = (e: FormEvent) => {
-    e.preventDefault();
-    if (!name.trim()) return setErr('Name is required.');
-    if (!role.trim()) return setErr('Role is required.');
-    onSubmit({ name: name.trim(), role: role.trim(), dept });
+  useEffect(() => {
+    // `loading` initialises to (mode === 'edit'); the editor is mounted fresh
+    // per edit, so we don't reset it synchronously here (that would trip the
+    // no-sync-setState-in-effect rule).
+    if (mode !== 'edit' || !employeeId) return;
+    let active = true;
+    getEmployeeEditable(employeeId)
+      .then((e) => {
+        if (!active) return;
+        if (e) setForm(editableToForm(e));
+        setLoading(false);
+      })
+      .catch(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [mode, employeeId]);
+
+  const set = <K extends keyof EditorForm>(k: K, v: EditorForm[K]) =>
+    setForm((f) => ({ ...f, [k]: v }));
+
+  const submit = async (ev: FormEvent) => {
+    ev.preventDefault();
+    if (busy) return;
+    if (!form.fullName.trim()) {
+      setErrors({ fullName: 'Full name is required.' });
+      return;
+    }
+    if (!form.joinedOn) {
+      setErrors({ joinedOn: 'Joining date is required.' });
+      return;
+    }
+    setErrors({});
+    setBusy(true);
+    try {
+      if (mode === 'create') {
+        const res = await createEmployee({
+          fullName: form.fullName.trim(),
+          displayName: form.displayName.trim() || undefined,
+          designation: form.designation.trim() || undefined,
+          department: form.department.trim() || undefined,
+          employmentType: form.employmentType,
+          status: form.status,
+          workEmail: form.workEmail.trim() || undefined,
+          personalEmail: form.personalEmail.trim() || undefined,
+          phone: form.phone.trim() || undefined,
+          reportsToEmployeeId: form.reportsToEmployeeId || undefined,
+          joinedOn: form.joinedOn,
+          confirmedOn: form.confirmedOn || undefined,
+          noticePeriodDays: form.noticePeriodDays.trim() || undefined,
+          notes: form.notes.trim() || undefined,
+        });
+        if (!res.ok) {
+          setErrors(res.errors);
+          toast.error(res.message);
+          return;
+        }
+        await onSaved(res.id, form.fullName.trim());
+      } else if (employeeId) {
+        const res = await updateEmployee({
+          id: employeeId,
+          fullName: form.fullName.trim(),
+          displayName: form.displayName.trim() || null,
+          designation: form.designation.trim() || null,
+          department: form.department.trim() || null,
+          employmentType: form.employmentType,
+          status: form.status,
+          workEmail: form.workEmail.trim() || null,
+          personalEmail: form.personalEmail.trim() || null,
+          phone: form.phone.trim() || null,
+          reportsToEmployeeId: form.reportsToEmployeeId || null,
+          joinedOn: form.joinedOn,
+          confirmedOn: form.confirmedOn || null,
+          separatedOn: form.separatedOn || null,
+          noticePeriodDays: form.noticePeriodDays.trim() || null,
+          notes: form.notes.trim() || null,
+        });
+        if (!res.ok) {
+          setErrors(res.errors);
+          toast.error(res.message);
+          return;
+        }
+        await onSaved(null, form.fullName.trim());
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not save the employee.');
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
-    <Modal
-      title={mode === 'edit' ? `Edit ${initial?.name ?? 'Teammate'}` : 'Invite Teammate'}
-      onClose={onClose}
-      width={480}
-    >
-      <form onSubmit={submit} className="os-form">
-        <Field label="Full name" full>
-          <input
-            ref={nameRef}
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="e.g. Riya Sengupta"
-          />
-        </Field>
-        <Field label="Role">
-          <input
-            value={role}
-            onChange={(e) => setRole(e.target.value)}
-            placeholder="Senior Visualiser"
-          />
-        </Field>
-        <Field label="Department">
-          <select value={dept} onChange={(e) => setDept(e.target.value)}>
-            {DEPARTMENTS.map((d) => (
-              <option key={d}>{d}</option>
-            ))}
-          </select>
-        </Field>
-        {err && <div className="os-form-error">{err}</div>}
-        <div className="os-form-actions">
-          <button type="button" className="btn" onClick={onClose}>
-            Cancel
-          </button>
-          <button type="submit" className="btn primary">
-            <Icon name="check" size={13} />
-            {mode === 'edit' ? 'Save changes' : 'Add to team'}
-          </button>
+    <Modal title={mode === 'edit' ? 'Edit Employee' : 'Add Employee'} onClose={onClose} width={620}>
+      {loading ? (
+        <div style={{ padding: 24, color: 'var(--text-muted)', fontSize: 13 }}>Loading…</div>
+      ) : (
+        <form onSubmit={submit} className="os-form">
+          <Field label="Full name" full>
+            <input
+              value={form.fullName}
+              onChange={(e) => set('fullName', e.target.value)}
+              placeholder="e.g. Riya Sengupta"
+              autoFocus
+            />
+            {errors.fullName ? <FieldErr msg={errors.fullName} /> : null}
+          </Field>
+          <Field label="Display name">
+            <input
+              value={form.displayName}
+              onChange={(e) => set('displayName', e.target.value)}
+              placeholder="Short / nick name"
+            />
+          </Field>
+          <Field label="Designation">
+            <input
+              value={form.designation}
+              onChange={(e) => set('designation', e.target.value)}
+              placeholder="Senior Visualiser"
+            />
+          </Field>
+          <Field label="Department">
+            <input
+              list="os-employee-departments"
+              value={form.department}
+              onChange={(e) => set('department', e.target.value)}
+              placeholder="Pick or type"
+            />
+            <datalist id="os-employee-departments">
+              {departments.map((d) => (
+                <option key={d} value={departmentLabel(d)} />
+              ))}
+            </datalist>
+          </Field>
+          <Field label="Employment type">
+            <select
+              value={form.employmentType}
+              onChange={(e) => set('employmentType', e.target.value as EmpType)}
+            >
+              {EMP_TYPE_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Status">
+            <select
+              value={form.status}
+              onChange={(e) => set('status', e.target.value as EmpStatus)}
+            >
+              {EMP_STATUS_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Reports to">
+            <select
+              value={form.reportsToEmployeeId}
+              onChange={(e) => set('reportsToEmployeeId', e.target.value)}
+            >
+              <option value="">— No manager —</option>
+              {roster.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.name}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Work email">
+            <input
+              type="email"
+              value={form.workEmail}
+              onChange={(e) => set('workEmail', e.target.value)}
+              placeholder="name@apar.com"
+            />
+            {errors.workEmail ? <FieldErr msg={errors.workEmail} /> : null}
+          </Field>
+          <Field label="Personal email">
+            <input
+              type="email"
+              value={form.personalEmail}
+              onChange={(e) => set('personalEmail', e.target.value)}
+            />
+          </Field>
+          <Field label="Phone">
+            <input
+              value={form.phone}
+              onChange={(e) => set('phone', e.target.value)}
+              placeholder="+91…"
+            />
+          </Field>
+          <Field label="Joined on">
+            <input
+              type="date"
+              value={form.joinedOn}
+              onChange={(e) => set('joinedOn', e.target.value)}
+            />
+            {errors.joinedOn ? <FieldErr msg={errors.joinedOn} /> : null}
+          </Field>
+          <Field label="Confirmed on">
+            <input
+              type="date"
+              value={form.confirmedOn}
+              onChange={(e) => set('confirmedOn', e.target.value)}
+            />
+          </Field>
+          {mode === 'edit' ? (
+            <Field label="Separated on">
+              <input
+                type="date"
+                value={form.separatedOn}
+                onChange={(e) => set('separatedOn', e.target.value)}
+              />
+            </Field>
+          ) : null}
+          <Field label="Notice period">
+            <input
+              value={form.noticePeriodDays}
+              onChange={(e) => set('noticePeriodDays', e.target.value)}
+              placeholder="e.g. 30 days"
+            />
+          </Field>
+          <Field label="Notes" full>
+            <textarea
+              rows={2}
+              value={form.notes}
+              onChange={(e) => set('notes', e.target.value)}
+              placeholder="Internal notes"
+            />
+          </Field>
+          <div className="os-form-actions">
+            <button type="button" className="btn" onClick={onClose} disabled={busy}>
+              Cancel
+            </button>
+            <button type="submit" className="btn primary" disabled={busy}>
+              <Icon name="check" size={13} />
+              {busy ? 'Saving…' : mode === 'edit' ? 'Save changes' : 'Add to team'}
+            </button>
+          </div>
+        </form>
+      )}
+    </Modal>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Manage Departments                                                         */
+/* -------------------------------------------------------------------------- */
+
+function DepartmentsModal({
+  canEdit,
+  onClose,
+  onChanged,
+}: {
+  canEdit: boolean;
+  onClose: () => void;
+  onChanged: () => void;
+}) {
+  const [rows, setRows] = useState<readonly DepartmentRow[] | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [newName, setNewName] = useState('');
+  const [addError, setAddError] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editValue, setEditValue] = useState('');
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [adding, startAdd] = useTransition();
+
+  const load = () => {
+    listDepartmentsDetailed()
+      .then((r) => setRows(r))
+      .catch(() => setLoadError('Could not load departments. You may not have permission.'));
+  };
+  useEffect(() => {
+    let cancelled = false;
+    listDepartmentsDetailed()
+      .then((r) => {
+        if (!cancelled) setRows(r);
+      })
+      .catch(() => {
+        if (!cancelled) setLoadError('Could not load departments. You may not have permission.');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const add = () => {
+    setAddError(null);
+    const name = newName.trim();
+    if (!name) {
+      setAddError('Enter a department name.');
+      return;
+    }
+    startAdd(async () => {
+      const res = await createDepartment(name);
+      if (!res.ok) {
+        setAddError(res.errors?.name ?? res.message);
+        toast.error(res.message);
+        return;
+      }
+      setNewName('');
+      toast.success(`Added “${departmentLabel(name)}”.`);
+      load();
+      onChanged();
+    });
+  };
+
+  const startEdit = (d: DepartmentRow) => {
+    setEditingId(d.id);
+    setEditValue(d.label);
+  };
+
+  const saveRename = async (d: DepartmentRow) => {
+    const next = editValue.trim();
+    if (!next) return;
+    setBusyId(d.id);
+    const res = await renameDepartment(d.id, next);
+    setBusyId(null);
+    if (!res.ok) {
+      toast.error(res.message);
+      return;
+    }
+    setEditingId(null);
+    toast.success(`Renamed to “${departmentLabel(next)}”.`);
+    load();
+    onChanged();
+  };
+
+  const remove = async (d: DepartmentRow) => {
+    setBusyId(d.id);
+    const res = await deleteDepartment(d.id);
+    setBusyId(null);
+    if (!res.ok) {
+      toast.error(res.message);
+      return;
+    }
+    toast.success(`Removed “${d.label}”.`);
+    load();
+    onChanged();
+  };
+
+  return (
+    <Modal title="Manage Departments" onClose={onClose} width={520}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>
+          Add, rename, or remove the departments teammates can be assigned to. Renaming updates
+          everyone in that department; a department can’t be removed while people are still in it.
         </div>
-      </form>
+
+        {canEdit && (
+          <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+            <div style={{ flex: 1 }}>
+              <input
+                className="input"
+                style={{ width: '100%' }}
+                value={newName}
+                maxLength={120}
+                placeholder="New department (e.g. People Ops)"
+                aria-label="New department name"
+                onChange={(e) => setNewName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    add();
+                  }
+                }}
+              />
+              {addError ? (
+                <div style={{ fontSize: 11.5, color: 'var(--apar-red)', marginTop: 4 }}>
+                  {addError}
+                </div>
+              ) : null}
+            </div>
+            <button className="btn primary" type="button" onClick={add} disabled={adding}>
+              <Icon name="plus" size={13} />
+              {adding ? 'Adding…' : 'Add'}
+            </button>
+          </div>
+        )}
+
+        {loadError ? (
+          <div style={{ fontSize: 13, color: 'var(--text-muted)', padding: '8px 0' }}>
+            {loadError}
+          </div>
+        ) : !rows ? (
+          <div style={{ fontSize: 13, color: 'var(--text-muted)', padding: '8px 0' }}>
+            Loading departments…
+          </div>
+        ) : rows.length === 0 ? (
+          <div style={{ fontSize: 13, color: 'var(--text-muted)', padding: '8px 0' }}>
+            No departments yet — add the first one above.
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column' }}>
+            {rows.map((d) => {
+              const isEditing = editingId === d.id;
+              const busy = busyId === d.id;
+              return (
+                <div
+                  key={d.id}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 10,
+                    padding: '9px 0',
+                    borderBottom: '1px solid var(--border)',
+                  }}
+                >
+                  {isEditing ? (
+                    <input
+                      className="input"
+                      style={{ flex: 1 }}
+                      value={editValue}
+                      maxLength={120}
+                      autoFocus
+                      aria-label={`Rename ${d.label}`}
+                      onChange={(e) => setEditValue(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          void saveRename(d);
+                        } else if (e.key === 'Escape') {
+                          setEditingId(null);
+                        }
+                      }}
+                    />
+                  ) : (
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13.5, fontWeight: 500 }}>{d.label}</div>
+                      <div style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>
+                        {d.employeeCount} {d.employeeCount === 1 ? 'person' : 'people'}
+                      </div>
+                    </div>
+                  )}
+
+                  {canEdit &&
+                    (isEditing ? (
+                      <>
+                        <button
+                          className="btn primary"
+                          type="button"
+                          disabled={busy}
+                          onClick={() => void saveRename(d)}
+                        >
+                          {busy ? 'Saving…' : 'Save'}
+                        </button>
+                        <button
+                          className="btn"
+                          type="button"
+                          disabled={busy}
+                          onClick={() => setEditingId(null)}
+                        >
+                          Cancel
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <button
+                          className="btn"
+                          type="button"
+                          title="Rename department"
+                          disabled={busy}
+                          onClick={() => startEdit(d)}
+                        >
+                          <Icon name="edit" size={13} />
+                        </button>
+                        <button
+                          className="btn"
+                          type="button"
+                          title={
+                            d.employeeCount > 0
+                              ? 'Move people out before removing'
+                              : 'Remove department'
+                          }
+                          disabled={busy || d.employeeCount > 0}
+                          onClick={() => void remove(d)}
+                        >
+                          <Icon name="trash" size={13} />
+                        </button>
+                      </>
+                    ))}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
     </Modal>
   );
 }
@@ -3406,32 +4223,125 @@ export function InboxApp() {
 // `<TransactionList>` (LEDGER-SPEC §0.1 + §5).
 
 /* -------------------------------------------------------------------------- */
-/* Reports + Report detail                                                    */
+/* Reports                                                                    */
 /* -------------------------------------------------------------------------- */
 
-export function ReportsApp({ openReportDetail }: { openReportDetail: (r: Report) => void }) {
+// Real, DB-backed reports catalog. Each tile opens the corresponding
+// dashboard report route (trial balance, P&L, AR/AP aging, etc.) which runs
+// against the live ledger — no fabricated KPI numbers. Grouped to match the
+// dashboard /reports catalog.
+const OS_REPORT_GROUPS: ReadonlyArray<{
+  heading: string;
+  reports: ReadonlyArray<{ slug: string; label: string; desc: string }>;
+}> = [
+  {
+    heading: 'Financial statements',
+    reports: [
+      {
+        slug: 'trial-balance',
+        label: 'Trial Balance',
+        desc: 'Debit & credit balances per account.',
+      },
+      { slug: 'balance-sheet', label: 'Balance Sheet', desc: 'Assets, liabilities & equity.' },
+      { slug: 'pnl', label: 'Profit & Loss', desc: 'Income and expenses over a period.' },
+      { slug: 'cash-flow', label: 'Cash Flow', desc: 'Cash inflows and outflows.' },
+    ],
+  },
+  {
+    heading: 'Receivables & payables',
+    reports: [
+      { slug: 'ar-aging', label: 'AR Aging', desc: 'Outstanding receivables by age.' },
+      { slug: 'ap-aging', label: 'AP Aging', desc: 'Outstanding payables by age.' },
+    ],
+  },
+  {
+    heading: 'Ledgers & statements',
+    reports: [
+      { slug: 'bank-book', label: 'Bank Book', desc: 'Bank movements + running balance.' },
+      { slug: 'statement', label: 'Statement of Account', desc: 'Per-party ledger statement.' },
+      { slug: 'per-client-pnl', label: 'Per-Client P&L', desc: 'Profitability by client.' },
+    ],
+  },
+];
+
+export function ReportsApp({
+  onOpenReport,
+}: {
+  /** Open a report inside the OS. Falls back to a new browser tab if absent. */
+  onOpenReport?: (slug: string, label: string) => void;
+} = {}) {
+  const openReport = (slug: string, label: string) => {
+    if (onOpenReport) {
+      onOpenReport(slug, label);
+      return;
+    }
+    if (typeof window !== 'undefined') {
+      window.open(`/reports/${slug}`, '_blank', 'noopener,noreferrer');
+    }
+  };
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
       <div className="main-header">
         <h2>Reports</h2>
-        <span className="sub">May 2026 · finance & ops</span>
-        <div className="grow" />
-        <button className="btn" type="button">
-          <Icon name="filter" size={13} />
-          FY26
-        </button>
-        <button className="btn" type="button">
-          <Icon name="filetext" size={13} />
-          Export
-        </button>
+        <span className="sub">Live accounting & management reports</span>
       </div>
-      <div className="card-grid" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
-        {REPORTS.map((r) => (
-          <div key={r.id} className="report-tile" onClick={() => openReportDetail(r)}>
-            <div className="label">{r.label}</div>
-            <div className="value">{r.value}</div>
-            <div className="trend">{r.trend}</div>
-            <Sparkline data={r.spark} color={r.color} />
+      <div
+        style={{
+          flex: 1,
+          overflow: 'auto',
+          padding: 16,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 18,
+        }}
+      >
+        {OS_REPORT_GROUPS.map((group) => (
+          <div key={group.heading} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div
+              style={{
+                fontSize: 11,
+                fontWeight: 600,
+                textTransform: 'uppercase',
+                letterSpacing: '0.06em',
+                color: 'var(--text-muted)',
+              }}
+            >
+              {group.heading}
+            </div>
+            <div className="card-grid" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
+              {group.reports.map((r) => (
+                <div
+                  key={r.slug}
+                  className="report-tile"
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => openReport(r.slug, r.label)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      openReport(r.slug, r.label);
+                    }
+                  }}
+                  style={{ cursor: 'pointer' }}
+                  title={`Open ${r.label}`}
+                >
+                  <div className="label">{r.label}</div>
+                  <div
+                    style={{
+                      fontSize: 12,
+                      color: 'var(--text-muted)',
+                      marginTop: 4,
+                      lineHeight: 1.4,
+                    }}
+                  >
+                    {r.desc}
+                  </div>
+                  <div style={{ fontSize: 12, color: 'var(--accent, #E63A1F)', marginTop: 10 }}>
+                    Open report →
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         ))}
       </div>
@@ -3554,91 +4464,6 @@ function UploadClientDocModal({
 // accepts free-form single-entry transactions. Real posting flows through
 // extraction → review → confirm once that pipeline ships.
 
-const MONTHS = ['Aug', 'Sep', 'Oct', 'Nov', 'Dec', 'Jan', 'Feb', 'Mar', 'Apr', 'May'];
-
-export function ReportDetail({ report }: { report: Report }) {
-  const data = report.spark.map((v, i) => ({ month: MONTHS[i] ?? `m${i}`, value: v }));
-  return (
-    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: 20, gap: 16 }}>
-      <div>
-        <div className="font-display" style={{ fontSize: 26 }}>
-          {report.label}
-        </div>
-        <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>
-          {report.value} · {report.trend}
-        </div>
-      </div>
-      <div
-        style={{
-          background: 'var(--content-2)',
-          border: '1px solid var(--border)',
-          borderRadius: 12,
-          padding: 16,
-          height: 280,
-        }}
-      >
-        <ResponsiveContainer width="100%" height="100%">
-          <AreaChart data={data} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
-            <defs>
-              <linearGradient id={`g-${report.id}`} x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor={report.color} stopOpacity={0.4} />
-                <stop offset="100%" stopColor={report.color} stopOpacity={0} />
-              </linearGradient>
-            </defs>
-            <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-            <XAxis dataKey="month" stroke="var(--text-muted)" fontSize={11} />
-            <YAxis stroke="var(--text-muted)" fontSize={11} />
-            <Tooltip
-              contentStyle={{
-                background: 'var(--content)',
-                border: '1px solid var(--border)',
-                borderRadius: 8,
-                fontSize: 12,
-                color: 'var(--text)',
-              }}
-            />
-            <Area
-              type="monotone"
-              dataKey="value"
-              stroke={report.color}
-              strokeWidth={2}
-              fill={`url(#g-${report.id})`}
-            />
-          </AreaChart>
-        </ResponsiveContainer>
-      </div>
-      <table className="table">
-        <thead>
-          <tr>
-            <th>Month</th>
-            <th>Value</th>
-            <th>Δ vs prev</th>
-          </tr>
-        </thead>
-        <tbody>
-          {data.map((d, i) => {
-            const prev = i > 0 ? data[i - 1]!.value : null;
-            const delta = prev != null ? d.value - prev : null;
-            return (
-              <tr key={i}>
-                <td>{d.month} 2025-26</td>
-                <td style={{ fontVariantNumeric: 'tabular-nums' }}>{d.value}</td>
-                <td
-                  style={{
-                    color: delta != null && delta > 0 ? 'var(--green)' : 'var(--text-muted)',
-                  }}
-                >
-                  {delta == null ? '—' : (delta > 0 ? '+' : '') + delta}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
 /* -------------------------------------------------------------------------- */
 /* Settings                                                                   */
 /* -------------------------------------------------------------------------- */
@@ -3651,11 +4476,21 @@ type SettingsSection = {
 export function SettingsApp({
   settings,
   onSettingsChange,
+  onResetSettings,
+  currentUserRole,
+  onSignOut,
+  onDisplayNameChange,
 }: {
   settings: UserSettings;
   onSettingsChange: (patch: Partial<UserSettings>) => void;
+  onResetSettings?: () => void;
+  currentUserRole?: 'super_admin' | 'admin' | 'user';
+  onSignOut?: () => void;
+  onDisplayNameChange?: (fullName: string) => void;
 }) {
-  const [section, setSection] = useState<SettingsSection['name']>('Appearance');
+  const [section, setSection] = useState<SettingsSection['name']>('General');
+  // Apps a user can pick as their landing app (admin-only apps excluded).
+  const landingApps = APPS.filter((a) => a.id !== 'admin_console');
   const sections: readonly SettingsSection[] = [
     { name: 'General', icon: 'settings' },
     { name: 'Appearance', icon: 'palette' },
@@ -3682,7 +4517,49 @@ export function SettingsApp({
         <div className="main-header">
           <h2>{section}</h2>
         </div>
-        {section === 'Appearance' ? (
+        {section === 'General' ? (
+          <div>
+            <div className="settings-row">
+              <div>
+                <div className="label">Default landing app</div>
+                <div className="desc">
+                  Automatically opened when you sign in. Saved to your profile and synced across
+                  devices.
+                </div>
+              </div>
+              <select
+                className="input"
+                style={{ maxWidth: 220 }}
+                value={settings.defaultLandingApp}
+                aria-label="Default landing app"
+                onChange={(e) => onSettingsChange({ defaultLandingApp: e.target.value })}
+              >
+                <option value="">None — empty desktop</option>
+                {landingApps.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="settings-row">
+              <div>
+                <div className="label">Reset preferences</div>
+                <div className="desc">
+                  Clear all saved settings on your profile and restore the defaults.
+                </div>
+              </div>
+              <button
+                className="btn"
+                type="button"
+                onClick={() => onResetSettings?.()}
+                disabled={!onResetSettings}
+              >
+                Reset to defaults
+              </button>
+            </div>
+          </div>
+        ) : section === 'Appearance' ? (
           <div>
             <div className="settings-row">
               <div>
@@ -3703,22 +4580,32 @@ export function SettingsApp({
             <div className="settings-row">
               <div>
                 <div className="label">Accent</div>
-                <div className="desc">Used for selected items, focus states and the wordmark.</div>
+                <div className="desc">Used for selected items, focus states and links.</div>
               </div>
-              <div style={{ display: 'flex', gap: 6 }}>
-                {['#E63A1F', '#7A4E2D', '#5B6677', '#2E8F5A'].map((c) => (
-                  <div
-                    key={c}
-                    style={{
-                      width: 22,
-                      height: 22,
-                      borderRadius: '50%',
-                      background: c,
-                      border: c === '#E63A1F' ? '2px solid var(--text)' : '2px solid transparent',
-                      cursor: 'default',
-                    }}
-                  />
-                ))}
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                {ACCENTS.map((c) => {
+                  const selected = settings.accent === c;
+                  return (
+                    <button
+                      key={c}
+                      type="button"
+                      aria-label={`Accent ${c}`}
+                      aria-pressed={selected}
+                      title={c}
+                      onClick={() => onSettingsChange({ accent: c })}
+                      style={{
+                        width: 22,
+                        height: 22,
+                        borderRadius: '50%',
+                        background: c,
+                        border: selected ? '2px solid var(--text)' : '2px solid transparent',
+                        boxShadow: selected ? '0 0 0 2px var(--content)' : undefined,
+                        cursor: 'pointer',
+                        padding: 0,
+                      }}
+                    />
+                  );
+                })}
               </div>
             </div>
             <div className="settings-row">
@@ -3726,7 +4613,7 @@ export function SettingsApp({
                 <div className="label">Desktop Wallpaper</div>
                 <div className="desc">Apār Charcoal Gradient · Default</div>
               </div>
-              <button className="btn" type="button">
+              <button className="btn" type="button" disabled title="More wallpapers — coming soon.">
                 Change…
               </button>
             </div>
@@ -3778,27 +4665,810 @@ export function SettingsApp({
               />
             </div>
           </div>
+        ) : section === 'Account' ? (
+          <AccountPanel onSignOut={onSignOut} onDisplayNameChange={onDisplayNameChange} />
+        ) : section === 'Team' ? (
+          <TeamPanel currentUserRole={currentUserRole} />
+        ) : section === 'Notifications' ? (
+          <NotificationsPanel
+            notifications={settings.notifications}
+            onSettingsChange={onSettingsChange}
+            currentUserRole={currentUserRole}
+          />
         ) : (
-          <div style={{ padding: 24, color: 'var(--text-muted)', fontSize: 13 }}>
-            <div
-              style={{
-                background: 'var(--content-2)',
-                border: '1px solid var(--border)',
-                borderRadius: 12,
-                padding: 32,
-                textAlign: 'center',
-              }}
-            >
-              <div className="font-display" style={{ fontSize: 24, color: 'var(--text)' }}>
-                {section}
-              </div>
-              <div style={{ marginTop: 6 }}>
-                This pane is part of the desktop mockup. Real settings appear here.
-              </div>
-            </div>
-          </div>
+          <SecurityPanel onSignOut={onSignOut} />
         )}
       </div>
     </>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Settings · Account                                                         */
+/* -------------------------------------------------------------------------- */
+
+const ROLE_LABELS: Record<string, string> = {
+  partner: 'Partner',
+  admin: 'Admin',
+  manager: 'Manager',
+  accountant: 'Accountant',
+  employee: 'Employee',
+  viewer: 'Viewer',
+};
+
+function AccountPanel({
+  onSignOut,
+  onDisplayNameChange,
+}: {
+  onSignOut?: () => void;
+  onDisplayNameChange?: (fullName: string) => void;
+}) {
+  const [profile, setProfile] = useState<MyProfile | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [fullName, setFullName] = useState('');
+  const [nameError, setNameError] = useState<string | null>(null);
+  const [saving, startSave] = useTransition();
+
+  useEffect(() => {
+    let cancelled = false;
+    getMyProfile()
+      .then((p) => {
+        if (cancelled) return;
+        setProfile(p);
+        setFullName(p.fullName);
+      })
+      .catch(() => {
+        if (!cancelled) setLoadError('Could not load your profile.');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const dirty = profile != null && fullName.trim() !== profile.fullName;
+
+  const save = () => {
+    setNameError(null);
+    startSave(async () => {
+      const res = await updateMyProfile({ fullName });
+      if (!res.ok) {
+        setNameError(res.errors.fullName ?? null);
+        toast.error(res.message);
+        return;
+      }
+      const next = fullName.trim();
+      setProfile((p) => (p ? { ...p, fullName: next } : p));
+      setFullName(next);
+      onDisplayNameChange?.(next);
+      toast.success('Profile updated.');
+    });
+  };
+
+  if (loadError) {
+    return <div style={{ padding: 24, color: 'var(--text-muted)', fontSize: 13 }}>{loadError}</div>;
+  }
+  if (!profile) {
+    return (
+      <div style={{ padding: 24, color: 'var(--text-muted)', fontSize: 13 }}>Loading profile…</div>
+    );
+  }
+
+  return (
+    <div>
+      <div className="settings-row">
+        <div>
+          <div className="label">Full name</div>
+          <div className="desc">Shown across the workspace and on the menu bar.</div>
+          {nameError ? (
+            <div className="desc" style={{ color: 'var(--apar-red)' }}>
+              {nameError}
+            </div>
+          ) : null}
+        </div>
+        <input
+          className="input"
+          style={{ maxWidth: 240 }}
+          value={fullName}
+          maxLength={200}
+          onChange={(e) => setFullName(e.target.value)}
+          aria-label="Full name"
+        />
+      </div>
+      <div className="settings-row">
+        <div>
+          <div className="label">Email</div>
+          <div className="desc">Managed by your sign-in — change it from the login provider.</div>
+        </div>
+        <input
+          className="input"
+          style={{ maxWidth: 240 }}
+          value={profile.email}
+          readOnly
+          disabled
+          aria-label="Email (read-only)"
+        />
+      </div>
+      <div className="settings-row">
+        <div>
+          <div className="label">Role</div>
+          <div className="desc">Your access level. Roles are managed under Team.</div>
+        </div>
+        <span className="badge">{ROLE_LABELS[profile.role] ?? profile.role}</span>
+      </div>
+      <div className="settings-row">
+        <div>
+          <div className="label">Save changes</div>
+          <div className="desc">Your name is saved to your profile and synced everywhere.</div>
+        </div>
+        <button className="btn primary" type="button" onClick={save} disabled={!dirty || saving}>
+          {saving ? 'Saving…' : 'Save'}
+        </button>
+      </div>
+      {onSignOut ? (
+        <div className="settings-row">
+          <div>
+            <div className="label">Sign out</div>
+            <div className="desc">End your session on this device.</div>
+          </div>
+          <button className="btn" type="button" onClick={onSignOut}>
+            Sign out
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Settings · Team                                                            */
+/* -------------------------------------------------------------------------- */
+
+const SENTINEL_USER_ID = '00000000-0000-0000-0000-000000000000';
+const TEAM_ROLES = ['admin', 'manager', 'accountant', 'employee', 'viewer'] as const;
+
+function TeamPanel({ currentUserRole }: { currentUserRole?: 'super_admin' | 'admin' | 'user' }) {
+  const [members, setMembers] = useState<readonly TeamMember[] | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const canManage = currentUserRole === 'super_admin' || currentUserRole === 'admin';
+
+  const reload = () => {
+    listTeamMembers()
+      .then(setMembers)
+      .catch(() => setLoadError('Could not load the team. You may not have permission.'));
+  };
+  useEffect(() => {
+    let cancelled = false;
+    listTeamMembers()
+      .then((m) => {
+        if (!cancelled) setMembers(m);
+      })
+      .catch(() => {
+        if (!cancelled) setLoadError('Could not load the team. You may not have permission.');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const changeRole = async (m: TeamMember, role: string) => {
+    setBusyId(m.id);
+    const res = await setUserRole(m.id, role);
+    setBusyId(null);
+    if (!res.ok) {
+      toast.error(res.message);
+      return;
+    }
+    toast.success(`${m.fullName} is now ${ROLE_LABELS[role] ?? role}.`);
+    reload();
+  };
+
+  const toggleActive = async (m: TeamMember) => {
+    setBusyId(m.id);
+    const res = await setUserActive(m.id, !m.active);
+    setBusyId(null);
+    if (!res.ok) {
+      toast.error(res.message);
+      return;
+    }
+    toast.success(`${m.fullName} ${m.active ? 'deactivated' : 'reactivated'}.`);
+    reload();
+  };
+
+  if (loadError) {
+    return <div style={{ padding: 24, color: 'var(--text-muted)', fontSize: 13 }}>{loadError}</div>;
+  }
+  if (!members) {
+    return (
+      <div style={{ padding: 24, color: 'var(--text-muted)', fontSize: 13 }}>Loading team…</div>
+    );
+  }
+
+  return (
+    <div>
+      <div className="settings-row" style={{ alignItems: 'flex-start' }}>
+        <div>
+          <div className="label">Team members</div>
+          <div className="desc">
+            {canManage
+              ? 'Set each member’s role or deactivate access. Inviting new members arrives with the sign-in system.'
+              : 'You can view the team. Ask an admin to change roles or access.'}
+          </div>
+        </div>
+      </div>
+      <div style={{ padding: '4px 18px 18px' }}>
+        {members.map((m) => {
+          const protectedRow = m.role === 'partner' || m.id === SENTINEL_USER_ID;
+          const disabled = !canManage || protectedRow || busyId === m.id;
+          return (
+            <div
+              key={m.id}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 12,
+                padding: '10px 0',
+                borderBottom: '1px solid var(--border)',
+                opacity: m.active ? 1 : 0.55,
+              }}
+            >
+              <div
+                aria-hidden
+                style={{
+                  width: 30,
+                  height: 30,
+                  borderRadius: '50%',
+                  background: 'var(--apar-red-soft)',
+                  color: 'var(--apar-red)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: 12,
+                  fontWeight: 600,
+                  flexShrink: 0,
+                }}
+              >
+                {initials(m.fullName)}
+              </div>
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div style={{ fontSize: 13, fontWeight: 500 }}>
+                  {m.fullName}
+                  {!m.active ? (
+                    <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}> · inactive</span>
+                  ) : null}
+                </div>
+                <div className="desc" style={{ marginTop: 0 }}>
+                  {m.email}
+                </div>
+              </div>
+              {m.role === 'partner' ? (
+                <span className="badge">Partner</span>
+              ) : (
+                <select
+                  className="input"
+                  style={{ maxWidth: 150 }}
+                  value={m.role}
+                  disabled={disabled}
+                  aria-label={`Role for ${m.fullName}`}
+                  onChange={(e) => void changeRole(m, e.target.value)}
+                >
+                  {TEAM_ROLES.map((r) => (
+                    <option key={r} value={r}>
+                      {ROLE_LABELS[r]}
+                    </option>
+                  ))}
+                </select>
+              )}
+              <button
+                className="btn"
+                type="button"
+                disabled={disabled}
+                onClick={() => void toggleActive(m)}
+                title={protectedRow ? 'Protected account' : undefined}
+              >
+                {m.active ? 'Deactivate' : 'Reactivate'}
+              </button>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Settings · Notifications                                                   */
+/* -------------------------------------------------------------------------- */
+
+const NOTIFICATION_TOGGLES: { key: keyof NotificationSettings; label: string; desc: string }[] = [
+  {
+    key: 'invoicePaymentReminders',
+    label: 'Invoice payment reminders',
+    desc: 'Reminders for upcoming and due invoice payments.',
+  },
+  {
+    key: 'overdueAlerts',
+    label: 'Overdue invoice alerts',
+    desc: 'Alerts when an invoice passes its due date.',
+  },
+  {
+    key: 'weeklySummary',
+    label: 'Weekly summary',
+    desc: 'A digest of receivables, payables and activity.',
+  },
+  {
+    key: 'inAppToasts',
+    label: 'In-app notifications',
+    desc: 'Show toast pop-ups for actions inside the workspace.',
+  },
+];
+
+function NotificationsPanel({
+  notifications,
+  onSettingsChange,
+  currentUserRole,
+}: {
+  notifications: NotificationSettings;
+  onSettingsChange: (patch: Partial<UserSettings>) => void;
+  currentUserRole?: 'super_admin' | 'admin' | 'user';
+}) {
+  const canManageSchedule = currentUserRole === 'super_admin' || currentUserRole === 'admin';
+
+  const toggle = (key: keyof NotificationSettings) => {
+    // Send the FULL object — the server-side jsonb merge is shallow.
+    onSettingsChange({ notifications: { ...notifications, [key]: !notifications[key] } });
+  };
+
+  return (
+    <div>
+      {NOTIFICATION_TOGGLES.map((t) => (
+        <div className="settings-row" key={t.key}>
+          <div>
+            <div className="label">{t.label}</div>
+            <div className="desc">{t.desc}</div>
+          </div>
+          <button
+            type="button"
+            className={`toggle ${notifications[t.key] ? 'on' : ''}`}
+            role="switch"
+            aria-checked={notifications[t.key]}
+            aria-label={t.label}
+            onClick={() => toggle(t.key)}
+          />
+        </div>
+      ))}
+      <div className="settings-row" style={{ borderBottom: 'none' }}>
+        <div>
+          <div className="desc">
+            Preferences are saved to your profile and synced across your devices. Email and SMS
+            delivery is configured by your administrator.
+          </div>
+        </div>
+      </div>
+      {canManageSchedule ? <ActivityDigestEditor /> : null}
+      {canManageSchedule ? <ReminderScheduleEditor /> : null}
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Settings · Notifications — daily activity digest (admin)                    */
+/* -------------------------------------------------------------------------- */
+
+function ActivityDigestEditor() {
+  const [cfg, setCfg] = useState<ActivityDigestConfigView | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [enabled, setEnabled] = useState(false);
+  const [recipient, setRecipient] = useState('');
+  const [recipientError, setRecipientError] = useState<string | null>(null);
+  const [saving, startSave] = useTransition();
+  const [sending, startSend] = useTransition();
+
+  useEffect(() => {
+    let cancelled = false;
+    getActivityDigestConfig()
+      .then((c) => {
+        if (cancelled) return;
+        setCfg(c);
+        setEnabled(c.enabled);
+        setRecipient(c.recipient);
+      })
+      .catch(() => {
+        if (!cancelled) setLoadError('Could not load the digest settings.');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const save = () => {
+    setRecipientError(null);
+    startSave(async () => {
+      const res = await saveActivityDigestConfig({ enabled, recipient });
+      if (!res.ok) {
+        setRecipientError(res.errors.recipient ?? null);
+        toast.error(res.message);
+        return;
+      }
+      toast.success('Digest settings saved.');
+    });
+  };
+
+  const sendTest = () => {
+    startSend(async () => {
+      const res = await sendActivityDigestNow();
+      if (!res.ok) {
+        toast.error(res.message);
+        return;
+      }
+      toast.success(`Digest sent (${res.count} event${res.count === 1 ? '' : 's'}).`);
+    });
+  };
+
+  if (loadError) {
+    return (
+      <div style={{ padding: '8px 18px 18px', color: 'var(--text-muted)', fontSize: 13 }}>
+        {loadError}
+      </div>
+    );
+  }
+  if (!cfg) {
+    return (
+      <div style={{ padding: '8px 18px 18px', color: 'var(--text-muted)', fontSize: 13 }}>
+        Loading digest settings…
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ padding: '8px 18px 18px', borderTop: '1px solid var(--border)' }}>
+      <div className="label" style={{ marginBottom: 2 }}>
+        Daily activity digest
+      </div>
+      <div className="desc" style={{ marginBottom: 10 }}>
+        Email a summary of the last 24 hours of activity to a recipient once a day (driven by the
+        scheduled job).
+      </div>
+      {!cfg.emailReady ? (
+        <div
+          className="desc"
+          style={{
+            color: 'var(--apar-red)',
+            background: 'var(--apar-red-soft)',
+            borderRadius: 8,
+            padding: '8px 10px',
+            marginBottom: 10,
+          }}
+        >
+          {cfg.emailError ?? 'Email provider is not configured.'} Add it to .env.local to enable
+          sending.
+        </div>
+      ) : null}
+      <div className="settings-row" style={{ padding: '10px 0' }}>
+        <div>
+          <div className="label">Enable daily digest</div>
+          <div className="desc">Turn the scheduled email on or off.</div>
+        </div>
+        <button
+          type="button"
+          className={`toggle ${enabled ? 'on' : ''}`}
+          role="switch"
+          aria-checked={enabled}
+          aria-label="Enable daily digest"
+          onClick={() => setEnabled((v) => !v)}
+        />
+      </div>
+      <div className="settings-row" style={{ padding: '10px 0' }}>
+        <div>
+          <div className="label">Recipient</div>
+          <div className="desc">Where the digest is sent.</div>
+          {recipientError ? (
+            <div className="desc" style={{ color: 'var(--apar-red)' }}>
+              {recipientError}
+            </div>
+          ) : null}
+        </div>
+        <input
+          className="input"
+          type="email"
+          style={{ maxWidth: 240 }}
+          value={recipient}
+          maxLength={200}
+          placeholder="company@example.com"
+          aria-label="Digest recipient"
+          onChange={(e) => setRecipient(e.target.value)}
+        />
+      </div>
+      <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+        <button className="btn primary" type="button" onClick={save} disabled={saving}>
+          {saving ? 'Saving…' : 'Save'}
+        </button>
+        <button
+          className="btn"
+          type="button"
+          onClick={sendTest}
+          disabled={sending || !cfg.emailReady}
+          title={
+            cfg.emailReady ? 'Send the digest now to the saved recipient' : (cfg.emailError ?? '')
+          }
+        >
+          {sending ? 'Sending…' : 'Send test now'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+type ReminderRuleDraft = { offset_days: number; template: string; channel: 'email' | 'sms' };
+
+function ReminderScheduleEditor() {
+  const [schedule, setSchedule] = useState<GlobalReminderSchedule | null>(null);
+  const [rules, setRules] = useState<ReminderRuleDraft[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [saving, startSave] = useTransition();
+
+  useEffect(() => {
+    let cancelled = false;
+    getGlobalReminderSchedule()
+      .then((s) => {
+        if (cancelled) return;
+        setSchedule(s);
+        setRules(s.rules.map((r) => ({ ...r })));
+      })
+      .catch(() => {
+        if (!cancelled) setLoadError('Could not load the reminder schedule.');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const updateRule = (i: number, patch: Partial<ReminderRuleDraft>) => {
+    setRules((prev) => prev.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
+  };
+  const addRule = () =>
+    setRules((prev) => [
+      ...prev,
+      { offset_days: 0, template: 'Payment reminder', channel: 'email' },
+    ]);
+  const removeRule = (i: number) => setRules((prev) => prev.filter((_, idx) => idx !== i));
+
+  const save = () => {
+    const clean = rules
+      .map((r) => ({ ...r, template: r.template.trim() }))
+      .filter((r) => r.template.length > 0);
+    if (clean.length === 0) {
+      toast.error('Add at least one reminder rule with a message.');
+      return;
+    }
+    startSave(async () => {
+      try {
+        await saveGlobalReminderSchedule({ rules: clean });
+        toast.success('Reminder schedule saved.');
+        setRules(clean.map((r) => ({ ...r })));
+      } catch {
+        toast.error('Could not save the reminder schedule.');
+      }
+    });
+  };
+
+  if (loadError) {
+    return (
+      <div style={{ padding: '8px 18px 18px', color: 'var(--text-muted)', fontSize: 13 }}>
+        {loadError}
+      </div>
+    );
+  }
+  if (!schedule) {
+    return (
+      <div style={{ padding: '8px 18px 18px', color: 'var(--text-muted)', fontSize: 13 }}>
+        Loading schedule…
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ padding: '8px 18px 18px', borderTop: '1px solid var(--border)' }}>
+      <div className="label" style={{ marginBottom: 2 }}>
+        Invoice reminder schedule
+      </div>
+      <div className="desc" style={{ marginBottom: 12 }}>
+        Org-wide default dunning rules. Offset is days from the due date (negative = before, 0 = on
+        the due date). These drive the automated reminder job.
+      </div>
+      {rules.length === 0 ? (
+        <div className="desc" style={{ marginBottom: 10 }}>
+          No rules yet — add one below.
+        </div>
+      ) : null}
+      {rules.map((r, i) => (
+        <div
+          key={i}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            marginBottom: 8,
+            flexWrap: 'wrap',
+          }}
+        >
+          <input
+            className="input"
+            type="number"
+            style={{ width: 76 }}
+            value={r.offset_days}
+            min={-365}
+            max={365}
+            aria-label="Offset days"
+            onChange={(e) => updateRule(i, { offset_days: Number(e.target.value) })}
+          />
+          <span className="desc" style={{ margin: 0 }}>
+            days
+          </span>
+          <input
+            className="input"
+            style={{ flex: 1, minWidth: 160 }}
+            value={r.template}
+            maxLength={120}
+            placeholder="Message / template name"
+            aria-label="Template"
+            onChange={(e) => updateRule(i, { template: e.target.value })}
+          />
+          <select
+            className="input"
+            style={{ width: 96 }}
+            value={r.channel}
+            aria-label="Channel"
+            onChange={(e) => updateRule(i, { channel: e.target.value as 'email' | 'sms' })}
+          >
+            <option value="email">Email</option>
+            <option value="sms">SMS</option>
+          </select>
+          <button
+            className="btn"
+            type="button"
+            onClick={() => removeRule(i)}
+            aria-label="Remove rule"
+          >
+            Remove
+          </button>
+        </div>
+      ))}
+      <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+        <button className="btn" type="button" onClick={addRule}>
+          Add rule
+        </button>
+        <button className="btn primary" type="button" onClick={save} disabled={saving}>
+          {saving ? 'Saving…' : 'Save schedule'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Settings · Security                                                        */
+/* -------------------------------------------------------------------------- */
+
+function SecurityPanel({ onSignOut }: { onSignOut?: () => void }) {
+  const [security, setSecurity] = useState<MySecurity | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    getMySecurity()
+      .then((s) => {
+        if (!cancelled) setSecurity(s);
+      })
+      .catch(() => {
+        if (!cancelled) setLoadError('Could not load your security details.');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (loadError) {
+    return <div style={{ padding: 24, color: 'var(--text-muted)', fontSize: 13 }}>{loadError}</div>;
+  }
+  if (!security) {
+    return (
+      <div style={{ padding: 24, color: 'var(--text-muted)', fontSize: 13 }}>Loading security…</div>
+    );
+  }
+
+  return (
+    <div>
+      <div className="settings-row">
+        <div>
+          <div className="label">Role</div>
+          <div className="desc">Your access level in the workspace.</div>
+        </div>
+        <span className="badge">{ROLE_LABELS[security.role] ?? security.role}</span>
+      </div>
+      <div className="settings-row" style={{ alignItems: 'flex-start' }}>
+        <div>
+          <div className="label">What you can do</div>
+          <div className="desc">Permissions granted by your role.</div>
+        </div>
+        <div
+          style={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            gap: 6,
+            maxWidth: 360,
+            justifyContent: 'flex-end',
+          }}
+        >
+          {security.capabilities.length === 0 ? (
+            <span className="desc" style={{ margin: 0 }}>
+              No special permissions.
+            </span>
+          ) : (
+            security.capabilities.map((c) => (
+              <span key={c.key} className="badge" style={{ fontWeight: 400 }}>
+                {c.label}
+              </span>
+            ))
+          )}
+        </div>
+      </div>
+      <div className="settings-row" style={{ alignItems: 'flex-start' }}>
+        <div style={{ flex: 1 }}>
+          <div className="label">Recent account activity</div>
+          <div className="desc">Your last actions across the workspace.</div>
+          <div style={{ marginTop: 8 }}>
+            {security.recentActivity.length === 0 ? (
+              <div className="desc" style={{ margin: 0 }}>
+                No recent activity recorded.
+              </div>
+            ) : (
+              security.recentActivity.slice(0, 10).map((a) => (
+                <div
+                  key={a.id}
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    gap: 12,
+                    fontSize: 12,
+                    padding: '4px 0',
+                    borderBottom: '1px solid var(--border)',
+                  }}
+                >
+                  <span style={{ color: 'var(--text)' }}>
+                    {a.action} · {a.entityType}
+                  </span>
+                  <span style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                    {new Date(a.createdAt).toLocaleString()}
+                  </span>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      </div>
+      <div className="settings-row">
+        <div>
+          <div className="label">Password &amp; two-factor</div>
+          <div className="desc">
+            Managed by your sign-in provider — available once SSO login is enabled.
+          </div>
+        </div>
+        <button className="btn" type="button" disabled title="Available with the sign-in system.">
+          Manage
+        </button>
+      </div>
+      {onSignOut ? (
+        <div className="settings-row">
+          <div>
+            <div className="label">Sign out</div>
+            <div className="desc">End your session on this device.</div>
+          </div>
+          <button className="btn" type="button" onClick={onSignOut}>
+            Sign out
+          </button>
+        </div>
+      ) : null}
+    </div>
   );
 }

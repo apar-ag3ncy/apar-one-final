@@ -84,6 +84,8 @@ const CreateInvoiceInputSchema = z.object({
   capturedTaxSplit: TaxSplitSchema.optional(),
   terms: z.string().trim().max(4000).nullish(),
   notes: z.string().trim().max(4000).nullish(),
+  /** Selected invoice theme (visual skin for the generated PDF). */
+  themeId: z.string().uuid().nullish(),
   /** Caller-supplied idempotency key. Same key returns the same invoice id. */
   idempotencyKey: z.string().trim().min(8).max(200),
   lines: z.array(InvoiceLineInputSchema).min(1, 'Invoice must have at least one line.'),
@@ -168,6 +170,7 @@ async function insertDraftInvoice(
       capturedTaxSplit: serialiseTaxSplit(v.capturedTaxSplit),
       terms: v.terms ?? null,
       notes: v.notes ?? null,
+      themeId: v.themeId ?? null,
       idempotencyKey: v.idempotencyKey,
       validationFlags: validationFlagsToStore as unknown as object[],
       createdBy: userId,
@@ -255,6 +258,7 @@ export async function updateDraftInvoice(
       patch.capturedTaxSplit = serialiseTaxSplit(v.capturedTaxSplit);
     if (v.terms !== undefined) patch.terms = v.terms ?? null;
     if (v.notes !== undefined) patch.notes = v.notes ?? null;
+    if (v.themeId !== undefined) patch.themeId = v.themeId ?? null;
 
     // Re-derive a full snapshot for validation by merging the patch
     // over the current row (and the new lines if supplied).

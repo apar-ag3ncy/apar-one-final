@@ -21,6 +21,7 @@ export type Client = {
   status: ClientStatus;
   priority: ClientPriority;
   accountManager: string;
+  accountManagerId?: string | null;
   gstin: string | null;
   pan: string | null;
   city: string;

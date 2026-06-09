@@ -10,6 +10,7 @@
 import { useEffect, useMemo, useState } from 'react';
 
 import { StatementOfAccount } from '@/components/entity/statement-of-account';
+import { exportSlug } from '@/lib/client/export-rows';
 import { getClientStatement, type Statement } from '@/lib/server/ledger/statements';
 import { getClient } from '@/lib/server-stub/entity-actions';
 import { osActions } from '@/lib/os/store';
@@ -117,6 +118,7 @@ export function ClientLedgerWindow({ clientId }: { clientId: string }) {
           noun="ledger entries"
           balanceMeaning="Positive = client owes us (Trade Receivables 1200)"
           rangeLabel={`${fromDate} → ${toDate}`}
+          exportName={`client-ledger-${exportSlug(clientName || clientId)}-${fromDate}_to_${toDate}`}
           onSelectTransaction={(txnId) =>
             osActions.openWindow({
               app: 'transactions',

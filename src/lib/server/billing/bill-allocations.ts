@@ -98,10 +98,7 @@ export async function allocateVendorPayment(args: {
         throw new AppError('not_found', `bill txn ${a.billTxnId} not found`);
       }
       if (bill.kind !== 'vendor_bill') {
-        throw new AppError(
-          'validation',
-          `txn ${a.billTxnId} is ${bill.kind}, not vendor_bill`,
-        );
+        throw new AppError('validation', `txn ${a.billTxnId} is ${bill.kind}, not vendor_bill`);
       }
       if (bill.status !== 'posted') {
         throw new AppError(
@@ -247,7 +244,13 @@ export async function fifoAllocateVendorPayment(args: {
       ORDER BY t.txn_date ASC, t.created_at ASC
     `);
 
-    const allocs: { vendorPaymentTxnId: string; billTxnId: string; amountPaise: bigint; createdBy: string; updatedBy: string }[] = [];
+    const allocs: {
+      vendorPaymentTxnId: string;
+      billTxnId: string;
+      amountPaise: bigint;
+      createdBy: string;
+      updatedBy: string;
+    }[] = [];
     for (const r of Array.isArray(bills) ? bills : []) {
       if (remaining <= 0n) break;
       const outstanding = BigInt(r.outstanding ?? '0');

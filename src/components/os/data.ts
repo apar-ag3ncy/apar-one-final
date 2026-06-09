@@ -1,6 +1,6 @@
 // Fake data for Apār One demo. Mirrors data.jsx from the design bundle.
 
-import type { AppDef, Client, Employee, InboxDoc, Project, Report, Vendor } from './types';
+import type { AppDef, Client, Employee, InboxDoc, Project, Vendor } from './types';
 
 export const APPS: readonly AppDef[] = [
   { id: 'clients', name: 'Clients', icon: 'building', size: { w: 880, h: 580 }, accent: '#E63A1F' },
@@ -377,78 +377,3 @@ export const INBOX_DOCS: readonly InboxDoc[] = [
 // in Phase 1 per the brownfield kickoff. Real ledger data will arrive via
 // B's `<TransactionList>` against A's `transactions` / `postings` tables
 // (LEDGER-SPEC §0.1 + §5). No more fake transaction fixtures in the OS.
-
-export const REPORTS: readonly Report[] = [
-  {
-    id: 'r1',
-    label: 'AR Aging',
-    value: '₹ 86.4L',
-    trend: '+12.4% vs Apr',
-    spark: [12, 18, 16, 22, 28, 26, 34, 40, 42, 48],
-    color: '#E63A1F',
-  },
-  {
-    id: 'r2',
-    label: 'AP Aging',
-    value: '₹ 42.1L',
-    trend: '-4.2% vs Apr',
-    spark: [38, 36, 34, 30, 32, 28, 26, 24, 22, 20],
-    color: '#5B6677',
-  },
-  {
-    id: 'r3',
-    label: 'Cash Flow',
-    value: '₹ 1.2Cr',
-    trend: '+8.1% MoM',
-    spark: [10, 14, 12, 18, 20, 24, 26, 30, 32, 38],
-    color: '#2E8F5A',
-  },
-  {
-    id: 'r4',
-    label: 'Revenue YTD',
-    value: '₹ 14.8Cr',
-    trend: '+22% YoY',
-    spark: [4, 6, 9, 12, 14, 18, 22, 26, 30, 38],
-    color: '#E63A1F',
-  },
-  {
-    id: 'r5',
-    label: 'Project Margin',
-    value: '38.2%',
-    trend: '+3.4 pts',
-    spark: [22, 24, 26, 28, 30, 32, 34, 36, 37, 38],
-    color: '#7A4E2D',
-  },
-  {
-    id: 'r6',
-    label: 'WIP — Unbilled',
-    value: '₹ 24.7L',
-    trend: '+1.8L vs Apr',
-    spark: [8, 10, 12, 14, 16, 18, 20, 22, 23, 24],
-    color: '#D08A1E',
-  },
-  {
-    id: 'r7',
-    label: 'Employee Utilisation',
-    value: '76%',
-    trend: '+2% MoM',
-    spark: [60, 62, 64, 66, 68, 70, 72, 74, 75, 76],
-    color: '#9B3826',
-  },
-  {
-    id: 'r8',
-    label: 'Top Client Share',
-    value: 'Tanishq 24%',
-    trend: '-1% MoM',
-    spark: [28, 28, 27, 27, 27, 26, 26, 25, 25, 24],
-    color: '#B5391E',
-  },
-  {
-    id: 'r9',
-    label: 'Vendor Spend',
-    value: '₹ 38.6L',
-    trend: '+6% vs Apr',
-    spark: [20, 22, 24, 26, 28, 30, 32, 33, 35, 38],
-    color: '#1A1411',
-  },
-];

@@ -64,7 +64,14 @@ export type EntitySettingsSectionProps = {
   entityId: string;
   entityName: string;
   isArchived: boolean;
+  /** Called after archive/restore — caller should refetch the entity. */
   onChanged?: () => void;
+  /**
+   * Called after a successful HARD delete. The row no longer exists, so the
+   * caller must NOT refetch it (that throws not_found) — close the window
+   * instead. Falls back to `onChanged` when omitted.
+   */
+  onDeleted?: () => void;
 };
 
 export function EntitySettingsSection({
@@ -73,6 +80,7 @@ export function EntitySettingsSection({
   entityName,
   isArchived,
   onChanged,
+  onDeleted,
 }: EntitySettingsSectionProps) {
   const { user, hasCapability } = useCurrentUser();
   const isPartner = user?.role === 'partner';
@@ -120,7 +128,10 @@ export function EntitySettingsSection({
     try {
       await callHardDelete(kind, entityId);
       setDeleteOpen(false);
-      onChanged?.();
+      // The row is gone — close the window rather than refetch (which would
+      // throw not_found). Fall back to onChanged if no onDeleted handler.
+      if (onDeleted) onDeleted();
+      else onChanged?.();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Delete failed');
     } finally {

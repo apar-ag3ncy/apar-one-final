@@ -116,7 +116,7 @@ export function SalaryRunWizardClient({
               Lines auto-populate from each employee&apos;s active salary structure version.
               Override any cell — the row recalculates net pay.
             </p>
-            <Button variant="outline" size="sm">
+            <Button variant="outline" size="sm" disabled title="CSV import — coming soon.">
               Upload consolidated sheet (CSV)
             </Button>
           </div>

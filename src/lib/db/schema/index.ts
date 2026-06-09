@@ -40,6 +40,7 @@ export * from './role_capabilities';
 
 // User-facing state
 export * from './user_table_preferences';
+export * from './user_preferences';
 
 // Audit
 export * from './audit_log';
@@ -62,9 +63,13 @@ export * from './attendance';
 // Office expenses (lightweight system-of-record for everyday outflows)
 export * from './office_expenses';
 
+// Department registry (managed taxonomy for the Employees module)
+export * from './departments';
+
 // Billing module (Phase 1)
 export * from './service_items';
 export * from './party_billing_profiles';
+export * from './invoice_themes';
 export * from './invoices';
 export * from './invoice_lines';
 export * from './estimates';

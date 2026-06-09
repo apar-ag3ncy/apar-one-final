@@ -16,6 +16,7 @@
 import { useEffect, useState } from 'react';
 
 import {
+  getTransaction,
   listClients as listDbClients,
   listEmployees as listDbEmployees,
   listProjects as listDbProjects,
@@ -136,15 +137,15 @@ export function useVendor(id: string | undefined): Result<DashVendor | null> {
 }
 
 /**
- * Single transaction with postings + flags + source-document ids.
- *
- * TODO(human): no `getTransaction(id)` server action yet — Transaction
- * detail window currently relies on whatever the parent passed. Once the
- * backend lands, swap this body to fetch by id.
+ * Single transaction with its double-entry postings (joined to the chart of
+ * accounts) + source-document ids. Backed by `getTransaction` against the
+ * real ledger tables.
  */
 export function useTransaction(id: string | undefined): Result<TransactionDetailData | null> {
-  if (!id) return ok<TransactionDetailData | null>(null);
-  return ok<TransactionDetailData | null>(null);
+  return useAsync(async () => {
+    if (!id) return null;
+    return await getTransaction(id);
+  }, [id]);
 }
 
 /**

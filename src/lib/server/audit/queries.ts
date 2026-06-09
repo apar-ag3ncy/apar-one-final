@@ -107,7 +107,9 @@ export async function listAuditLog(filter: AuditFilter = {}): Promise<readonly A
   );
 }
 
-export async function listActivityLog(filter: AuditFilter = {}): Promise<readonly ActivityLogRow[]> {
+export async function listActivityLog(
+  filter: AuditFilter = {},
+): Promise<readonly ActivityLogRow[]> {
   await getActorContext();
   const limit = Math.min(filter.limit ?? DEFAULT_LIMIT, 200);
   const conds = [] as Array<ReturnType<typeof eq>>;

@@ -28,9 +28,13 @@ import { useRealtimeActivity } from '@/lib/client/use-realtime-activity';
 import { getEntityActivity } from '@/lib/server/entities/activity';
 import { listContacts, type ContactRow } from '@/lib/server/entities/contacts';
 import { getEmployeeSummary, type EmployeeSummary } from '@/lib/server/entities/employee-summary';
+import { listEmployees } from '@/lib/server-stub/entity-actions';
 import { Icon } from '../icons';
+import { EmployeeProfileEditor } from '../apps';
 import { osActions } from '@/lib/os/store';
 import { navigateBesideFocused } from './navigate';
+
+type RosterEntry = { id: string; name: string; reportsTo: string | null };
 
 function openDocumentBeside(documentId: string) {
   osActions.openWindow({
@@ -42,6 +46,7 @@ function openDocumentBeside(documentId: string) {
 
 export type EmployeeWindowProps = {
   employeeId: string;
+  onClose?: () => void;
 };
 
 type State =
@@ -49,19 +54,24 @@ type State =
   | { kind: 'error'; message: string }
   | { kind: 'ready'; summary: EmployeeSummary; contacts: readonly ContactRow[] };
 
-export function EmployeeWindow({ employeeId }: EmployeeWindowProps) {
+export function EmployeeWindow({ employeeId, onClose }: EmployeeWindowProps) {
   const [state, setState] = useState<State>({ kind: 'loading' });
   const [tab, setTab] = useState<string>('overview');
   const [reloadKey, setReloadKey] = useState(0);
+  const [roster, setRoster] = useState<readonly RosterEntry[]>([]);
+  const [editing, setEditing] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     Promise.all([
       getEmployeeSummary(employeeId),
       listContacts({ entityType: 'employee', entityId: employeeId }),
+      listEmployees(),
     ])
-      .then(([summary, contacts]) => {
-        if (!cancelled) setState({ kind: 'ready', summary, contacts });
+      .then(([summary, contacts, all]) => {
+        if (cancelled) return;
+        setState({ kind: 'ready', summary, contacts });
+        setRoster(all.map((e) => ({ id: e.id, name: e.fullName, reportsTo: e.reportsTo })));
       })
       .catch((e: unknown) => {
         if (cancelled) return;
@@ -92,7 +102,15 @@ export function EmployeeWindow({ employeeId }: EmployeeWindowProps) {
 
   const { summary, contacts } = state;
   const { employee, kpis, projectsLed, achievements } = summary;
-  const isArchived = employee.status === 'separated';
+  // Archive lifecycle is the `is_archived` boolean — independent of the
+  // `separated` employment status (you can archive an active employee, and
+  // a separated employee may not be archived).
+  const isArchived = employee.isArchived;
+
+  const manager = employee.reportsToEmployeeId
+    ? (roster.find((r) => r.id === employee.reportsToEmployeeId) ?? null)
+    : null;
+  const directReports = roster.filter((r) => r.reportsTo === employee.id);
 
   const tabDefs: ReadonlyArray<{ value: string; label: string; count?: number }> = [
     { value: 'overview', label: 'Overview' },
@@ -111,7 +129,7 @@ export function EmployeeWindow({ employeeId }: EmployeeWindowProps) {
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-      <Header employee={employee} />
+      <Header employee={employee} onEdit={() => setEditing(true)} />
       <div className="tabs">
         {tabDefs.map((t) => (
           <div
@@ -135,7 +153,14 @@ export function EmployeeWindow({ employeeId }: EmployeeWindowProps) {
         ))}
       </div>
       <div style={{ flex: 1, overflow: 'auto', padding: 20 }}>
-        {tab === 'overview' ? <OverviewBody employee={employee} kpis={kpis} /> : null}
+        {tab === 'overview' ? (
+          <OverviewBody
+            employee={employee}
+            kpis={kpis}
+            manager={manager}
+            directReports={directReports}
+          />
+        ) : null}
         {tab === 'contacts' ? (
           <ContactsSection
             entityType="employee"
@@ -193,9 +218,24 @@ export function EmployeeWindow({ employeeId }: EmployeeWindowProps) {
             entityName={employee.fullName}
             isArchived={isArchived}
             onChanged={() => setReloadKey((k) => k + 1)}
+            onDeleted={onClose}
           />
         ) : null}
       </div>
+      {editing ? (
+        <EmployeeProfileEditor
+          mode="edit"
+          employeeId={employee.id}
+          roster={roster
+            .filter((r) => r.id !== employee.id)
+            .map((r) => ({ id: r.id, name: r.name }))}
+          onClose={() => setEditing(false)}
+          onSaved={() => {
+            setEditing(false);
+            setReloadKey((k) => k + 1);
+          }}
+        />
+      ) : null}
     </div>
   );
 }
@@ -204,7 +244,13 @@ export function EmployeeWindow({ employeeId }: EmployeeWindowProps) {
 /* Header                                                                      */
 /* -------------------------------------------------------------------------- */
 
-function Header({ employee }: { employee: EmployeeSummary['employee'] }) {
+function Header({
+  employee,
+  onEdit,
+}: {
+  employee: EmployeeSummary['employee'];
+  onEdit: () => void;
+}) {
   return (
     <header
       style={{
@@ -246,6 +292,10 @@ function Header({ employee }: { employee: EmployeeSummary['employee'] }) {
       >
         {employee.status}
       </span>
+      <button className="btn" type="button" onClick={onEdit} title="Edit profile">
+        <Icon name="edit" size={13} />
+        Edit profile
+      </button>
     </header>
   );
 }
@@ -257,10 +307,18 @@ function Header({ employee }: { employee: EmployeeSummary['employee'] }) {
 function OverviewBody({
   employee,
   kpis,
+  manager,
+  directReports,
 }: {
   employee: EmployeeSummary['employee'];
   kpis: EmployeeSummary['kpis'];
+  manager: RosterEntry | null;
+  directReports: readonly RosterEntry[];
 }) {
+  const fmtDate = (d: string | null) =>
+    d
+      ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
+      : '—';
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       <div
@@ -277,20 +335,68 @@ function OverviewBody({
           trend="approved / applied"
         />
         <Kpi label="Reimbursements pending" value={kpis.reimbursementsPending} />
-        <Kpi label="Documents" value={kpis.documentsCount} />
+        <Kpi label="Direct reports" value={directReports.length} />
       </div>
       <Card title="Profile">
         <DetailGrid
           items={[
+            ['Display name', employee.displayName ?? '—'],
             ['Designation', employee.designation ?? '—'],
             ['Department', employee.department ?? '—'],
             ['Employment type', employee.employmentType.replace('_', ' ')],
+            ['Contract', employee.contractStatus],
             ['Work email', employee.workEmail ?? '—'],
+            ['Personal email', employee.personalEmail ?? '—'],
             ['Phone', employee.phone ?? '—'],
+            ['Joined on', fmtDate(employee.joinedOn)],
+            ['Confirmed on', fmtDate(employee.confirmedOn)],
+            ['Separated on', fmtDate(employee.separatedOn)],
+            ['Notice period', employee.noticePeriodDays ?? '—'],
             ['PAN', employee.maskedPan ?? '—'],
             ['Aadhaar', employee.maskedAadhaar ?? '—'],
           ]}
         />
+      </Card>
+      <Card title="Reporting">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, fontSize: 13 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ fontSize: 11, color: 'var(--text-muted)', minWidth: 88 }}>
+              Reports to
+            </span>
+            {manager ? (
+              <EntityRef
+                type="employee"
+                id={manager.id}
+                label={manager.name}
+                hideIcon
+                onNavigate={navigateBesideFocused}
+              />
+            ) : (
+              <span style={{ color: 'var(--text-muted)' }}>— No manager —</span>
+            )}
+          </div>
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+            <span style={{ fontSize: 11, color: 'var(--text-muted)', minWidth: 88, marginTop: 2 }}>
+              Direct reports
+            </span>
+            {directReports.length === 0 ? (
+              <span style={{ color: 'var(--text-muted)' }}>None</span>
+            ) : (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 12px' }}>
+                {directReports.map((r) => (
+                  <EntityRef
+                    key={r.id}
+                    type="employee"
+                    id={r.id}
+                    label={r.name}
+                    hideIcon
+                    onNavigate={navigateBesideFocused}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
       </Card>
     </div>
   );

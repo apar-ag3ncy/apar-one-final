@@ -8,7 +8,7 @@
 //   - DataTable: Client / Revenue / Direct cost / Gross margin / Margin %
 //   - Click a client row → opens that client's window beside-focused
 //     with the Transactions tab pre-selected
-//   - CSV export
+//   - CSV / Excel export
 //
 // Money rendered through formatINR (CLAUDE rule #1).
 
@@ -17,7 +17,9 @@ import { useEffect, useMemo, useState } from 'react';
 import { formatINR } from '@/components/shared/format-inr';
 import { getPerClientPnL } from '@/lib/server-stub/ledger-actions';
 import type { PerClientPnLRow } from '@/lib/server-stub/ledger-types';
+import { exportRows, paiseToRupees, type ExportFormat } from '@/lib/client/export-rows';
 import { navigateBesideFocused } from './navigate';
+import { OsExportButtons } from './report-window-kit';
 
 function currentFyDefaults(): { fromDate: string; toDate: string } {
   const today = new Date();
@@ -70,32 +72,30 @@ export function PerClientPnLWindow() {
     );
   }, [rows]);
 
-  function exportCsv() {
+  function handleExport(format: ExportFormat) {
     if (!rows) return;
-    const header = ['Client', 'Revenue', 'Direct Cost', 'Gross Margin', 'Margin %', 'Txns'].join(
-      ',',
-    );
-    const lines = rows.map((r) => {
-      const pct =
-        r.revenuePaise === 0n
-          ? ''
-          : `${(Number((r.grossMarginPaise * 10000n) / r.revenuePaise) / 100).toFixed(1)}%`;
-      return [
-        escapeCsv(r.clientName),
-        paiseToRupeeString(r.revenuePaise),
-        paiseToRupeeString(r.directCostPaise),
-        paiseToRupeeString(r.grossMarginPaise),
-        pct,
-        r.txnCount,
-      ].join(',');
-    });
-    const blob = new Blob([[header, ...lines].join('\n')], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `per-client-pnl-${fromDate}-${toDate}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+    const headers = ['Client', 'Revenue', 'Direct Cost', 'Gross Margin', 'Margin %', 'Txns'];
+    const marginPct = (margin: bigint, revenue: bigint): string =>
+      revenue === 0n ? '' : `${(Number((margin * 10000n) / revenue) / 100).toFixed(1)}%`;
+    const data: Record<string, string | number>[] = rows.map((r) => ({
+      Client: r.clientName,
+      Revenue: paiseToRupees(r.revenuePaise),
+      'Direct Cost': paiseToRupees(r.directCostPaise),
+      'Gross Margin': paiseToRupees(r.grossMarginPaise),
+      'Margin %': marginPct(r.grossMarginPaise, r.revenuePaise),
+      Txns: r.txnCount,
+    }));
+    if (totals) {
+      data.push({
+        Client: 'Totals',
+        Revenue: paiseToRupees(totals.revenue),
+        'Direct Cost': paiseToRupees(totals.cost),
+        'Gross Margin': paiseToRupees(totals.margin),
+        'Margin %': marginPct(totals.margin, totals.revenue),
+        Txns: totals.txns,
+      });
+    }
+    exportRows(data, headers, `per-client-pnl-${fromDate}-${toDate}`, format, 'Per-Client P&L');
   }
 
   function drillIntoClient(row: PerClientPnLRow) {
@@ -135,14 +135,7 @@ export function PerClientPnLWindow() {
         </div>
         <DateField label="From" value={fromDate} onChange={setFromDate} />
         <DateField label="To" value={toDate} onChange={setToDate} />
-        <button
-          type="button"
-          className="btn"
-          onClick={exportCsv}
-          disabled={!rows || rows.length === 0}
-        >
-          Export CSV
-        </button>
+        <OsExportButtons onExport={handleExport} disabled={!rows || rows.length === 0} />
       </header>
 
       <div style={{ flex: 1, overflow: 'auto' }}>
@@ -266,19 +259,4 @@ function DateField({
       />
     </label>
   );
-}
-
-function escapeCsv(s: string): string {
-  if (s.includes(',') || s.includes('"') || s.includes('\n')) {
-    return `"${s.replace(/"/g, '""')}"`;
-  }
-  return s;
-}
-
-function paiseToRupeeString(paise: bigint): string {
-  const negative = paise < 0n;
-  const abs = negative ? -paise : paise;
-  const whole = abs / 100n;
-  const rem = (abs % 100n).toString().padStart(2, '0');
-  return `${negative ? '-' : ''}${whole.toString()}.${rem}`;
 }

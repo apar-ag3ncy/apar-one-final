@@ -1,0 +1,429 @@
+'use client';
+
+import { useCallback, useEffect, useState } from 'react';
+import {
+  DownloadIcon,
+  FileTextIcon,
+  PaletteIcon,
+  PencilIcon,
+  PlusIcon,
+  StarIcon,
+  Trash2Icon,
+  UploadIcon,
+} from 'lucide-react';
+import { toast } from 'sonner';
+
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Checkbox } from '@/components/ui/checkbox';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Skeleton } from '@/components/ui/skeleton';
+import { EmptyState } from '@/components/shared/empty-state';
+import { StatusBadge, type StatusTone } from '@/components/shared/status-badge';
+import { InvoiceComposerDialog } from '@/components/entity/billing/invoice-composer';
+import { useCurrentUser } from '@/lib/client/use-current-user';
+import { formatINR } from '@/lib/money';
+import { listInvoices } from '@/lib/server/billing/invoices';
+import {
+  deleteInvoiceTheme,
+  listInvoiceThemes,
+  setDefaultTheme,
+  uploadDocxTheme,
+  type InvoiceThemeSummary,
+} from '@/lib/server/billing/invoice-themes';
+import { getDocumentSignedUrl } from '@/lib/server/entities/documents';
+
+type InvoiceRow = Awaited<ReturnType<typeof listInvoices>>['rows'][number];
+
+const STATE_TONE: Record<InvoiceRow['state'], StatusTone> = {
+  draft: 'neutral',
+  sent: 'info',
+  partially_paid: 'warning',
+  paid: 'success',
+  void: 'danger',
+};
+
+const STATE_LABEL: Record<InvoiceRow['state'], string> = {
+  draft: 'Draft',
+  sent: 'Sent',
+  partially_paid: 'Partially paid',
+  paid: 'Paid',
+  void: 'Void',
+};
+
+export type ClientInvoicesSectionProps = {
+  clientId: string;
+  clientName: string;
+};
+
+export function ClientInvoicesSection({ clientId, clientName }: ClientInvoicesSectionProps) {
+  const { hasCapability } = useCurrentUser();
+  const canCompose = hasCapability('create_invoice');
+  const canManageThemes = hasCapability('manage_invoice_themes');
+
+  const [rows, setRows] = useState<readonly InvoiceRow[] | null>(null);
+  const [themes, setThemes] = useState<InvoiceThemeSummary[]>([]);
+  const [error, setError] = useState<string | null>(null);
+
+  const [composerOpen, setComposerOpen] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [manageOpen, setManageOpen] = useState(false);
+
+  const reloadInvoices = useCallback(async () => {
+    const data = await listInvoices({ clientId });
+    setRows(data.rows);
+  }, [clientId]);
+
+  const reloadThemes = useCallback(async () => {
+    try {
+      setThemes(await listInvoiceThemes());
+    } catch {
+      // Theme list is non-critical for browsing invoices.
+    }
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([listInvoices({ clientId }), listInvoiceThemes().catch(() => [])])
+      .then(([inv, ths]) => {
+        if (cancelled) return;
+        setRows(inv.rows);
+        setThemes(ths);
+        setError(null);
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) setError(e instanceof Error ? e.message : 'Could not load invoices');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [clientId]);
+
+  const defaultThemeId = themes.find((t) => t.isDefault)?.id ?? null;
+
+  function openNew() {
+    setEditingId(null);
+    setComposerOpen(true);
+  }
+  function openEdit(id: string) {
+    setEditingId(id);
+    setComposerOpen(true);
+  }
+
+  async function downloadSent(row: InvoiceRow) {
+    if (!row.sourceDocumentId) {
+      toast.error('No PDF stored for this invoice yet.');
+      return;
+    }
+    try {
+      const { url } = await getDocumentSignedUrl(row.sourceDocumentId);
+      window.open(url, '_blank', 'noopener,noreferrer');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not get download URL');
+    }
+  }
+
+  if (error) {
+    return <EmptyState icon={FileTextIcon} title="Could not load invoices" description={error} />;
+  }
+  if (rows === null) {
+    return (
+      <div className="flex flex-col gap-3">
+        <Skeleton className="h-9 w-full max-w-[160px]" />
+        <Skeleton className="h-32 w-full" />
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between">
+          <CardTitle className="text-base">
+            Invoices{' '}
+            <span className="text-muted-foreground text-xs font-normal">({rows.length})</span>
+          </CardTitle>
+          <div className="flex items-center gap-2">
+            {canManageThemes ? (
+              <Button size="sm" variant="outline" onClick={() => setManageOpen(true)}>
+                <PaletteIcon className="mr-1.5 size-4" aria-hidden />
+                Manage themes
+              </Button>
+            ) : null}
+            {canCompose ? (
+              <Button size="sm" onClick={openNew}>
+                <PlusIcon className="mr-1.5 size-4" aria-hidden />
+                New invoice
+              </Button>
+            ) : null}
+          </div>
+        </CardHeader>
+        <CardContent className="p-0">
+          {rows.length === 0 ? (
+            <EmptyState
+              icon={FileTextIcon}
+              title="No invoices yet"
+              description={`Generate a themed GST invoice for ${clientName}, preview it, then save & download.`}
+            />
+          ) : (
+            <ul className="divide-y">
+              {rows.map((inv) => (
+                <li
+                  key={inv.id}
+                  className="hover:bg-muted/30 flex items-center justify-between gap-3 px-4 py-3"
+                >
+                  <div className="flex min-w-0 items-start gap-3">
+                    <FileTextIcon
+                      className="text-muted-foreground mt-0.5 size-4 shrink-0"
+                      aria-hidden
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2 text-sm font-medium">
+                        <span className="truncate">{inv.documentNumber}</span>
+                        <StatusBadge
+                          tone={STATE_TONE[inv.state]}
+                          label={STATE_LABEL[inv.state]}
+                          dot={false}
+                        />
+                      </div>
+                      <div className="text-muted-foreground mt-0.5 text-xs">
+                        {formatINR(inv.capturedTotalPaise)}
+                        {' · '}
+                        {inv.documentDate}
+                        {inv.dueDate ? ` · due ${inv.dueDate}` : ''}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-1">
+                    {inv.state === 'draft' && canCompose ? (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => openEdit(inv.id)}
+                        aria-label="Edit / preview draft"
+                      >
+                        <PencilIcon className="size-4" aria-hidden />
+                      </Button>
+                    ) : null}
+                    {inv.sourceDocumentId ? (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => void downloadSent(inv)}
+                        aria-label="Download invoice PDF"
+                      >
+                        <DownloadIcon className="size-4" aria-hidden />
+                      </Button>
+                    ) : null}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </CardContent>
+      </Card>
+
+      {canCompose ? (
+        <InvoiceComposerDialog
+          open={composerOpen}
+          onOpenChange={setComposerOpen}
+          clientId={clientId}
+          clientName={clientName}
+          themes={themes}
+          defaultThemeId={defaultThemeId}
+          existingInvoiceId={editingId}
+          onFinalized={() => {
+            void reloadInvoices();
+          }}
+        />
+      ) : null}
+
+      {canManageThemes ? (
+        <ManageThemesDialog
+          open={manageOpen}
+          onOpenChange={setManageOpen}
+          themes={themes}
+          onChanged={() => void reloadThemes()}
+        />
+      ) : null}
+    </>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Manage themes dialog                                                       */
+/* -------------------------------------------------------------------------- */
+
+function ManageThemesDialog({
+  open,
+  onOpenChange,
+  themes,
+  onChanged,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  themes: InvoiceThemeSummary[];
+  onChanged: () => void;
+}) {
+  const [file, setFile] = useState<File | null>(null);
+  const [name, setName] = useState('');
+  const [makeDefault, setMakeDefault] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    queueMicrotask(() => {
+      setFile(null);
+      setName('');
+      setMakeDefault(false);
+    });
+  }, [open]);
+
+  async function upload() {
+    if (!file) {
+      toast.error('Pick a .docx file first.');
+      return;
+    }
+    setBusy(true);
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      if (name.trim()) fd.append('name', name.trim());
+      if (makeDefault) fd.append('isDefault', 'true');
+      await uploadDocxTheme(fd);
+      toast.success('Theme imported from .docx.');
+      setFile(null);
+      setName('');
+      setMakeDefault(false);
+      onChanged();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not import theme');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function makeThemeDefault(id: string) {
+    try {
+      await setDefaultTheme(id);
+      toast.success('Default theme updated.');
+      onChanged();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not set default');
+    }
+  }
+
+  async function removeTheme(id: string) {
+    try {
+      await deleteInvoiceTheme(id);
+      toast.success('Theme deleted.');
+      onChanged();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not delete theme');
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => !busy && onOpenChange(v)}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Invoice themes</DialogTitle>
+          <DialogDescription>
+            Built-in themes plus any you import from a <code>.docx</code>. Brand colours, a font,
+            and the first embedded logo are pulled from the document and applied to the generated
+            PDF.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-3">
+          {/* Existing themes */}
+          <ul className="divide-y rounded-md border">
+            {themes.map((t) => (
+              <li key={t.id} className="flex items-center justify-between gap-2 px-3 py-2">
+                <div className="flex min-w-0 items-center gap-2">
+                  <span
+                    className="size-4 shrink-0 rounded-full border"
+                    style={{ background: t.primaryColor ?? 'var(--muted)' }}
+                    aria-hidden
+                  />
+                  <span className="truncate text-sm font-medium">{t.name}</span>
+                  <span className="text-muted-foreground text-xs">
+                    {t.kind === 'builtin' ? 'Built-in' : 'Imported'}
+                  </span>
+                  {t.isDefault ? <StatusBadge tone="success" label="Default" dot={false} /> : null}
+                </div>
+                <div className="flex shrink-0 items-center gap-1">
+                  {!t.isDefault ? (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => void makeThemeDefault(t.id)}
+                      aria-label="Set as default"
+                    >
+                      <StarIcon className="size-4" aria-hidden />
+                    </Button>
+                  ) : null}
+                  {t.kind === 'docx' && !t.isDefault ? (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => void removeTheme(t.id)}
+                      aria-label="Delete theme"
+                    >
+                      <Trash2Icon className="size-4" aria-hidden />
+                    </Button>
+                  ) : null}
+                </div>
+              </li>
+            ))}
+          </ul>
+
+          {/* Import a .docx */}
+          <div className="space-y-2 rounded-md border p-3">
+            <Label htmlFor="theme-file">Import theme from .docx</Label>
+            <Input
+              id="theme-file"
+              type="file"
+              accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+              disabled={busy}
+            />
+            <Input
+              placeholder="Theme name (optional — defaults to filename)"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              disabled={busy}
+            />
+            <label className="flex items-center gap-2 text-sm">
+              <Checkbox
+                checked={makeDefault}
+                onCheckedChange={(v) => setMakeDefault(v === true)}
+                disabled={busy}
+              />
+              Set as default theme
+            </label>
+            <Button size="sm" onClick={upload} disabled={busy || !file}>
+              <UploadIcon className="mr-1.5 size-4" aria-hidden />
+              {busy ? 'Importing…' : 'Import'}
+            </Button>
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>
+            Close
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}

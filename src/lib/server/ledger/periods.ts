@@ -53,7 +53,8 @@ export async function listPeriods(
   args: { fiscalYear?: number } = {},
   client: DbClient = db,
 ): Promise<PeriodRow[]> {
-  const whereExpr = args.fiscalYear !== undefined ? eq(periods.fiscalYear, args.fiscalYear) : undefined;
+  const whereExpr =
+    args.fiscalYear !== undefined ? eq(periods.fiscalYear, args.fiscalYear) : undefined;
   const rows = whereExpr
     ? await client
         .select()
@@ -121,7 +122,8 @@ export async function setPeriodStatus(
   }
 
   const transition = validateTransition(current.status, args.next);
-  const isReopen = transition.to === 'open' || transition.to === 'soft_closed' && transition.from === 'closed';
+  const isReopen =
+    transition.to === 'open' || (transition.to === 'soft_closed' && transition.from === 'closed');
 
   // Capability gate: reopens need `reopen_period`; closes need `close_period`.
   // Both throw via requireCapability — partners pass through.

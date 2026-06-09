@@ -6,17 +6,20 @@
  */
 
 .os-root {
-  /* Brand */
-  --apar-red: #e63a1f;
-  --apar-red-deep: #b82f19;
-  --apar-red-soft: #fce6df;
+  /* Brand — `--accent` is set per-user on `.os-root` (Settings ▸ Appearance).
+     The deep/soft shades derive from it so changing the accent recolours the
+     whole OS, not just the base swatch. Falls back to Apār Orange. */
+  --apar-red: var(--accent, #e63a1f);
+  --apar-red-deep: color-mix(in oklab, var(--apar-red) 80%, black);
+  --apar-red-soft: color-mix(in oklab, var(--apar-red) 14%, white);
 
   /* Single OS typeface — SF UI Display via the Apple system stack.
      The legacy `--font-inter`, `--font-khand`, `--font-jetbrains-mono`
      vars are overridden to the same stack so every existing reference
      (CSS rules + inline `style.fontFamily` in JSX) resolves here. */
-  --os-font: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF UI Display',
-    'Helvetica Neue', system-ui, sans-serif;
+  --os-font:
+    -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF UI Display', 'Helvetica Neue',
+    system-ui, sans-serif;
   --font-inter: var(--os-font);
   --font-khand: var(--os-font);
   --font-jetbrains-mono: var(--os-font);
@@ -37,10 +40,8 @@
   --border-strong: #d3c7bf;
   --hover: #f0e9e4;
   --active: #e9dfd8;
-  --shadow-active:
-    0 28px 60px -12px rgba(20, 8, 4, 0.45), 0 8px 18px -4px rgba(20, 8, 4, 0.22);
-  --shadow-idle:
-    0 18px 38px -16px rgba(20, 8, 4, 0.32), 0 4px 12px -4px rgba(20, 8, 4, 0.14);
+  --shadow-active: 0 28px 60px -12px rgba(20, 8, 4, 0.45), 0 8px 18px -4px rgba(20, 8, 4, 0.22);
+  --shadow-idle: 0 18px 38px -16px rgba(20, 8, 4, 0.32), 0 4px 12px -4px rgba(20, 8, 4, 0.14);
   --menubar-bg: rgba(248, 244, 241, 0.72);
   --menubar-border: rgba(20, 10, 6, 0.08);
   --dock-bg: rgba(248, 244, 241, 0.55);
@@ -60,8 +61,16 @@
   font-weight: 400;
   color: var(--text);
   background:
-    radial-gradient(120% 100% at 80% -10%, color-mix(in oklab, var(--apar-red) 18%, transparent), transparent 55%),
-    radial-gradient(80% 80% at 10% 110%, color-mix(in oklab, var(--bg-desktop-2) 80%, var(--apar-red) 8%), transparent 60%),
+    radial-gradient(
+      120% 100% at 80% -10%,
+      color-mix(in oklab, var(--apar-red) 18%, transparent),
+      transparent 55%
+    ),
+    radial-gradient(
+      80% 80% at 10% 110%,
+      color-mix(in oklab, var(--bg-desktop-2) 80%, var(--apar-red) 8%),
+      transparent 60%
+    ),
     linear-gradient(140deg, var(--bg-desktop-1), var(--bg-desktop-2) 50%, var(--bg-desktop-3));
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -82,10 +91,8 @@
   --border-strong: #4a3e3a;
   --hover: #2e2522;
   --active: #382d2a;
-  --shadow-active:
-    0 32px 64px -12px rgba(0, 0, 0, 0.7), 0 10px 24px -8px rgba(0, 0, 0, 0.5);
-  --shadow-idle:
-    0 18px 36px -16px rgba(0, 0, 0, 0.55), 0 4px 10px -4px rgba(0, 0, 0, 0.35);
+  --shadow-active: 0 32px 64px -12px rgba(0, 0, 0, 0.7), 0 10px 24px -8px rgba(0, 0, 0, 0.5);
+  --shadow-idle: 0 18px 36px -16px rgba(0, 0, 0, 0.55), 0 4px 10px -4px rgba(0, 0, 0, 0.35);
   --menubar-bg: rgba(18, 12, 10, 0.68);
   --menubar-border: rgba(255, 255, 255, 0.06);
   --dock-bg: rgba(24, 16, 14, 0.5);
@@ -462,7 +469,9 @@
   width: 1px;
   transform: translateX(-50%);
   background: var(--dock-border);
-  transition: background-color 140ms ease, width 140ms ease;
+  transition:
+    background-color 140ms ease,
+    width 140ms ease;
 }
 .os-root .dock-resizer:hover::before,
 .os-root .dock-resizer:active::before {
@@ -600,6 +609,13 @@
   display: flex;
   min-height: 0;
   background: var(--content);
+}
+/* Let the app content shrink to the window width. Without this, a flex child's
+   automatic min-width (min-content) lets a wide tab bar or card force the body
+   wider than the frame, and overflow:hidden then clips the right edge. */
+.os-root .window-body > * {
+  min-width: 0;
+  max-width: 100%;
 }
 .os-root .resize-handle {
   position: absolute;
@@ -834,6 +850,14 @@
   padding: 0 20px;
   border-bottom: 1px solid var(--border);
   background: var(--content-2);
+  /* When more tabs are present than fit the window (e.g. the Client window's
+     10 tabs in a narrow frame), scroll them horizontally instead of forcing
+     the whole window body wider — which clipped the right edge. */
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.os-root .tabs::-webkit-scrollbar {
+  height: 6px;
 }
 .os-root .tab {
   padding: 10px 12px;
@@ -841,6 +865,10 @@
   color: var(--text-muted);
   border-bottom: 2px solid transparent;
   cursor: default;
+  /* Keep each tab at its natural size and on one line so the bar scrolls
+     rather than cramming/wrapping the labels. */
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 .os-root .tab:hover {
   color: var(--text);
@@ -854,11 +882,14 @@
 /* Kanban */
 .os-root .kanban {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  /* Keep columns readable; the grid scrolls horizontally rather than squishing
+     them when the window is narrow. */
+  grid-template-columns: repeat(4, minmax(240px, 1fr));
   gap: 12px;
   padding: 16px 20px;
   overflow: auto;
   flex: 1;
+  min-height: 0;
 }
 .os-root .kanban-col {
   background: var(--content-2);
@@ -1241,6 +1272,43 @@
   color: var(--text-muted);
   margin-top: 2px;
 }
+.os-root input.input,
+.os-root select.input {
+  font-size: 12.5px;
+  font-weight: 500;
+  padding: 6px 11px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--content);
+  color: var(--text);
+}
+.os-root select.input {
+  cursor: pointer;
+}
+.os-root input.input:disabled,
+.os-root select.input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.os-root input.input:focus-visible,
+.os-root select.input:focus-visible {
+  outline: 2px solid var(--apar-red);
+  outline-offset: 1px;
+}
+/* Small status / role / capability chips used in Settings. */
+.os-root .badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11.5px;
+  font-weight: 500;
+  line-height: 1.4;
+  padding: 2px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--content-2);
+  color: var(--text);
+  white-space: nowrap;
+}
 .os-root .toggle {
   width: 38px;
   height: 22px;
@@ -1333,10 +1401,7 @@
 .os-root .att-cell.is-today-col {
   border-left: 3px solid var(--apar-red);
   border-right: 3px solid var(--apar-red);
-  background-image: linear-gradient(
-    rgba(230, 58, 31, 0.18),
-    rgba(230, 58, 31, 0.18)
-  );
+  background-image: linear-gradient(rgba(230, 58, 31, 0.18), rgba(230, 58, 31, 0.18));
   background-blend-mode: multiply;
 }
 
@@ -1397,7 +1462,9 @@
   font-size: 14px;
   line-height: 1;
   cursor: pointer;
-  transition: background-color 120ms ease, color 120ms ease;
+  transition:
+    background-color 120ms ease,
+    color 120ms ease;
 }
 .os-root .att-date-step:hover:not(:disabled) {
   background: var(--apar-red);
@@ -1448,17 +1515,26 @@
   -webkit-backdrop-filter: blur(3px);
   display: grid;
   place-items: center;
-  padding: 24px;
+  /* Smaller gutter so popups have more room inside compact windows. */
+  padding: 16px;
   z-index: 6000;
   animation: os-modal-fadein 160ms ease-out;
 }
 @keyframes os-modal-fadein {
-  from { opacity: 0; }
-  to { opacity: 1; }
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 .os-root .os-modal {
-  max-width: 92vw;
-  max-height: 84vh;
+  /* Sized relative to the overlay (which fills the host window), not the
+     viewport — so a popup always fits the app it opens in, shrinking on
+     narrow windows. The inline `width` is the preferred size; max-width caps
+     it to the available space. Tall content scrolls inside `.os-modal-body`. */
+  max-width: 100%;
+  max-height: 100%;
   background: var(--chrome);
   border: 1px solid var(--border-strong);
   border-radius: 14px;
@@ -1469,11 +1545,30 @@
   color: var(--text);
   animation: os-modal-pop 180ms cubic-bezier(0.2, 0.7, 0.3, 1.1);
 }
+/* Scrollable body so tall forms never clip; the head stays pinned. */
+.os-root .os-modal-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+/* Inside a scrollable modal body the form no longer owns the scroll. */
+.os-root .os-modal-body .os-form {
+  overflow: visible;
+}
 @keyframes os-modal-pop {
-  from { transform: translateY(-6px) scale(0.98); opacity: 0; }
-  to   { transform: translateY(0) scale(1); opacity: 1; }
+  from {
+    transform: translateY(-6px) scale(0.98);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+  }
 }
 .os-root .os-modal-head {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1526,7 +1621,9 @@
   font-size: 13px;
   font-family: inherit;
   outline: none;
-  transition: border-color 120ms ease, box-shadow 120ms ease;
+  transition:
+    border-color 120ms ease,
+    box-shadow 120ms ease;
 }
 .os-root .os-form input.font-mono,
 .os-root .os-form textarea.font-mono {
@@ -1637,7 +1734,9 @@
   align-items: center;
   gap: 6px;
   cursor: pointer;
-  transition: background 200ms ease, transform 200ms cubic-bezier(0.2, 0.7, 0.3, 1.4);
+  transition:
+    background 200ms ease,
+    transform 200ms cubic-bezier(0.2, 0.7, 0.3, 1.4);
 }
 .os-root .lock-screen__user:hover {
   background: rgba(255, 255, 255, 0.06);
@@ -1657,7 +1756,9 @@
   font-size: 16px;
   color: #fff;
   letter-spacing: 0.02em;
-  box-shadow: 0 10px 28px -8px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  box-shadow:
+    0 10px 28px -8px rgba(0, 0, 0, 0.55),
+    inset 0 1px 0 rgba(255, 255, 255, 0.35);
   border: 1px solid rgba(255, 255, 255, 0.18);
   overflow: hidden;
 }
@@ -1746,7 +1847,9 @@
   -webkit-backdrop-filter: blur(18px) saturate(180%);
   border: 1px solid rgba(255, 255, 255, 0.2);
   box-shadow: 0 8px 22px -8px rgba(0, 0, 0, 0.5);
-  transition: border-color 200ms, background 200ms;
+  transition:
+    border-color 200ms,
+    background 200ms;
 }
 .os-root .lock-screen__field:focus-within {
   border-color: rgba(255, 255, 255, 0.55);
@@ -1757,10 +1860,23 @@
   animation: os-shake 320ms cubic-bezier(0.36, 0.07, 0.19, 0.97);
 }
 @keyframes os-shake {
-  10%, 90% { transform: translateX(-1px); }
-  20%, 80% { transform: translateX(2px); }
-  30%, 50%, 70% { transform: translateX(-4px); }
-  40%, 60% { transform: translateX(4px); }
+  10%,
+  90% {
+    transform: translateX(-1px);
+  }
+  20%,
+  80% {
+    transform: translateX(2px);
+  }
+  30%,
+  50%,
+  70% {
+    transform: translateX(-4px);
+  }
+  40%,
+  60% {
+    transform: translateX(4px);
+  }
 }
 .os-root .lock-screen__field input {
   flex: 1;
@@ -1786,7 +1902,9 @@
   cursor: pointer;
   background: rgba(255, 255, 255, 0.85);
   color: #1a1411;
-  transition: background 160ms ease, transform 120ms ease;
+  transition:
+    background 160ms ease,
+    transform 120ms ease;
 }
 .os-root .lock-screen__submit:hover:not(:disabled) {
   background: #fff;
@@ -1902,7 +2020,9 @@
   place-items: center;
   border-radius: 6px;
   cursor: pointer;
-  transition: background 160ms ease, color 160ms ease;
+  transition:
+    background 160ms ease,
+    color 160ms ease;
 }
 .os-root .menubar-action:hover:not(:disabled) {
   background: var(--apar-red);
@@ -1922,7 +2042,6 @@
   color: var(--text-muted);
 }
 
-
 /* -------------------------------------------------------------------------- */
 /* CRUD affordances — row delete, kanban add, header dropdown                 */
 /* -------------------------------------------------------------------------- */
@@ -1938,7 +2057,8 @@
   color: var(--text);
   cursor: pointer;
   font-family: inherit;
-  background-image: linear-gradient(45deg, transparent 50%, var(--text-muted) 50%),
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--text-muted) 50%),
     linear-gradient(135deg, var(--text-muted) 50%, transparent 50%);
   background-position:
     calc(100% - 14px) 50%,
@@ -1966,7 +2086,10 @@
   padding: 3px 7px;
   min-height: 0;
   color: var(--text-muted);
-  transition: opacity 140ms ease, background 140ms ease, color 140ms ease,
+  transition:
+    opacity 140ms ease,
+    background 140ms ease,
+    color 140ms ease,
     border-color 140ms ease;
 }
 .os-root .row-with-actions:hover .row-delete,
@@ -1991,7 +2114,9 @@
   place-items: center;
   border-radius: 6px;
   cursor: pointer;
-  transition: background 140ms ease, color 140ms ease;
+  transition:
+    background 140ms ease,
+    color 140ms ease;
 }
 .os-root .kanban-col-add:hover {
   background: var(--apar-red);
@@ -2020,7 +2145,10 @@
   place-items: center;
   border-radius: 6px;
   cursor: pointer;
-  transition: background 140ms ease, color 140ms ease, border-color 140ms ease;
+  transition:
+    background 140ms ease,
+    color 140ms ease,
+    border-color 140ms ease;
 }
 .os-root .proj-card-btn:hover {
   background: var(--apar-red);
@@ -2036,7 +2164,11 @@
   padding: 3px 7px;
   min-height: 0;
   color: var(--text-muted);
-  transition: background 140ms ease, color 140ms ease, border-color 140ms ease, opacity 140ms ease;
+  transition:
+    background 140ms ease,
+    color 140ms ease,
+    border-color 140ms ease,
+    opacity 140ms ease;
 }
 .os-root .row-actions .row-action:hover {
   background: var(--hover);
@@ -2081,7 +2213,9 @@
   place-items: center;
   border-radius: 8px;
   cursor: pointer;
-  transition: background 140ms ease, color 140ms ease;
+  transition:
+    background 140ms ease,
+    color 140ms ease;
 }
 .os-root .emp-card-btn:hover {
   background: var(--hover);

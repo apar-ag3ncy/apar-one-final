@@ -22,13 +22,9 @@ import { journal } from '@/lib/server/ledger/postings/journal';
  *     ≤ 10¹² paise (~₹100 Cr).
  */
 
-const paiseArb = fc
-  .bigInt({ min: 1n, max: 10n ** 12n })
-  .filter((n) => n > 0n);
+const paiseArb = fc.bigInt({ min: 1n, max: 10n ** 12n }).filter((n) => n > 0n);
 
-const uuidArb = fc
-  .uuid()
-  .map((s) => s as string);
+const uuidArb = fc.uuid().map((s) => s as string);
 
 const isoDateArb = fc
   .date({ min: new Date('2025-04-01'), max: new Date('2027-03-31') })
@@ -79,7 +75,9 @@ describe('vendorBill template', () => {
       billDocumentId: '00000000-0000-4000-8000-000000000003',
       vendorInvoiceNumber: 'VB-001',
       txnDate: '2026-04-15',
-      lineItems: [{ description: 'photographer', amountPaise: 3000000n, gstAmountPaiseCaptured: 540000n }],
+      lineItems: [
+        { description: 'photographer', amountPaise: 3000000n, gstAmountPaiseCaptured: 540000n },
+      ],
       tdsAmountPaise: 60000n,
       tdsSection: '194C',
       isRcm: false,
@@ -101,7 +99,9 @@ describe('vendorBill template', () => {
       billDocumentId: '00000000-0000-4000-8000-000000000003',
       vendorInvoiceNumber: 'VB-002',
       txnDate: '2026-04-15',
-      lineItems: [{ description: 'figma seat', amountPaise: 50000n, gstAmountPaiseCaptured: 9000n }],
+      lineItems: [
+        { description: 'figma seat', amountPaise: 50000n, gstAmountPaiseCaptured: 9000n },
+      ],
       tdsAmountPaise: 0n,
       isRcm: false,
     });
@@ -116,7 +116,9 @@ describe('vendorBill template', () => {
       billDocumentId: '00000000-0000-4000-8000-000000000003',
       vendorInvoiceNumber: 'VB-003',
       txnDate: '2026-04-15',
-      lineItems: [{ description: 'laptop', amountPaise: 8000000n, gstAmountPaiseCaptured: 1440000n }],
+      lineItems: [
+        { description: 'laptop', amountPaise: 8000000n, gstAmountPaiseCaptured: 1440000n },
+      ],
       isRcm: false,
     });
     expect(r.postings.some((p) => p.accountCode === '1510' && p.side === 'debit')).toBe(true);
@@ -132,8 +134,18 @@ describe('journal template', () => {
         txnDate: '2026-04-01',
         journalReason: 'opening balance test',
         legs: [
-          { accountCode: '1120', side: 'debit', amountPaise: 100n, subledger: { entityType: 'office', entityId: '00000000-0000-4000-8000-000000000001' } },
-          { accountCode: '3100', side: 'credit', amountPaise: 200n, subledger: { entityType: 'office', entityId: '00000000-0000-4000-8000-000000000002' } },
+          {
+            accountCode: '1120',
+            side: 'debit',
+            amountPaise: 100n,
+            subledger: { entityType: 'office', entityId: '00000000-0000-4000-8000-000000000001' },
+          },
+          {
+            accountCode: '3100',
+            side: 'credit',
+            amountPaise: 200n,
+            subledger: { entityType: 'office', entityId: '00000000-0000-4000-8000-000000000002' },
+          },
         ],
         isOpeningBalance: true,
       }),
@@ -146,8 +158,18 @@ describe('journal template', () => {
       txnDate: '2026-04-01',
       journalReason: 'opening balance test',
       legs: [
-        { accountCode: '1120', side: 'debit', amountPaise: 1000000n, subledger: { entityType: 'office', entityId: '00000000-0000-4000-8000-000000000001' } },
-        { accountCode: '3100', side: 'credit', amountPaise: 1000000n, subledger: { entityType: 'office', entityId: '00000000-0000-4000-8000-000000000002' } },
+        {
+          accountCode: '1120',
+          side: 'debit',
+          amountPaise: 1000000n,
+          subledger: { entityType: 'office', entityId: '00000000-0000-4000-8000-000000000001' },
+        },
+        {
+          accountCode: '3100',
+          side: 'credit',
+          amountPaise: 1000000n,
+          subledger: { entityType: 'office', entityId: '00000000-0000-4000-8000-000000000002' },
+        },
       ],
       isOpeningBalance: true,
     });

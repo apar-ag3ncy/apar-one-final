@@ -15,6 +15,7 @@ import {
 import { auditColumns, timestamps } from './_shared';
 import { clients } from './clients';
 import { documents } from './documents';
+import { invoiceThemes } from './invoice_themes';
 import { projects } from './projects';
 import { transactions } from './transactions';
 
@@ -74,6 +75,11 @@ export const invoices = pgTable(
 
     terms: text(),
     notes: text(),
+
+    // Selected invoice theme (visual skin for the generated PDF). Nullable —
+    // resolved to the default theme at render time when unset. Set while the
+    // invoice is still a draft; the immutability trigger blocks edits after.
+    themeId: uuid().references(() => invoiceThemes.id, { onDelete: 'set null' }),
 
     idempotencyKey: text().notNull(),
     sentAt: timestamp({ withTimezone: true }),

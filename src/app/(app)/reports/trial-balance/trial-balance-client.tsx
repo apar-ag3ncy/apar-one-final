@@ -11,6 +11,7 @@ import {
 import { StatusBadge } from '@/components/shared/status-badge';
 import { formatINR } from '@/components/shared/format-inr';
 import { ReportShell } from '@/components/shared/report-shell';
+import { exportRows, paiseToRupees, type ExportFormat } from '@/lib/client/export-rows';
 import type { TrialBalanceRow } from '@/lib/server-stub/ledger-types';
 
 export function TrialBalanceClient({
@@ -26,23 +27,21 @@ export function TrialBalanceClient({
   const totalCredit = rows.reduce((s, r) => s + r.creditPaise, 0n);
   const balanced = totalDebit === totalCredit;
 
-  function exportCsv() {
-    const header = ['Code', 'Account', 'Debit', 'Credit'].join(',');
-    const lines = rows.map((r) =>
-      [
-        r.accountCode,
-        r.accountName,
-        paiseToString(r.debitPaise),
-        paiseToString(r.creditPaise),
-      ].join(','),
-    );
-    const blob = new Blob([[header, ...lines].join('\n')], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `trial-balance-${asOfDate}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+  function handleExport(format: ExportFormat) {
+    const headers = ['Code', 'Account', 'Debit', 'Credit'];
+    const data: Record<string, string | number>[] = rows.map((r) => ({
+      Code: r.accountCode,
+      Account: r.accountName,
+      Debit: paiseToRupees(r.debitPaise),
+      Credit: paiseToRupees(r.creditPaise),
+    }));
+    data.push({
+      Code: '',
+      Account: 'Totals',
+      Debit: paiseToRupees(totalDebit),
+      Credit: paiseToRupees(totalCredit),
+    });
+    exportRows(data, headers, `trial-balance-${asOfDate}`, format, 'Trial Balance');
   }
 
   return (
@@ -51,7 +50,7 @@ export function TrialBalanceClient({
       includeReversed={includeReversed}
       showIncludeReversed
       basePath="/reports/trial-balance"
-      onExportCsv={exportCsv}
+      onExport={handleExport}
     >
       <Table>
         <TableHeader>
@@ -98,10 +97,4 @@ export function TrialBalanceClient({
       </Table>
     </ReportShell>
   );
-}
-
-function paiseToString(paise: bigint): string {
-  const whole = paise / 100n;
-  const rem = (paise % 100n).toString().padStart(2, '0');
-  return `${whole.toString()}.${rem}`;
 }

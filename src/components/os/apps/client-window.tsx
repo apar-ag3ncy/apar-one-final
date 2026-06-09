@@ -6,10 +6,13 @@
 // Section components from `components/entity/` provide the functional
 // content inside each tab.
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 
 import { ContactsSection } from '@/components/entity/contacts-section';
+import { EntitySettingsSection } from '@/components/entity/entity-settings-section';
+import { ClientEditDialog } from './client-edit-dialog';
 import { DocumentsSection } from '@/components/entity/documents-section';
+import { ClientInvoicesSection } from '@/components/entity/client-invoices-section';
 import { ClientTransactionsSection } from '@/components/entity/client-transactions-section';
 import { ClientExpensesOnBehalfSection } from '@/components/entity/vendor-bills-section';
 import { ActivityFeed } from '@/components/entity/activity-feed';
@@ -36,6 +39,7 @@ import { navigateBesideFocused } from './navigate';
 
 export type ClientWindowProps = {
   clientId: string;
+  onClose?: () => void;
 };
 
 type ClientTab =
@@ -43,20 +47,24 @@ type ClientTab =
   | 'contacts'
   | 'projects'
   | 'documents'
+  | 'invoices'
   | 'transactions'
   | 'expenses'
   | 'ledger'
-  | 'activity';
+  | 'activity'
+  | 'settings';
 
 const TAB_LABELS: Record<ClientTab, string> = {
   overview: 'Overview',
   contacts: 'Contacts',
   projects: 'Projects',
   documents: 'Documents',
+  invoices: 'Invoices',
   transactions: 'Transactions',
   expenses: 'Expenses on behalf',
   ledger: 'Ledger',
   activity: 'Activity',
+  settings: 'Settings',
 };
 
 const PROJECT_STATUS_TONE: Record<ProjectStatus, { bg: string; fg: string; label: string }> = {
@@ -86,7 +94,7 @@ type State =
       users: readonly UserOption[];
     };
 
-export function ClientWindow({ clientId }: ClientWindowProps) {
+export function ClientWindow({ clientId, onClose }: ClientWindowProps) {
   const [state, setState] = useState<State>({ kind: 'loading' });
   const [tab, setTab] = useState<ClientTab>('overview');
   const [reloadKey, setReloadKey] = useState(0);
@@ -146,15 +154,20 @@ export function ClientWindow({ clientId }: ClientWindowProps) {
     'contacts',
     'projects',
     'documents',
+    'invoices',
     'transactions',
     'expenses',
     'ledger',
     'activity',
+    'settings',
   ];
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-      <Header client={client} />
+      <Header
+        client={client}
+        actions={<ClientEditDialog client={client} onSaved={() => setReloadKey((k) => k + 1)} />}
+      />
       <div className="tabs">
         {tabs.map((t) => (
           <div key={t} className={`tab ${tab === t ? 'active' : ''}`} onClick={() => setTab(t)}>
@@ -192,6 +205,9 @@ export function ClientWindow({ clientId }: ClientWindowProps) {
             onUploaded={() => setReloadKey((k) => k + 1)}
           />
         ) : null}
+        {tab === 'invoices' ? (
+          <ClientInvoicesSection clientId={client.id} clientName={client.name} />
+        ) : null}
         {tab === 'transactions' ? (
           <ClientTransactionsSection clientId={client.id} clientName={client.name} />
         ) : null}
@@ -200,6 +216,16 @@ export function ClientWindow({ clientId }: ClientWindowProps) {
         ) : null}
         {tab === 'ledger' ? <ClientLedgerBody clientId={client.id} /> : null}
         {tab === 'activity' ? <ActivityBody clientId={client.id} /> : null}
+        {tab === 'settings' ? (
+          <EntitySettingsSection
+            kind="client"
+            entityId={client.id}
+            entityName={client.name}
+            isArchived={client.status === 'archived'}
+            onChanged={() => setReloadKey((k) => k + 1)}
+            onDeleted={onClose}
+          />
+        ) : null}
       </div>
     </div>
   );
@@ -415,7 +441,7 @@ function formatINRPaise(paise: bigint): string {
 /* Header (OS-styled, mirrors legacy ClientDetail)                            */
 /* -------------------------------------------------------------------------- */
 
-function Header({ client }: { client: Client }) {
+function Header({ client, actions }: { client: Client; actions?: ReactNode }) {
   const tone = STATUS_TONE[client.status] ?? STATUS_TONE['inactive']!;
   const statusLabel = client.status.charAt(0).toUpperCase() + client.status.slice(1);
   return (
@@ -463,6 +489,9 @@ function Header({ client }: { client: Client }) {
           </span>
         </div>
       </div>
+      {actions ? (
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>{actions}</div>
+      ) : null}
     </div>
   );
 }
@@ -660,6 +689,7 @@ function ClientLedgerBody({ clientId }: { clientId: string }) {
       statement={statement}
       noun="ledger entries"
       balanceMeaning="Positive = client owes us (Trade Receivables 1200)"
+      exportName={`client-ledger-${clientId}`}
       onSelectTransaction={(txnId) =>
         osActions.openWindow({
           app: 'transactions',

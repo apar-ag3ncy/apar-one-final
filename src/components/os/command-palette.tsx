@@ -56,7 +56,7 @@ export function CommandPalette({ onClose, actions }: Props) {
               setQ(e.target.value);
               setSel(0);
             }}
-            placeholder="Type a command, search across Apār One…"
+            placeholder="Type a command…"
           />
           <span
             className="font-mono"

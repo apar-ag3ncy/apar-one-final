@@ -24,7 +24,18 @@ function currentFyDefaults(): { fromDate: string; toDate: string } {
   };
 }
 
-export function OfficeLedgerWindow() {
+export function OfficeLedgerWindow({
+  title = 'Office ledger',
+  subtitle = 'Cash + bank movements (accounts 1110 + 1120). Running balance is our cash position; posted transactions only. Office utilities (6200 Office Rent & Utilities) land in the next phase.',
+  exportPrefix = 'office-ledger',
+}: {
+  /** Window header title. Defaults to "Office ledger"; the Bank Book report
+   *  route reuses this component with title "Bank Book". */
+  title?: string;
+  subtitle?: string;
+  /** Base for the export filename (date range is appended). */
+  exportPrefix?: string;
+} = {}) {
   const defaults = useMemo(() => currentFyDefaults(), []);
   const [fromDate, setFromDate] = useState<string>(defaults.fromDate);
   const [toDate, setToDate] = useState<string>(defaults.toDate);
@@ -68,13 +79,9 @@ export function OfficeLedgerWindow() {
       >
         <div style={{ flex: 1 }}>
           <div className="font-display" style={{ fontSize: 17 }}>
-            Office ledger
+            {title}
           </div>
-          <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-            Cash + bank movements (accounts 1110 + 1120). Running balance is our cash position;
-            posted transactions only. Office utilities (6200 Office Rent &amp; Utilities) land in
-            the next phase.
-          </div>
+          <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{subtitle}</div>
         </div>
         <DateField label="From" value={fromDate} onChange={setFromDate} />
         <DateField label="To" value={toDate} onChange={setToDate} />
@@ -88,6 +95,7 @@ export function OfficeLedgerWindow() {
           noun="cash movements"
           balanceMeaning="Positive = cash on hand + bank balance"
           rangeLabel={`${fromDate} → ${toDate}`}
+          exportName={`${exportPrefix}-${fromDate}_to_${toDate}`}
           onSelectTransaction={(txnId) =>
             osActions.openWindow({
               app: 'transactions',

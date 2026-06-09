@@ -1,17 +1,20 @@
 import 'server-only';
 
-import { and, asc, eq } from 'drizzle-orm';
+import { and, asc, eq, isNull } from 'drizzle-orm';
 
 import { db, type DbClient } from '@/lib/db/client';
 import {
   clients,
+  documents,
   entityAddresses,
   entityTaxIdentifiers,
   invoiceLines,
+  invoiceThemes,
   invoices,
   organizations,
 } from '@/lib/db/schema';
 import { AppError } from '@/lib/errors';
+import { createAdminClient } from '@/lib/supabase/server';
 
 import type { InvoicePdfData } from './invoice';
 
@@ -100,6 +103,8 @@ export async function loadInvoicePdfData(
       ? recipientAddress.stateCode
       : null) ?? (recipientGstin && recipientGstin.length >= 2 ? recipientGstin.slice(0, 2) : null);
 
+  const themeOverrides = await resolveThemeOverrides(client, invoice.themeId);
+
   return {
     supplier: {
       name: supplierOrg.displayName ?? supplierOrg.legalName,
@@ -152,7 +157,71 @@ export async function loadInvoicePdfData(
       : null,
     terms: invoice.terms,
     notes: invoice.notes,
+    themeOverrides,
   };
+}
+
+/**
+ * Resolve the brand-token overlay for the PDF: the invoice's selected theme
+ * (when still present) or the global default. Returns null when no theme
+ * exists at all (renderer falls back to neutral template defaults). The logo,
+ * if any, is fetched from Storage and inlined as a data-URI — best-effort, so
+ * a missing object never blocks rendering.
+ */
+async function resolveThemeOverrides(
+  client: DbClient,
+  themeId: string | null,
+): Promise<InvoicePdfData['themeOverrides']> {
+  let theme: typeof invoiceThemes.$inferSelect | undefined;
+  if (themeId) {
+    [theme] = await client
+      .select()
+      .from(invoiceThemes)
+      .where(and(eq(invoiceThemes.id, themeId), isNull(invoiceThemes.deletedAt)))
+      .limit(1);
+  }
+  if (!theme) {
+    [theme] = await client
+      .select()
+      .from(invoiceThemes)
+      .where(and(eq(invoiceThemes.isDefault, true), isNull(invoiceThemes.deletedAt)))
+      .limit(1);
+  }
+  if (!theme) return null;
+
+  let logoDataUri: string | null = null;
+  if (theme.logoDocumentId) {
+    logoDataUri = await loadDocumentDataUri(client, theme.logoDocumentId);
+  }
+
+  return {
+    primaryColor: theme.primaryColor,
+    secondaryColor: theme.secondaryColor,
+    accentColor: theme.accentColor,
+    fontFamily: theme.fontFamily,
+    headerText: theme.headerText,
+    footerText: theme.footerText,
+    logoDataUri,
+  };
+}
+
+/** Download a stored image and return it as a base64 data-URI. */
+async function loadDocumentDataUri(client: DbClient, documentId: string): Promise<string | null> {
+  try {
+    const [doc] = await client
+      .select()
+      .from(documents)
+      .where(eq(documents.id, documentId))
+      .limit(1);
+    if (!doc) return null;
+    const admin = createAdminClient();
+    const { data, error } = await admin.storage.from(doc.bucket).download(doc.storagePath);
+    if (error || !data) return null;
+    const buf = Buffer.from(await data.arrayBuffer());
+    return `data:${doc.mimeType};base64,${buf.toString('base64')}`;
+  } catch {
+    return null;
+  }
 }
 
 function toBigint(v: unknown): bigint {

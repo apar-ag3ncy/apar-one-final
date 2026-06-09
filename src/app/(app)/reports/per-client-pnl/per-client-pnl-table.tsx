@@ -18,12 +18,13 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { formatINR } from '@/components/shared/format-inr';
+import { ExportMenu } from '@/components/shared/export-menu';
 import { EntityRef } from '@/components/entity/entity-ref';
 import { useEntityNavigate } from '@/lib/client/use-navigate';
+import { exportRows, paiseToRupees, type ExportFormat } from '@/lib/client/export-rows';
 import type { PerClientPnLRow } from '@/lib/server-stub/ledger-types';
 import { useRouter } from 'next/navigation';
 
@@ -131,31 +132,27 @@ export function PerClientPnLTable({ rows, fromDate, toDate }: PerClientPnLTableP
     enableMultiSort: true,
   });
 
-  function exportCsv() {
-    const header = ['Client', 'Revenue', 'Direct Cost', 'Gross Margin', 'Margin %', 'Txns'].join(
-      ',',
-    );
-    const lines = rows.map((r) => {
-      const pct =
-        r.revenuePaise === 0n
-          ? ''
-          : (Number((r.grossMarginPaise * 10000n) / r.revenuePaise) / 100).toFixed(1) + '%';
-      return [
-        escapeCsv(r.clientName),
-        paiseToRupeeString(r.revenuePaise),
-        paiseToRupeeString(r.directCostPaise),
-        paiseToRupeeString(r.grossMarginPaise),
-        pct,
-        r.txnCount,
-      ].join(',');
+  function handleExport(format: ExportFormat) {
+    const headers = ['Client', 'Revenue', 'Direct Cost', 'Gross Margin', 'Margin %', 'Txns'];
+    const marginPct = (margin: bigint, revenue: bigint): string =>
+      revenue === 0n ? '' : (Number((margin * 10000n) / revenue) / 100).toFixed(1) + '%';
+    const data: Record<string, string | number>[] = rows.map((r) => ({
+      Client: r.clientName,
+      Revenue: paiseToRupees(r.revenuePaise),
+      'Direct Cost': paiseToRupees(r.directCostPaise),
+      'Gross Margin': paiseToRupees(r.grossMarginPaise),
+      'Margin %': marginPct(r.grossMarginPaise, r.revenuePaise),
+      Txns: r.txnCount,
+    }));
+    data.push({
+      Client: 'Totals',
+      Revenue: paiseToRupees(totals.revenue),
+      'Direct Cost': paiseToRupees(totals.cost),
+      'Gross Margin': paiseToRupees(totals.margin),
+      'Margin %': marginPct(totals.margin, totals.revenue),
+      Txns: totals.txns,
     });
-    const blob = new Blob([[header, ...lines].join('\n')], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `per-client-pnl-${fromDate}-${toDate}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+    exportRows(data, headers, `per-client-pnl-${fromDate}-${toDate}`, format, 'Per-Client P&L');
   }
 
   function applyDates(from: string, to: string) {
@@ -182,9 +179,7 @@ export function PerClientPnLTable({ rows, fromDate, toDate }: PerClientPnLTableP
             onApply={(v) => applyDates(fromDate, v)}
           />
           <div className="ml-auto flex items-center gap-2">
-            <Button variant="outline" size="sm" onClick={exportCsv}>
-              Export CSV
-            </Button>
+            <ExportMenu onExport={handleExport} disabled={rows.length === 0} />
           </div>
         </CardHeader>
         <CardContent className="p-0">
@@ -275,19 +270,4 @@ function bigintSortFn<TRow>(rowA: { original: TRow }, rowB: { original: TRow }, 
   const b = (rowB.original as any)[columnId] as bigint;
   if (a === b) return 0;
   return a < b ? -1 : 1;
-}
-
-function escapeCsv(s: string): string {
-  if (s.includes(',') || s.includes('"') || s.includes('\n')) {
-    return `"${s.replace(/"/g, '""')}"`;
-  }
-  return s;
-}
-
-function paiseToRupeeString(paise: bigint): string {
-  const negative = paise < 0n;
-  const abs = negative ? -paise : paise;
-  const whole = abs / 100n;
-  const rem = (abs % 100n).toString().padStart(2, '0');
-  return `${negative ? '-' : ''}${whole.toString()}.${rem}`;
 }

@@ -23,6 +23,8 @@ import type { DocumentDraft } from '@/components/entity/creation/types';
 import type { FormTemplate, FormValues } from '@/components/entity/form-template-types';
 import { createEmployee } from '@/lib/server/entities/employees';
 import { listEmployeeOptions, type EntityOption } from '@/lib/server/entities/options';
+import { listDepartments } from '@/lib/server-stub/entity-actions';
+import { departmentLabel } from '@/components/employees/types';
 
 type EmploymentType = 'full_time' | 'part_time' | 'contract' | 'intern' | 'consultant';
 type EmployeeStatus = 'prospective' | 'active' | 'on_leave' | 'notice' | 'separated';
@@ -220,9 +222,9 @@ export function EmployeeWizard() {
             />
           </Field>
           <Field label="Department">
-            <Input
+            <DepartmentField
               value={values.department}
-              onChange={(e) => onPatch({ department: e.target.value })}
+              onChange={(d) => onPatch({ department: d })}
             />
           </Field>
           <Field label="Reports to">
@@ -663,6 +665,43 @@ function ReportsToField({ value, onChange }: { value: string; onChange: (id: str
         ))}
       </SelectContent>
     </Select>
+  );
+}
+
+function DepartmentField({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (department: string) => void;
+}) {
+  const [departments, setDepartments] = useState<readonly string[]>([]);
+  useEffect(() => {
+    let active = true;
+    listDepartments()
+      .then((d) => {
+        if (active) setDepartments(d);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  return (
+    <>
+      <Input
+        list="wizard-department-options"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="Pick or type a department"
+      />
+      <datalist id="wizard-department-options">
+        {departments.map((d) => (
+          <option key={d} value={departmentLabel(d)} />
+        ))}
+      </datalist>
+    </>
   );
 }
 

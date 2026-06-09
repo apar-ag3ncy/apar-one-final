@@ -58,7 +58,7 @@ export function AuditFilters() {
   return (
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-6">
       <div className="lg:col-span-1">
-        <Label className="text-muted-foreground text-xs uppercase tracking-wide">Stream</Label>
+        <Label className="text-muted-foreground text-xs tracking-wide uppercase">Stream</Label>
         <Select value={stream} onValueChange={(v) => setStream(v as 'audit' | 'activity')}>
           <SelectTrigger>
             <SelectValue />
@@ -70,9 +70,7 @@ export function AuditFilters() {
         </Select>
       </div>
       <div className="lg:col-span-1">
-        <Label className="text-muted-foreground text-xs uppercase tracking-wide">
-          Entity type
-        </Label>
+        <Label className="text-muted-foreground text-xs tracking-wide uppercase">Entity type</Label>
         <Select value={entityType} onValueChange={setEntityType}>
           <SelectTrigger>
             <SelectValue />
@@ -87,7 +85,7 @@ export function AuditFilters() {
         </Select>
       </div>
       <div className="lg:col-span-2">
-        <Label className="text-muted-foreground text-xs uppercase tracking-wide">Entity id</Label>
+        <Label className="text-muted-foreground text-xs tracking-wide uppercase">Entity id</Label>
         <Input
           placeholder="UUID (optional)"
           value={entityId}
@@ -95,11 +93,11 @@ export function AuditFilters() {
         />
       </div>
       <div>
-        <Label className="text-muted-foreground text-xs uppercase tracking-wide">From</Label>
+        <Label className="text-muted-foreground text-xs tracking-wide uppercase">From</Label>
         <Input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} />
       </div>
       <div>
-        <Label className="text-muted-foreground text-xs uppercase tracking-wide">To</Label>
+        <Label className="text-muted-foreground text-xs tracking-wide uppercase">To</Label>
         <Input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} />
       </div>
       <div className="flex items-end gap-2 lg:col-span-6">

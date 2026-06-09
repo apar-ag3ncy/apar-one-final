@@ -86,6 +86,7 @@ export function OfficeUtilitiesWindow() {
           noun="utility postings"
           balanceMeaning="Total spend on rent + utilities in this range"
           rangeLabel={`${fromDate} → ${toDate}`}
+          exportName={`office-utilities-${fromDate}_to_${toDate}`}
           onSelectTransaction={(txnId) =>
             osActions.openWindow({
               app: 'transactions',

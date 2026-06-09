@@ -9,8 +9,10 @@ import {
 } from '@/lib/server-stub/entity-actions';
 import { listContacts } from '@/lib/server/entities/contacts';
 import { getActorContext } from '@/lib/server/actor';
+import { hasCapability } from '@/lib/rbac';
 import type { ClientStatus } from '@/types/api';
 import { ProfileHeader } from '@/components/entity/profile-header';
+import { ClientEditButton } from '@/components/clients/client-edit-button';
 import { Button } from '@/components/ui/button';
 import type { StatusTone } from '@/components/shared/status-badge';
 
@@ -51,6 +53,7 @@ export default async function ClientDetailPage({ params }: Props) {
   if (!client) notFound();
 
   const canHardDelete = actor.role === 'partner';
+  const canEdit = hasCapability(actor, 'update_client');
 
   const employeeOptions = employees.map((e) => ({ id: e.id, name: e.fullName }));
   const userOptions = users.map((u) => ({ id: u.id, name: u.fullName }));
@@ -71,17 +74,13 @@ export default async function ClientDetailPage({ params }: Props) {
         back={{ href: '/clients', label: 'All clients' }}
         actions={
           <>
-            <Button
-              size="sm"
-              variant="outline"
-              disabled
-              title="Server action pending (Backend agent)."
-            >
-              Edit
-            </Button>
-            <Button size="sm" disabled title="Server action pending (Backend agent).">
-              Log activity
-            </Button>
+            {canEdit ? (
+              <ClientEditButton client={client} />
+            ) : (
+              <Button size="sm" variant="outline" disabled title="Your role can't edit clients.">
+                Edit
+              </Button>
+            )}
           </>
         }
       />

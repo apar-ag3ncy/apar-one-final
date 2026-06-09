@@ -14,23 +14,14 @@ import { UrlTabs, type UrlTab } from '@/components/shared/url-tabs';
 import { ActivityFeed } from '@/components/entity/activity-feed';
 import { DocumentList } from '@/components/entity/document-list';
 import { useEntityNavigate } from '@/lib/client/use-navigate';
-import type { Department, Employee, EmploymentType } from './types';
+import { departmentLabel } from './types';
+import type { Employee, EmploymentType } from './types';
 
 const EMPLOYMENT_LABELS: Record<EmploymentType, string> = {
   full_time: 'Full-time',
   part_time: 'Part-time',
   contractor: 'Contractor',
   intern: 'Intern',
-};
-
-const DEPARTMENT_LABELS: Record<Department, string> = {
-  creative: 'Creative',
-  strategy: 'Strategy',
-  growth: 'Growth',
-  operations: 'Operations',
-  finance: 'Finance',
-  engineering: 'Engineering',
-  leadership: 'Leadership',
 };
 
 export function EmployeeDetailTabs({ employee }: { employee: Employee }) {
@@ -70,7 +61,7 @@ function ProfileTab({ employee }: { employee: Employee }) {
         <CardContent>
           <dl className="grid grid-cols-1 gap-x-6 gap-y-4 text-sm sm:grid-cols-2">
             <Detail label="Designation" value={employee.designation} />
-            <Detail label="Department" value={DEPARTMENT_LABELS[employee.department]} />
+            <Detail label="Department" value={departmentLabel(employee.department)} />
             <Detail label="Type" value={EMPLOYMENT_LABELS[employee.employmentType]} />
             <Detail
               label="Reports to"

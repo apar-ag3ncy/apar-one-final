@@ -4,9 +4,11 @@
 // client window (custom header + .tabs / .tab tab bar + CSS variables)
 // so the OS theme is preserved.
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 
 import { ContactsSection } from '@/components/entity/contacts-section';
+import { EntitySettingsSection } from '@/components/entity/entity-settings-section';
+import { VendorEditDialog } from './vendor-edit-dialog';
 import { DocumentsSection } from '@/components/entity/documents-section';
 import { VendorBillsSection } from '@/components/entity/vendor-bills-section';
 import { ActivityFeed } from '@/components/entity/activity-feed';
@@ -22,9 +24,17 @@ import { navigateBesideFocused } from './navigate';
 
 export type VendorWindowProps = {
   vendorId: string;
+  onClose?: () => void;
 };
 
-type VendorTab = 'overview' | 'contacts' | 'documents' | 'bills' | 'ledger' | 'activity';
+type VendorTab =
+  | 'overview'
+  | 'contacts'
+  | 'documents'
+  | 'bills'
+  | 'ledger'
+  | 'activity'
+  | 'settings';
 
 const TAB_LABELS: Record<VendorTab, string> = {
   overview: 'Overview',
@@ -33,6 +43,7 @@ const TAB_LABELS: Record<VendorTab, string> = {
   bills: 'Bills',
   ledger: 'Ledger',
   activity: 'Activity',
+  settings: 'Settings',
 };
 
 const STATUS_TONE: Record<string, { bg: string; fg: string }> = {
@@ -45,7 +56,7 @@ type State =
   | { kind: 'error'; message: string }
   | { kind: 'ready'; vendor: Vendor; contacts: readonly ContactRow[] };
 
-export function VendorWindow({ vendorId }: VendorWindowProps) {
+export function VendorWindow({ vendorId, onClose }: VendorWindowProps) {
   const [state, setState] = useState<State>({ kind: 'loading' });
   const [tab, setTab] = useState<VendorTab>('overview');
   const [reloadKey, setReloadKey] = useState(0);
@@ -91,11 +102,15 @@ export function VendorWindow({ vendorId }: VendorWindowProps) {
     'bills',
     'ledger',
     'activity',
+    'settings',
   ];
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-      <Header vendor={vendor} />
+      <Header
+        vendor={vendor}
+        actions={<VendorEditDialog vendor={vendor} onSaved={() => setReloadKey((k) => k + 1)} />}
+      />
       <div className="tabs">
         {tabs.map((t) => (
           <div key={t} className={`tab ${tab === t ? 'active' : ''}`} onClick={() => setTab(t)}>
@@ -126,12 +141,22 @@ export function VendorWindow({ vendorId }: VendorWindowProps) {
         ) : null}
         {tab === 'ledger' ? <VendorLedgerBody vendorId={vendor.id} /> : null}
         {tab === 'activity' ? <ActivityBody vendorId={vendor.id} /> : null}
+        {tab === 'settings' ? (
+          <EntitySettingsSection
+            kind="vendor"
+            entityId={vendor.id}
+            entityName={vendor.name}
+            isArchived={vendor.isArchived ?? vendor.status === 'inactive'}
+            onChanged={() => setReloadKey((k) => k + 1)}
+            onDeleted={onClose}
+          />
+        ) : null}
       </div>
     </div>
   );
 }
 
-function Header({ vendor }: { vendor: Vendor }) {
+function Header({ vendor, actions }: { vendor: Vendor; actions?: ReactNode }) {
   const tone = STATUS_TONE[vendor.status] ?? STATUS_TONE['inactive']!;
   return (
     <div
@@ -176,6 +201,9 @@ function Header({ vendor }: { vendor: Vendor }) {
           ) : null}
         </div>
       </div>
+      {actions ? (
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>{actions}</div>
+      ) : null}
     </div>
   );
 }
@@ -361,6 +389,7 @@ function VendorLedgerBody({ vendorId }: { vendorId: string }) {
       statement={statement}
       noun="ledger entries"
       balanceMeaning="Positive = we owe the vendor (Trade Payables 2110)"
+      exportName={`vendor-ledger-${vendorId}`}
       onSelectTransaction={(txnId) =>
         osActions.openWindow({
           app: 'transactions',

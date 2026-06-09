@@ -14,6 +14,9 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { CurrencyInput } from '@/components/shared/currency-input';
+import { toast } from 'sonner';
+import { useRouter } from 'next/navigation';
+import { recordBonusOrPerk } from '@/lib/server/entities/payroll';
 
 export function BonusForm({
   employees,
@@ -26,9 +29,37 @@ export function BonusForm({
   const [grantedOn, setGrantedOn] = useState(new Date().toISOString().slice(0, 10));
   const [reason, setReason] = useState('');
   const [paymentTiming, setPaymentTiming] = useState<'with_salary' | 'separate' | ''>('');
+  const [busy, setBusy] = useState(false);
+  const router = useRouter();
 
   const canSubmit =
     employeeId && kind && amountPaise && grantedOn && reason.trim() && paymentTiming;
+
+  async function submit() {
+    if (!canSubmit || amountPaise === null || busy) return;
+    setBusy(true);
+    try {
+      await recordBonusOrPerk({
+        employeeId,
+        kind: 'bonus',
+        bonusDate: grantedOn,
+        amountPaise,
+        description: `${kind} bonus (${paymentTiming === 'with_salary' ? 'with salary' : 'separate'}): ${reason.trim()}`,
+        taxable: 'captured',
+      });
+      toast.success('Bonus recorded.');
+      setEmployeeId('');
+      setKind('');
+      setAmountPaise(null);
+      setReason('');
+      setPaymentTiming('');
+      router.refresh();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not record the bonus.');
+    } finally {
+      setBusy(false);
+    }
+  }
 
   return (
     <Card>
@@ -92,7 +123,9 @@ export function BonusForm({
           />
         </Field>
         <div className="flex justify-end">
-          <Button disabled={!canSubmit}>Record bonus</Button>
+          <Button disabled={!canSubmit || busy} onClick={submit}>
+            {busy ? 'Recording…' : 'Record bonus'}
+          </Button>
         </div>
       </CardContent>
     </Card>

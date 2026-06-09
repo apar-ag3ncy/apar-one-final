@@ -19,6 +19,7 @@ type Props = {
   onSignOut: () => void;
   onCloseAll: () => void;
   hasOpenWindows: boolean;
+  onOpenSearch: () => void;
 };
 
 export function MenuBar({
@@ -30,6 +31,7 @@ export function MenuBar({
   onSignOut,
   onCloseAll,
   hasOpenWindows,
+  onOpenSearch,
 }: Props) {
   const [open, setOpen] = useState<string | null>(null);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
@@ -40,9 +42,15 @@ export function MenuBar({
   const [now, setNow] = useState<Date | null>(null);
 
   useEffect(() => {
-    setNow(new Date());
-    const t = setInterval(() => setNow(new Date()), 1000 * 30);
-    return () => clearInterval(t);
+    // Deferred to the next frame (not a synchronous setState in the effect
+    // body) so the null-clock hydration paint matches SSR.
+    const update = () => setNow(new Date());
+    const raf = requestAnimationFrame(update);
+    const t = setInterval(update, 1000 * 30);
+    return () => {
+      cancelAnimationFrame(raf);
+      clearInterval(t);
+    };
   }, []);
 
   useEffect(() => {
@@ -69,8 +77,8 @@ export function MenuBar({
       {
         label: 'New Window',
         shortcut: '⌘N',
-        live: true,
-        action: () => onAction('open', activeApp?.id),
+        live: activeApp != null,
+        action: activeApp ? () => onAction('open', activeApp.id) : undefined,
       },
       { label: 'Open…', shortcut: '⌘O' },
       { label: 'Close Window', shortcut: '⌘W' },
@@ -154,28 +162,38 @@ export function MenuBar({
                 'sep' in it && it.sep ? (
                   <hr key={i} />
                 ) : (
-                  <div
-                    key={i}
-                    className={`row ${'live' in it && it.live ? 'live' : ''}`}
-                    onClick={() => {
-                      if ('action' in it) it.action?.();
-                      setOpen(null);
-                    }}
-                  >
-                    <span>{'label' in it ? it.label : ''}</span>
-                    {'shortcut' in it && it.shortcut ? (
-                      <span
-                        style={{
-                          color: 'var(--text-dim)',
-                          fontFamily: 'var(--os-font)',
-                          fontVariantNumeric: 'tabular-nums',
-                          fontSize: 11,
+                  (() => {
+                    // Items without an `action` are not wired up — render them
+                    // visibly disabled so the menu never shows a control that
+                    // silently does nothing.
+                    const enabled = 'action' in it && typeof it.action === 'function';
+                    return (
+                      <div
+                        key={i}
+                        className={`row ${'live' in it && it.live ? 'live' : ''}`}
+                        aria-disabled={enabled ? undefined : true}
+                        style={enabled ? undefined : { opacity: 0.38, cursor: 'default' }}
+                        onClick={() => {
+                          if (enabled && 'action' in it) it.action?.();
+                          setOpen(null);
                         }}
                       >
-                        {it.shortcut}
-                      </span>
-                    ) : null}
-                  </div>
+                        <span>{'label' in it ? it.label : ''}</span>
+                        {'shortcut' in it && it.shortcut ? (
+                          <span
+                            style={{
+                              color: 'var(--text-dim)',
+                              fontFamily: 'var(--os-font)',
+                              fontVariantNumeric: 'tabular-nums',
+                              fontSize: 11,
+                            }}
+                          >
+                            {it.shortcut}
+                          </span>
+                        ) : null}
+                      </div>
+                    );
+                  })()
                 ),
               )}
             </div>
@@ -197,10 +215,18 @@ export function MenuBar({
         >
           <Icon name="close" size={13} stroke={2.2} />
         </button>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--text-muted)' }}>
+        <button
+          type="button"
+          className="menubar-action"
+          title="Search (⌘K)"
+          aria-label="Open command palette"
+          onClick={(e) => {
+            e.stopPropagation();
+            onOpenSearch();
+          }}
+        >
           <Icon name="search" size={13} />
-          <Icon name="bell" size={13} />
-        </div>
+        </button>
         <div className="clock" suppressHydrationWarning>
           {now ? `${date} · ${time}` : ''}
         </div>
