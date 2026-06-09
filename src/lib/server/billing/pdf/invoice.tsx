@@ -47,6 +47,7 @@ export type InvoicePdfData = {
     name: string;
     addressLines: string[];
     gstin: string | null;
+    pan: string | null;
     stateCode: string | null;
     contactEmail: string | null;
   };
@@ -338,6 +339,7 @@ function Parties({ data }: { data: InvoicePdfData }): React.JSX.Element {
           <Text key={i}>{l}</Text>
         ))}
         {data.recipient.gstin ? <Text>GSTIN: {data.recipient.gstin}</Text> : null}
+        {data.recipient.pan ? <Text>PAN: {data.recipient.pan}</Text> : null}
         {data.recipient.stateCode ? <Text>State code: {data.recipient.stateCode}</Text> : null}
         {data.recipient.contactEmail ? <Text>{data.recipient.contactEmail}</Text> : null}
       </View>

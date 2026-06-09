@@ -83,7 +83,11 @@ export async function loadInvoicePdfData(
       ),
     )
     .limit(1);
-  const recipientGstin = recipientTaxIds[0]?.maskedValue ?? null;
+  // Prefer the authoritative client row (kept current by create + edit); fall
+  // back to the entity_tax_identifiers vault row. This is why a GSTIN/PAN added
+  // after signup still auto-fills on the generated invoice.
+  const recipientGstin = recipient.gstin ?? recipientTaxIds[0]?.maskedValue ?? null;
+  const recipientPan = recipient.pan ?? null;
 
   // Captured tax split is stored as JSONB with string-encoded bigints
   // (see invoices.ts:serialiseTaxSplit). Re-hydrate to bigint.
@@ -129,6 +133,7 @@ export async function loadInvoicePdfData(
           ].filter((s) => s && s.length > 0)
         : [],
       gstin: recipientGstin,
+      pan: recipientPan,
       stateCode: recipientStateCode,
       contactEmail: null, // resolve via entity_contacts later
     },

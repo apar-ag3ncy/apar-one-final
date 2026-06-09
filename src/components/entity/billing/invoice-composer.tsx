@@ -35,6 +35,7 @@ import { renderInvoicePreview } from '@/lib/server/billing/invoice-preview';
 import { sendInvoice } from '@/lib/server/billing/invoice-transitions';
 import { getDocumentSignedUrl } from '@/lib/server/entities/documents';
 import type { InvoiceThemeSummary } from '@/lib/server/billing/invoice-themes';
+import { GST_STATES_BY_NAME } from '@/lib/india/gst-states';
 
 /* -------------------------------------------------------------------------- */
 /* Line model                                                                 */
@@ -97,6 +98,9 @@ export type InvoiceComposerDialogProps = {
   clientName: string;
   /** Apār's own 2-digit state code; place-of-supply matching it ⇒ CGST+SGST. */
   supplierStateCode?: string;
+  /** The client's GST state code (derived from their GSTIN/address). Place of
+   *  supply pre-fills to this — the recipient's state. */
+  clientStateCode?: string | null;
   themes: InvoiceThemeSummary[];
   defaultThemeId?: string | null;
   /** When set, edit an existing draft instead of creating a new one. */
@@ -117,6 +121,7 @@ export function InvoiceComposerDialog({
   clientId,
   clientName,
   supplierStateCode = '27',
+  clientStateCode,
   themes,
   defaultThemeId,
   existingInvoiceId,
@@ -130,7 +135,7 @@ export function InvoiceComposerDialog({
   // Form state.
   const [documentDate, setDocumentDate] = useState(TODAY_ISO());
   const [dueDate, setDueDate] = useState('');
-  const [placeOfSupply, setPlaceOfSupply] = useState(supplierStateCode);
+  const [placeOfSupply, setPlaceOfSupply] = useState(clientStateCode ?? '');
   const [terms, setTerms] = useState('');
   const [notes, setNotes] = useState('');
   const [themeId, setThemeId] = useState<string>('');
@@ -160,7 +165,7 @@ export function InvoiceComposerDialog({
             const { invoice, lines: ls } = res;
             setDocumentDate(invoice.documentDate);
             setDueDate(invoice.dueDate ?? '');
-            setPlaceOfSupply(invoice.placeOfSupply ?? supplierStateCode);
+            setPlaceOfSupply(invoice.placeOfSupply ?? clientStateCode ?? '');
             setTerms(invoice.terms ?? '');
             setNotes(invoice.notes ?? '');
             setThemeId(invoice.themeId ?? '');
@@ -187,7 +192,7 @@ export function InvoiceComposerDialog({
       } else {
         setDocumentDate(TODAY_ISO());
         setDueDate('');
-        setPlaceOfSupply(supplierStateCode);
+        setPlaceOfSupply(clientStateCode ?? '');
         setTerms('');
         setNotes('');
         setThemeId(defaultThemeId ?? '');
@@ -198,7 +203,7 @@ export function InvoiceComposerDialog({
     return () => {
       cancelled = true;
     };
-  }, [open, existingInvoiceId, supplierStateCode, defaultThemeId]);
+  }, [open, existingInvoiceId, supplierStateCode, clientStateCode, defaultThemeId]);
 
   // Revoke object URLs to avoid leaks.
   useEffect(() => {
@@ -238,6 +243,10 @@ export function InvoiceComposerDialog({
     }
     if (totals.total <= 0n) {
       toast.error('Invoice total must be greater than zero. Add a rate to your lines.');
+      return null;
+    }
+    if (placeOfSupply.trim() === '') {
+      toast.error('Select the place of supply (the client’s state).');
       return null;
     }
 
@@ -378,14 +387,18 @@ export function InvoiceComposerDialog({
               </div>
               <div className="grid gap-1.5">
                 <Label htmlFor="inv-pos">Place of supply</Label>
-                <Input
-                  id="inv-pos"
-                  inputMode="numeric"
-                  maxLength={2}
-                  placeholder="27"
-                  value={placeOfSupply}
-                  onChange={(e) => setPlaceOfSupply(e.target.value.replace(/\D/g, '').slice(0, 2))}
-                />
+                <Select value={placeOfSupply} onValueChange={setPlaceOfSupply}>
+                  <SelectTrigger id="inv-pos">
+                    <SelectValue placeholder="Select state" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {GST_STATES_BY_NAME.map((s) => (
+                      <SelectItem key={s.code} value={s.code}>
+                        {s.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
               <div className="grid gap-1.5">
                 <Label htmlFor="inv-theme">Theme</Label>
