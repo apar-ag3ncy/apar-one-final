@@ -27,6 +27,7 @@ const fixture: InvoicePdfData = {
     name: 'Lodha Group',
     addressLines: ['Lower Parel', 'Mumbai 400013'],
     gstin: '27LODHA1234A1Z3',
+    pan: 'LODHA1234A',
     stateCode: '27',
     contactEmail: 'accounts@lodha.com',
   },

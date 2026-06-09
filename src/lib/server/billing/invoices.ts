@@ -1,12 +1,13 @@
 'use server';
 
-import { and, asc, desc, eq, gte, ilike, inArray, lte, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, ilike, inArray, isNull, lte, sql } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { fyStartForDate, todayIstIso } from '@/lib/billing/fy';
 import { db, type DbClient } from '@/lib/db/client';
-import { invoiceLines, invoices } from '@/lib/db/schema';
+import { clients, entityAddresses, invoiceLines, invoices } from '@/lib/db/schema';
 import { AppError } from '@/lib/errors';
+import { isValidStateCode, stateNameFromCode } from '@/lib/india/gst-states';
 import { requireCapability } from '@/lib/rbac';
 import { getActorContext } from '@/lib/server/actor';
 import type { ValidationFlag } from '@/lib/server/ledger/types';
@@ -99,11 +100,95 @@ export type CreateInvoiceResult = {
   validationFlags: ValidationFlag[];
 };
 
+/**
+ * A client's billing readiness. GSTIN, PAN and a registered address are
+ * OPTIONAL when the client is first created, but REQUIRED to generate an
+ * invoice for them (India B2B GST invoices). `stateCode` is derived from the
+ * GSTIN (preferred) or the registered address — it pre-fills place of supply.
+ */
+export type ClientBillingReadiness = {
+  clientId: string;
+  gstin: string | null;
+  pan: string | null;
+  hasAddress: boolean;
+  stateCode: string | null;
+  stateName: string | null;
+  missing: string[];
+  ready: boolean;
+};
+
+async function loadClientBillingReadiness(
+  clientId: string,
+  client: DbClient = db,
+): Promise<ClientBillingReadiness> {
+  const [c] = await client
+    .select({ id: clients.id, gstin: clients.gstin, pan: clients.pan })
+    .from(clients)
+    .where(and(eq(clients.id, clientId), isNull(clients.deletedAt)))
+    .limit(1);
+  if (!c) throw new AppError('not_found', `client ${clientId} not found`);
+
+  const addrs = await client
+    .select({ stateCode: entityAddresses.stateCode })
+    .from(entityAddresses)
+    .where(
+      and(
+        eq(entityAddresses.entityType, 'client'),
+        eq(entityAddresses.entityId, clientId),
+        isNull(entityAddresses.deletedAt),
+      ),
+    )
+    .orderBy(asc(entityAddresses.kind))
+    .limit(1);
+  const hasAddress = addrs.length > 0;
+
+  const gstinState = c.gstin && c.gstin.length >= 2 ? c.gstin.slice(0, 2) : null;
+  const addrState = addrs[0]?.stateCode ?? null;
+  const stateCode =
+    (gstinState && isValidStateCode(gstinState) && gstinState) ||
+    (addrState && isValidStateCode(addrState) && addrState) ||
+    null;
+
+  const missing: string[] = [];
+  if (!c.gstin) missing.push('GSTIN');
+  if (!c.pan) missing.push('PAN');
+  if (!hasAddress) missing.push('address');
+
+  return {
+    clientId,
+    gstin: c.gstin,
+    pan: c.pan,
+    hasAddress,
+    stateCode,
+    stateName: stateNameFromCode(stateCode),
+    missing,
+    ready: missing.length === 0,
+  };
+}
+
+/** Read a client's invoice-readiness — used by the composer/section to gate
+ *  "New invoice" and to pre-fill place of supply. */
+export async function getClientBillingReadiness(clientId: string): Promise<ClientBillingReadiness> {
+  const ctx = await getActorContext();
+  requireCapability(ctx, 'create_invoice');
+  return loadClientBillingReadiness(z.string().uuid().parse(clientId));
+}
+
 export async function createDraftInvoice(input: CreateInvoiceInput): Promise<CreateInvoiceResult> {
   const ctx = await getActorContext();
   requireCapability(ctx, 'create_invoice');
 
   const v = CreateInvoiceInputSchema.parse(input);
+
+  // India B2B GST: a client must have GSTIN + PAN + address before any invoice
+  // can be generated for them (these are optional only at client signup).
+  const readiness = await loadClientBillingReadiness(v.clientId);
+  if (!readiness.ready) {
+    throw new AppError(
+      'validation',
+      `This client is missing ${readiness.missing.join(', ')}. Add the client's GSTIN, PAN and address before generating an invoice.`,
+    );
+  }
 
   // Short-circuit on idempotency key — if we've already created an
   // invoice with this key, return the same id.

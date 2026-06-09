@@ -32,7 +32,11 @@ import { StatusBadge, type StatusTone } from '@/components/shared/status-badge';
 import { InvoiceComposerDialog } from '@/components/entity/billing/invoice-composer';
 import { useCurrentUser } from '@/lib/client/use-current-user';
 import { formatINR } from '@/lib/money';
-import { listInvoices } from '@/lib/server/billing/invoices';
+import {
+  getClientBillingReadiness,
+  listInvoices,
+  type ClientBillingReadiness,
+} from '@/lib/server/billing/invoices';
 import {
   deleteInvoiceTheme,
   listInvoiceThemes,
@@ -72,6 +76,7 @@ export function ClientInvoicesSection({ clientId, clientName }: ClientInvoicesSe
 
   const [rows, setRows] = useState<readonly InvoiceRow[] | null>(null);
   const [themes, setThemes] = useState<InvoiceThemeSummary[]>([]);
+  const [readiness, setReadiness] = useState<ClientBillingReadiness | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const [composerOpen, setComposerOpen] = useState(false);
@@ -91,13 +96,26 @@ export function ClientInvoicesSection({ clientId, clientName }: ClientInvoicesSe
     }
   }, []);
 
+  const reloadReadiness = useCallback(async () => {
+    try {
+      setReadiness(await getClientBillingReadiness(clientId));
+    } catch {
+      /* non-fatal */
+    }
+  }, [clientId]);
+
   useEffect(() => {
     let cancelled = false;
-    Promise.all([listInvoices({ clientId }), listInvoiceThemes().catch(() => [])])
-      .then(([inv, ths]) => {
+    Promise.all([
+      listInvoices({ clientId }),
+      listInvoiceThemes().catch(() => []),
+      getClientBillingReadiness(clientId).catch(() => null),
+    ])
+      .then(([inv, ths, rdy]) => {
         if (cancelled) return;
         setRows(inv.rows);
         setThemes(ths);
+        setReadiness(rdy);
         setError(null);
       })
       .catch((e: unknown) => {
@@ -110,7 +128,15 @@ export function ClientInvoicesSection({ clientId, clientName }: ClientInvoicesSe
 
   const defaultThemeId = themes.find((t) => t.isDefault)?.id ?? null;
 
+  const billingReady = readiness?.ready ?? false;
+
   function openNew() {
+    if (readiness && !readiness.ready) {
+      toast.error(
+        `Add this client's ${readiness.missing.join(', ')} before generating an invoice.`,
+      );
+      return;
+    }
     setEditingId(null);
     setComposerOpen(true);
   }
@@ -160,13 +186,30 @@ export function ClientInvoicesSection({ clientId, clientName }: ClientInvoicesSe
               </Button>
             ) : null}
             {canCompose ? (
-              <Button size="sm" onClick={openNew}>
+              <Button
+                size="sm"
+                onClick={openNew}
+                disabled={readiness != null && !billingReady}
+                title={
+                  readiness != null && !billingReady
+                    ? `Add this client's ${readiness.missing.join(', ')} first`
+                    : undefined
+                }
+              >
                 <PlusIcon className="mr-1.5 size-4" aria-hidden />
                 New invoice
               </Button>
             ) : null}
           </div>
         </CardHeader>
+        {canCompose && readiness != null && !billingReady ? (
+          <div className="mx-4 mb-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200">
+            To generate invoices for <strong>{clientName}</strong>, add their{' '}
+            <strong>{readiness.missing.join(', ')}</strong>. GSTIN &amp; PAN are on the client’s{' '}
+            <em>Edit</em> form; the address is on the <em>Addresses</em> tab. They’re optional when
+            adding a client but required to bill them.
+          </div>
+        ) : null}
         <CardContent className="p-0">
           {rows.length === 0 ? (
             <EmptyState
@@ -238,11 +281,13 @@ export function ClientInvoicesSection({ clientId, clientName }: ClientInvoicesSe
           onOpenChange={setComposerOpen}
           clientId={clientId}
           clientName={clientName}
+          clientStateCode={readiness?.stateCode ?? null}
           themes={themes}
           defaultThemeId={defaultThemeId}
           existingInvoiceId={editingId}
           onFinalized={() => {
             void reloadInvoices();
+            void reloadReadiness();
           }}
         />
       ) : null}
