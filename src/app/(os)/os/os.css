@@ -610,6 +610,13 @@
   min-height: 0;
   background: var(--content);
 }
+/* Let the app content shrink to the window width. Without this, a flex child's
+   automatic min-width (min-content) lets a wide tab bar or card force the body
+   wider than the frame, and overflow:hidden then clips the right edge. */
+.os-root .window-body > * {
+  min-width: 0;
+  max-width: 100%;
+}
 .os-root .resize-handle {
   position: absolute;
   right: 0;
@@ -843,6 +850,14 @@
   padding: 0 20px;
   border-bottom: 1px solid var(--border);
   background: var(--content-2);
+  /* When more tabs are present than fit the window (e.g. the Client window's
+     10 tabs in a narrow frame), scroll them horizontally instead of forcing
+     the whole window body wider — which clipped the right edge. */
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.os-root .tabs::-webkit-scrollbar {
+  height: 6px;
 }
 .os-root .tab {
   padding: 10px 12px;
@@ -850,6 +865,10 @@
   color: var(--text-muted);
   border-bottom: 2px solid transparent;
   cursor: default;
+  /* Keep each tab at its natural size and on one line so the bar scrolls
+     rather than cramming/wrapping the labels. */
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 .os-root .tab:hover {
   color: var(--text);
