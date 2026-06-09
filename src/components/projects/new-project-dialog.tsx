@@ -26,8 +26,13 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
-import { createProject } from '@/lib/server/entities/projects';
-import { PROJECT_DB_STATUS_LABELS, type ProjectDbStatus } from '@/components/projects/types';
+import { createProject, updateProject } from '@/lib/server/entities/projects';
+import {
+  PROJECT_DB_STATUS_LABELS,
+  type Project,
+  type ProjectDbStatus,
+} from '@/components/projects/types';
+import { paiseToRupees } from '@/lib/money';
 
 const NONE_VALUE = '__none__';
 
@@ -57,6 +62,40 @@ const STATUS_ORDER: readonly ProjectDbStatus[] = [
 export type EmployeeOption = { id: string; name: string };
 export type UserOption = { id: string; name: string };
 
+const EMPTY_DEFAULTS: FormValues = {
+  name: '',
+  code: '',
+  status: 'pitch',
+  leadEmployeeId: NONE_VALUE,
+  accountManagerId: NONE_VALUE,
+  feeRupees: '',
+  startedOn: '',
+  targetEndOn: '',
+  notes: '',
+};
+
+/** Local Date → YYYY-MM-DD for the native date inputs. */
+function toDateInput(d: Date | null | undefined): string {
+  if (!d) return '';
+  const dt = d instanceof Date ? d : new Date(d);
+  if (Number.isNaN(dt.getTime())) return '';
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+}
+
+function seedFromProject(project: Project): FormValues {
+  return {
+    name: project.name,
+    code: project.code ?? '',
+    status: project.dbStatus,
+    leadEmployeeId: project.leadEmployeeId ?? NONE_VALUE,
+    accountManagerId: project.accountManagerId ?? NONE_VALUE,
+    feeRupees: project.feePaise ? paiseToRupees(project.feePaise) : '',
+    startedOn: toDateInput(project.startedAt),
+    targetEndOn: toDateInput(project.endsAt),
+    notes: project.notes ?? '',
+  };
+}
+
 export function NewProjectDialog({
   open,
   onOpenChange,
@@ -64,6 +103,7 @@ export function NewProjectDialog({
   clientName,
   employees,
   users,
+  project,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -71,46 +111,29 @@ export function NewProjectDialog({
   clientName: string;
   employees: readonly EmployeeOption[];
   users: readonly UserOption[];
+  /** When provided, the dialog edits this project instead of creating one. */
+  project?: Project | null;
 }) {
   const router = useRouter();
   const [submitting, setSubmitting] = useState(false);
+  const isEdit = !!project;
 
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
-    defaultValues: {
-      name: '',
-      code: '',
-      status: 'pitch',
-      leadEmployeeId: NONE_VALUE,
-      accountManagerId: NONE_VALUE,
-      feeRupees: '',
-      startedOn: '',
-      targetEndOn: '',
-      notes: '',
-    },
+    defaultValues: project ? seedFromProject(project) : EMPTY_DEFAULTS,
   });
 
   useEffect(() => {
     if (open) {
-      form.reset({
-        name: '',
-        code: '',
-        status: 'pitch',
-        leadEmployeeId: NONE_VALUE,
-        accountManagerId: NONE_VALUE,
-        feeRupees: '',
-        startedOn: '',
-        targetEndOn: '',
-        notes: '',
-      });
+      form.reset(project ? seedFromProject(project) : EMPTY_DEFAULTS);
     }
-  }, [open, form]);
+  }, [open, project, form]);
 
   const submit = form.handleSubmit(async (values) => {
     setSubmitting(true);
     try {
       const feePaise = parseFeeRupeesToPaise(values.feeRupees);
-      const { id } = await createProject({
+      const payload = {
         clientId,
         name: values.name,
         code: values.code ? values.code : null,
@@ -127,14 +150,23 @@ export function NewProjectDialog({
         startedOn: values.startedOn ? values.startedOn : null,
         targetEndOn: values.targetEndOn ? values.targetEndOn : null,
         notes: values.notes ? values.notes : null,
-      });
-      toast.success(`Project created · ${values.name}`);
+      };
+      if (project) {
+        await updateProject(project.id, payload);
+        toast.success(`Project updated · ${values.name}`);
+      } else {
+        await createProject(payload);
+        toast.success(`Project created · ${values.name}`);
+      }
       onOpenChange(false);
       router.refresh();
-      // Optional deep-link — keep on client page for now; user can click through.
-      void id;
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Could not create project.';
+      const msg =
+        err instanceof Error
+          ? err.message
+          : project
+            ? 'Could not update project.'
+            : 'Could not create project.';
       toast.error(msg);
     } finally {
       setSubmitting(false);
@@ -149,9 +181,13 @@ export function NewProjectDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>New project for {clientName}</DialogTitle>
+          <DialogTitle>
+            {isEdit ? `Edit project · ${clientName}` : `New project for ${clientName}`}
+          </DialogTitle>
           <DialogDescription>
-            Capture the engagement details. Fee is in ₹ — saved as paise.
+            {isEdit
+              ? 'Update the engagement details. Fee is in ₹ — saved as paise.'
+              : 'Capture the engagement details. Fee is in ₹ — saved as paise.'}
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={submit} className="grid gap-3">
@@ -278,7 +314,13 @@ export function NewProjectDialog({
               Cancel
             </Button>
             <Button type="submit" disabled={submitting}>
-              {submitting ? 'Creating…' : 'Create project'}
+              {submitting
+                ? isEdit
+                  ? 'Saving…'
+                  : 'Creating…'
+                : isEdit
+                  ? 'Save changes'
+                  : 'Create project'}
             </Button>
           </DialogFooter>
         </form>

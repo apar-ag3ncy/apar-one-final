@@ -14,13 +14,23 @@ import { DocumentsSection } from '@/components/entity/documents-section';
 import { TransactionList, type Transaction } from '@/components/entity/transaction-list';
 import { ProjectStatusChanger } from '@/components/projects/project-status-changer';
 import {
+  NewProjectDialog,
+  type EmployeeOption,
+  type UserOption,
+} from '@/components/projects/new-project-dialog';
+import {
   PROJECT_DB_STATUS_LABELS,
   type Project,
   type ProjectStatus,
 } from '@/components/projects/types';
 import { useRealtimeActivity } from '@/lib/client/use-realtime-activity';
 import { getEntityActivity } from '@/lib/server/entities/activity';
-import { getProject, listProjectTransactions } from '@/lib/server-stub/entity-actions';
+import {
+  getProject,
+  listEmployees,
+  listProjectTransactions,
+  listUsers,
+} from '@/lib/server-stub/entity-actions';
 import { osActions } from '@/lib/os/store';
 import { navigateBesideFocused } from './navigate';
 
@@ -56,26 +66,44 @@ type Feed = {
 type State =
   | { kind: 'loading' }
   | { kind: 'error'; message: string }
-  | { kind: 'ready'; project: Project; feed: Feed };
+  | {
+      kind: 'ready';
+      project: Project;
+      feed: Feed;
+      employees: readonly EmployeeOption[];
+      users: readonly UserOption[];
+    };
 
 export function ProjectWindow({ projectId, onClose }: ProjectWindowProps) {
   const [state, setState] = useState<State>({ kind: 'loading' });
   const [tab, setTab] = useState<ProjectTab>('overview');
   const [reloadKey, setReloadKey] = useState(0);
+  const [editOpen, setEditOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     queueMicrotask(() => {
       if (!cancelled) setState({ kind: 'loading' });
     });
-    Promise.all([getProject(projectId), listProjectTransactions(projectId)])
-      .then(([project, feed]) => {
+    Promise.all([
+      getProject(projectId),
+      listProjectTransactions(projectId),
+      listEmployees(),
+      listUsers(),
+    ])
+      .then(([project, feed, emps, usrs]) => {
         if (cancelled) return;
         if (!project) {
           setState({ kind: 'error', message: `Project ${projectId} not found.` });
           return;
         }
-        setState({ kind: 'ready', project, feed });
+        setState({
+          kind: 'ready',
+          project,
+          feed,
+          employees: emps.map((e) => ({ id: e.id, name: e.fullName })),
+          users: usrs.map((u) => ({ id: u.id, name: u.fullName })),
+        });
       })
       .catch((e: unknown) => {
         if (cancelled) return;
@@ -96,7 +124,7 @@ export function ProjectWindow({ projectId, onClose }: ProjectWindowProps) {
     return <div style={{ padding: 24, color: 'var(--text-error, #c33)' }}>{state.message}</div>;
   }
 
-  const { project, feed } = state;
+  const { project, feed, employees, users } = state;
   const tabs: readonly ProjectTab[] = [
     'overview',
     'transactions',
@@ -107,7 +135,23 @@ export function ProjectWindow({ projectId, onClose }: ProjectWindowProps) {
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-      <Header project={project} onStatusChanged={() => setReloadKey((k) => k + 1)} />
+      <Header
+        project={project}
+        onStatusChanged={() => setReloadKey((k) => k + 1)}
+        onEdit={() => setEditOpen(true)}
+      />
+      <NewProjectDialog
+        open={editOpen}
+        onOpenChange={(o) => {
+          setEditOpen(o);
+          if (!o) setReloadKey((k) => k + 1);
+        }}
+        clientId={project.clientId}
+        clientName={project.clientName}
+        employees={employees}
+        users={users}
+        project={project}
+      />
       <div className="tabs">
         {tabs.map((t) => (
           <div key={t} className={`tab ${tab === t ? 'active' : ''}`} onClick={() => setTab(t)}>
@@ -149,7 +193,15 @@ export function ProjectWindow({ projectId, onClose }: ProjectWindowProps) {
 /* Header                                                                      */
 /* -------------------------------------------------------------------------- */
 
-function Header({ project, onStatusChanged }: { project: Project; onStatusChanged?: () => void }) {
+function Header({
+  project,
+  onStatusChanged,
+  onEdit,
+}: {
+  project: Project;
+  onStatusChanged?: () => void;
+  onEdit?: () => void;
+}) {
   const tone = PROJECT_STATUS_TONE[project.status];
   return (
     <div
@@ -223,7 +275,12 @@ function Header({ project, onStatusChanged }: { project: Project; onStatusChange
           </span>
         </div>
       </div>
-      <div style={{ flexShrink: 0 }}>
+      <div style={{ flexShrink: 0, display: 'flex', gap: 8, alignItems: 'center' }}>
+        {onEdit ? (
+          <button type="button" className="btn" onClick={onEdit}>
+            Edit
+          </button>
+        ) : null}
         <ProjectStatusChanger
           projectId={project.id}
           value={project.dbStatus}
