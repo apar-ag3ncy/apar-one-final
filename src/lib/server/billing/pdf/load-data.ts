@@ -172,37 +172,46 @@ async function resolveThemeOverrides(
   client: DbClient,
   themeId: string | null,
 ): Promise<InvoicePdfData['themeOverrides']> {
-  let theme: typeof invoiceThemes.$inferSelect | undefined;
-  if (themeId) {
-    [theme] = await client
-      .select()
-      .from(invoiceThemes)
-      .where(and(eq(invoiceThemes.id, themeId), isNull(invoiceThemes.deletedAt)))
-      .limit(1);
-  }
-  if (!theme) {
-    [theme] = await client
-      .select()
-      .from(invoiceThemes)
-      .where(and(eq(invoiceThemes.isDefault, true), isNull(invoiceThemes.deletedAt)))
-      .limit(1);
-  }
-  if (!theme) return null;
+  // Theming is purely cosmetic: a missing/empty themes table, an unmigrated
+  // DB, or a fetch error must NEVER block invoice generation. Any failure here
+  // degrades to `null`, and the renderer falls back to neutral built-in
+  // defaults (Helvetica + slate). So generating an invoice has no dependency
+  // on themes or any uploaded source whatsoever.
+  try {
+    let theme: typeof invoiceThemes.$inferSelect | undefined;
+    if (themeId) {
+      [theme] = await client
+        .select()
+        .from(invoiceThemes)
+        .where(and(eq(invoiceThemes.id, themeId), isNull(invoiceThemes.deletedAt)))
+        .limit(1);
+    }
+    if (!theme) {
+      [theme] = await client
+        .select()
+        .from(invoiceThemes)
+        .where(and(eq(invoiceThemes.isDefault, true), isNull(invoiceThemes.deletedAt)))
+        .limit(1);
+    }
+    if (!theme) return null;
 
-  let logoDataUri: string | null = null;
-  if (theme.logoDocumentId) {
-    logoDataUri = await loadDocumentDataUri(client, theme.logoDocumentId);
-  }
+    let logoDataUri: string | null = null;
+    if (theme.logoDocumentId) {
+      logoDataUri = await loadDocumentDataUri(client, theme.logoDocumentId);
+    }
 
-  return {
-    primaryColor: theme.primaryColor,
-    secondaryColor: theme.secondaryColor,
-    accentColor: theme.accentColor,
-    fontFamily: theme.fontFamily,
-    headerText: theme.headerText,
-    footerText: theme.footerText,
-    logoDataUri,
-  };
+    return {
+      primaryColor: theme.primaryColor,
+      secondaryColor: theme.secondaryColor,
+      accentColor: theme.accentColor,
+      fontFamily: theme.fontFamily,
+      headerText: theme.headerText,
+      footerText: theme.footerText,
+      logoDataUri,
+    };
+  } catch {
+    return null;
+  }
 }
 
 /** Download a stored image and return it as a base64 data-URI. */
