@@ -1,8 +1,9 @@
 import 'server-only';
 
-import { Document, Page, StyleSheet, Text, View, renderToBuffer } from '@react-pdf/renderer';
+import { Document, Image, Page, StyleSheet, Text, View, renderToBuffer } from '@react-pdf/renderer';
 import * as React from 'react';
 
+import { APAR_MARK_DATA_URI } from '@/lib/brand/apar-mark';
 import { formatINR } from '@/lib/money';
 
 /**
@@ -143,7 +144,11 @@ export function PaymentReceiptDocument({
       <Page size="A4" style={styles.page}>
         <View style={styles.headerRow}>
           <View style={styles.supplierBlock}>
-            <Text style={styles.supplierName}>{data.supplier.name}</Text>
+            {/* eslint-disable-next-line jsx-a11y/alt-text */}
+            <Image
+              src={APAR_MARK_DATA_URI}
+              style={{ height: 40, maxWidth: 180, marginBottom: 8, objectFit: 'contain' }}
+            />
             <Text>{data.supplier.address}</Text>
             {data.supplier.gstin ? <Text>GSTIN: {data.supplier.gstin}</Text> : null}
             {data.supplier.pan ? <Text>PAN: {data.supplier.pan}</Text> : null}

@@ -3,6 +3,7 @@ import 'server-only';
 import { Document, Image, Page, StyleSheet, Text, View, renderToBuffer } from '@react-pdf/renderer';
 import * as React from 'react';
 
+import { APAR_MARK_DATA_URI } from '@/lib/brand/apar-mark';
 import { formatINR } from '@/lib/money';
 
 /**
@@ -285,16 +286,14 @@ function Header({
   return (
     <View style={styles.headerRow}>
       <View style={styles.supplierBlock}>
-        {theme.logoDataUri ? (
-          // react-pdf's <Image> is a PDF primitive, not an HTML <img> — it has
-          // no `alt` prop.
-          // eslint-disable-next-line jsx-a11y/alt-text
-          <Image
-            src={theme.logoDataUri}
-            style={{ maxHeight: 48, maxWidth: 160, marginBottom: 6, objectFit: 'contain' }}
-          />
-        ) : null}
-        <Text style={[styles.supplierName, { color: theme.primary }]}>{data.supplier.name}</Text>
+        {/* The supplier identity is shown as the Apār logo (or the theme's own
+            logo, if one was uploaded) — never the plain "Apār" text. */}
+        {/* react-pdf's <Image> is a PDF primitive, not an HTML <img> — no `alt`. */}
+        {/* eslint-disable-next-line jsx-a11y/alt-text */}
+        <Image
+          src={theme.logoDataUri ?? APAR_MARK_DATA_URI}
+          style={{ height: 40, maxWidth: 180, marginBottom: 8, objectFit: 'contain' }}
+        />
         <Text>{data.supplier.address}</Text>
         {data.supplier.gstin ? <Text>GSTIN: {data.supplier.gstin}</Text> : null}
         {data.supplier.pan ? <Text>PAN: {data.supplier.pan}</Text> : null}
