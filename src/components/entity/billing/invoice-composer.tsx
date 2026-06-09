@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { DownloadIcon, EyeIcon, PlusIcon, Trash2Icon } from 'lucide-react';
+import { DownloadIcon, EyeIcon, LoaderIcon, PlusIcon, Trash2Icon } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
@@ -354,6 +354,15 @@ export function InvoiceComposerDialog({
               <div className="text-muted-foreground p-6 text-sm">Rendering…</div>
             )}
           </div>
+        ) : busy === 'preview' ? (
+          <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-8 text-center">
+            <LoaderIcon className="text-muted-foreground size-8 animate-spin" aria-hidden />
+            <div className="text-sm font-medium">Generating preview…</div>
+            <div className="text-muted-foreground max-w-xs text-xs">
+              Rendering the invoice PDF. The first one can take up to ~20 seconds — please keep this
+              window open.
+            </div>
+          </div>
         ) : (
           <div className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
             {/* Header fields */}
@@ -539,6 +548,11 @@ export function InvoiceComposerDialog({
             </>
           ) : (
             <>
+              {totals.total <= 0n && busy === null ? (
+                <span className="text-muted-foreground mr-auto self-center text-xs">
+                  Add a line with a description and a rate to enable the preview.
+                </span>
+              ) : null}
               <Button
                 variant="outline"
                 onClick={() => onOpenChange(false)}
@@ -546,7 +560,7 @@ export function InvoiceComposerDialog({
               >
                 Cancel
               </Button>
-              <Button onClick={onGeneratePreview} disabled={busy !== null}>
+              <Button onClick={onGeneratePreview} disabled={busy !== null || totals.total <= 0n}>
                 <EyeIcon className="mr-1.5 size-4" aria-hidden />
                 {busy === 'preview' ? 'Generating…' : 'Generate preview'}
               </Button>
