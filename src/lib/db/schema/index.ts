@@ -3,6 +3,10 @@ export * from './_polymorphic';
 
 // Principal entities
 export * from './organizations';
+
+// Company settings (Apār's own profile docs + bank accounts)
+export * from './company_bank_accounts';
+export * from './company_documents';
 export * from './users';
 export * from './clients';
 export * from './vendors';

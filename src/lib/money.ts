@@ -91,6 +91,95 @@ export function formatINRCompact(paise: Paise): string {
   return INR_COMPACT_FORMATTER.format(Number(paise) / 100);
 }
 
+const ONES = [
+  '',
+  'One',
+  'Two',
+  'Three',
+  'Four',
+  'Five',
+  'Six',
+  'Seven',
+  'Eight',
+  'Nine',
+  'Ten',
+  'Eleven',
+  'Twelve',
+  'Thirteen',
+  'Fourteen',
+  'Fifteen',
+  'Sixteen',
+  'Seventeen',
+  'Eighteen',
+  'Nineteen',
+];
+const TENS = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety'];
+
+function twoDigitWords(x: number): string {
+  if (x < 20) return ONES[x]!;
+  return TENS[Math.floor(x / 10)]! + (x % 10 ? ' ' + ONES[x % 10]! : '');
+}
+function threeDigitWords(x: number): string {
+  const h = Math.floor(x / 100);
+  const r = x % 100;
+  let s = '';
+  if (h) s += ONES[h]! + ' Hundred';
+  if (r) s += (s ? ' ' : '') + twoDigitWords(r);
+  return s;
+}
+/** Whole number → Indian-system English words (Crore/Lakh/Thousand/Hundred). */
+function indianNumberWords(n: bigint): string {
+  if (n === 0n) return 'Zero';
+  const parts: string[] = [];
+  let rem = n;
+  const crore = rem / 10000000n;
+  rem %= 10000000n;
+  if (crore > 0n) {
+    parts.push((crore > 99n ? indianNumberWords(crore) : twoDigitWords(Number(crore))) + ' Crore');
+  }
+  const lakh = rem / 100000n;
+  rem %= 100000n;
+  if (lakh > 0n) parts.push(twoDigitWords(Number(lakh)) + ' Lakh');
+  const thousand = rem / 1000n;
+  rem %= 1000n;
+  if (thousand > 0n) parts.push(twoDigitWords(Number(thousand)) + ' Thousand');
+  const hundreds = Number(rem);
+  if (hundreds > 0) parts.push(threeDigitWords(hundreds));
+  return parts.join(' ');
+}
+
+/**
+ * Amount in words for invoices, e.g. ₹4,72,000 → "Rupees Four Lakh Seventy Two
+ * Thousand Only". Indian numbering; appends "and N Paise" when there's a
+ * sub-rupee remainder.
+ */
+export function rupeesInWordsINR(paise: Paise): string {
+  assertBigint(paise, 'paise');
+  const negative = paise < 0n;
+  const abs = negative ? -paise : paise;
+  const rupees = abs / 100n;
+  const remPaise = Number(abs % 100n);
+  let out = `Rupees ${indianNumberWords(rupees)}`;
+  if (remPaise > 0) out += ` and ${twoDigitWords(remPaise)} Paise`;
+  out += ' Only';
+  return negative ? `Minus ${out}` : out;
+}
+
+const INR_PLAIN_FORMATTER = new Intl.NumberFormat('en-IN', {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+
+/**
+ * Indian-grouped amount WITHOUT a currency symbol, e.g. ₹4,72,000 →
+ * "4,72,000.00". For the invoice PDF, where the column is already labelled
+ * "Amount in Rupees" and the built-in PDF font (Helvetica) has no ₹ glyph.
+ */
+export function formatRupeesPlain(paise: Paise): string {
+  assertBigint(paise, 'paise');
+  return INR_PLAIN_FORMATTER.format(Number(paise) / 100);
+}
+
 /** Sum a list of paise values. Returns 0n for empty input. */
 export function sumPaise(values: readonly Paise[]): Paise {
   let total = 0n;

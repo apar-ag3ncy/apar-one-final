@@ -288,6 +288,13 @@
       "when": 1780600006000,
       "tag": "0040_invoice_types_and_billto",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1780600007000,
+      "tag": "0041_company_settings",
+      "breakpoints": true
     }
   ]
 }
