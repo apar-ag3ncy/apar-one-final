@@ -22,7 +22,7 @@
  *   - getEntityActivity — needs activity log query (Phase 3.3 consumer)
  */
 
-import { and, desc, eq, ilike, isNull, or, sql } from 'drizzle-orm';
+import { and, desc, eq, ilike, isNotNull, isNull, ne, or, sql } from 'drizzle-orm';
 
 import { maybeCurrentUser } from '@/lib/auth';
 import { CAPABILITY_SET } from '@/lib/rbac';
@@ -539,7 +539,7 @@ export type ProjectTransactionFeed = {
 export async function listProjectTransactions(projectId: string): Promise<ProjectTransactionFeed> {
   await getActorContext();
 
-  const [invoiceRows, billRows, expenseRows] = await Promise.all([
+  const [invoiceRows, billRows, expenseRows, onBehalfRows] = await Promise.all([
     db
       .select({
         id: invoices.id,
@@ -592,6 +592,37 @@ export async function listProjectTransactions(projectId: string): Promise<Projec
       .leftJoin(vendors, eq(vendors.id, officeExpenses.vendorId))
       .where(and(eq(officeExpenses.projectId, projectId), isNull(officeExpenses.deletedAt)))
       .orderBy(desc(officeExpenses.expenseDate)),
+    // Expenses incurred ON BEHALF OF the client (the OS "Expenses on behalf"
+    // flow) are ledger transactions (kind='vendor_bill', on_behalf_of_client
+    // set), NOT `bills` rows — so they must be summed from the ledger. The gross
+    // bill = sum of the transaction's debit postings (expense + input GST). We
+    // only count client-attributed vendor bills so this never overlaps the
+    // `bills` query above. Reversed transactions are excluded.
+    db
+      .select({
+        id: ledgerTransactions.id,
+        txnDate: ledgerTransactions.txnDate,
+        description: ledgerTransactions.description,
+        status: ledgerTransactions.status,
+        clientId: ledgerTransactions.onBehalfOfClientId,
+        clientName: clients.name,
+        clientArchived: clients.isArchived,
+        clientDeletedAt: clients.deletedAt,
+        grossPaise: sql<string>`coalesce(sum(case when ${postings.side} = 'debit' then ${postings.amountPaise} else 0 end), 0)`,
+      })
+      .from(ledgerTransactions)
+      .leftJoin(postings, eq(postings.transactionId, ledgerTransactions.id))
+      .leftJoin(clients, eq(clients.id, ledgerTransactions.onBehalfOfClientId))
+      .where(
+        and(
+          eq(ledgerTransactions.projectId, projectId),
+          eq(ledgerTransactions.kind, 'vendor_bill'),
+          isNotNull(ledgerTransactions.onBehalfOfClientId),
+          ne(ledgerTransactions.status, 'reversed'),
+        ),
+      )
+      .groupBy(ledgerTransactions.id, clients.id)
+      .orderBy(desc(ledgerTransactions.txnDate)),
   ]);
 
   const invoiceTxns: Transaction[] = invoiceRows.map((r) => ({
@@ -649,6 +680,25 @@ export async function listProjectTransactions(projectId: string): Promise<Projec
     memo: r.vendorName ? `${r.description} · ${r.vendorName}` : r.description,
   }));
 
+  const onBehalfTxns: Transaction[] = onBehalfRows.map((r) => ({
+    id: r.id,
+    reference: `EOB-${r.id.slice(0, 8)}`,
+    kind: 'vendor_bill' as const,
+    date: r.txnDate,
+    amount: BigInt(r.grossPaise ?? '0'),
+    status: r.status === 'posted' ? ('posted' as const) : ('draft' as const),
+    counterparty:
+      r.clientId && r.clientName
+        ? {
+            type: 'client' as const,
+            id: r.clientId,
+            label: r.clientName,
+            archived: Boolean(r.clientArchived) || r.clientDeletedAt !== null,
+          }
+        : null,
+    memo: r.description,
+  }));
+
   // Sum totals — exclude draft (not yet committed) and void (reversed) rows.
   // The list keeps drafts visible; the headline totals reflect "real money".
   let incomePaise = 0n;
@@ -662,9 +712,12 @@ export async function listProjectTransactions(projectId: string): Promise<Projec
   for (const r of expenseRows) {
     if (r.status !== 'rejected') spendPaise += r.amountPaise + r.gstPaise;
   }
+  for (const r of onBehalfRows) {
+    if (r.status === 'posted') spendPaise += BigInt(r.grossPaise ?? '0');
+  }
 
   // Merge + sort by date desc, then by reference for stability.
-  const all: Transaction[] = [...invoiceTxns, ...billTxns, ...expenseTxns];
+  const all: Transaction[] = [...invoiceTxns, ...billTxns, ...expenseTxns, ...onBehalfTxns];
   all.sort((a, b) => {
     const ad = new Date(a.date).getTime();
     const bd = new Date(b.date).getTime();

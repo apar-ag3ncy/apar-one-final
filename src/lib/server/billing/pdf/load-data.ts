@@ -60,16 +60,27 @@ export async function loadInvoicePdfData(
     throw new AppError('not_found', `client ${invoice.clientId} not found`);
   }
 
-  // Recipient address — first registered address; fallback to any address.
+  // Recipient address — the invoice's chosen bill-to when set, else the
+  // primary, else the registered, else any. Soft-deleted rows are excluded.
   const recipientAddresses = await client
     .select()
     .from(entityAddresses)
     .where(
-      and(eq(entityAddresses.entityType, 'client'), eq(entityAddresses.entityId, invoice.clientId)),
+      and(
+        eq(entityAddresses.entityType, 'client'),
+        eq(entityAddresses.entityId, invoice.clientId),
+        isNull(entityAddresses.deletedAt),
+      ),
     )
     .orderBy(asc(entityAddresses.kind));
   const recipientAddress =
-    recipientAddresses.find((a) => a.kind === 'registered') ?? recipientAddresses[0] ?? null;
+    (invoice.billToAddressId
+      ? (recipientAddresses.find((a) => a.id === invoice.billToAddressId) ?? null)
+      : null) ??
+    recipientAddresses.find((a) => a.isPrimary) ??
+    recipientAddresses.find((a) => a.kind === 'registered') ??
+    recipientAddresses[0] ??
+    null;
 
   // Recipient GSTIN — first entity_tax_identifiers row with kind='gstin'.
   const recipientTaxIds = await client
@@ -138,6 +149,7 @@ export async function loadInvoicePdfData(
       contactEmail: null, // resolve via entity_contacts later
     },
     documentNumber: invoice.documentNumber,
+    documentType: invoice.documentType,
     documentDate: invoice.documentDate,
     dueDate: invoice.dueDate,
     placeOfSupply: invoice.placeOfSupply,

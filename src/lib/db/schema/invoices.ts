@@ -15,6 +15,7 @@ import {
 import { auditColumns, timestamps } from './_shared';
 import { clients } from './clients';
 import { documents } from './documents';
+import { entityAddresses } from './entity_addresses';
 import { invoiceThemes } from './invoice_themes';
 import { projects } from './projects';
 import { transactions } from './transactions';
@@ -50,12 +51,22 @@ export const invoiceStateEnum = pgEnum('invoice_state', [
   'void',
 ]);
 
+/**
+ * Document type. A `proforma` is presented (and titled on the PDF) as a
+ * proforma; per the product decision it otherwise behaves exactly like a tax
+ * `invoice` (same numbering series + ledger posting on send). Frozen once the
+ * invoice leaves `draft` (immutability trigger), so a sent document's nature
+ * cannot change after the fact.
+ */
+export const invoiceTypeEnum = pgEnum('invoice_type', ['invoice', 'proforma']);
+
 export const invoices = pgTable(
   'invoices',
   {
     ...timestamps(),
     ...auditColumns(),
     documentNumber: text().notNull(), // e.g. 'INV/2025-26/0001'
+    documentType: invoiceTypeEnum().notNull().default('invoice'),
     documentDate: date().notNull(),
     dueDate: date(),
     financialYearStart: date().notNull(), // April 1 of the FY (e.g. '2025-04-01')
@@ -63,6 +74,12 @@ export const invoices = pgTable(
       .notNull()
       .references(() => clients.id, { onDelete: 'restrict' }),
     projectId: uuid().references(() => projects.id, { onDelete: 'restrict' }),
+    // Chosen bill-to address (one of the client's entity_addresses). Nullable:
+    // when unset, the PDF falls back to the client's registered/primary address.
+    // ON DELETE SET NULL — the address can be removed without orphaning the
+    // invoice; the sent PDF already snapshots the address text, so the legal
+    // artifact is unaffected.
+    billToAddressId: uuid().references(() => entityAddresses.id, { onDelete: 'set null' }),
     state: invoiceStateEnum().notNull().default('draft'),
 
     // USER-ENTERED amounts. We do not compute.
@@ -101,6 +118,7 @@ export const invoices = pgTable(
     uniqueIndex('invoices_idempotency_key_unique').on(t.idempotencyKey),
     index().on(t.clientId, t.documentDate.desc()),
     index().on(t.projectId),
+    index().on(t.billToAddressId),
     index().on(t.state),
     index().on(t.dueDate),
     index().on(t.sentAt),
