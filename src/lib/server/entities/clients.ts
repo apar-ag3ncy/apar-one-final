@@ -560,6 +560,13 @@ const UpdateClientSchema = z.object({
   pan: z.string().trim().toUpperCase().nullable().optional(),
   accountManagerId: z.string().uuid().nullable().optional(),
   notes: z.string().trim().max(2000).nullable().optional(),
+  // Registered address (a child `entity_addresses` row of kind='registered').
+  // `undefined` leaves it untouched; a non-empty string upserts the primary
+  // registered address; an empty string / null is treated as "no change" so an
+  // in-flight load can never silently wipe an existing address. Surfacing it
+  // here lets the OS "Edit client" dialog edit the address that India B2B GST
+  // invoicing requires, alongside GSTIN + PAN.
+  registeredAddress: z.string().trim().max(2000).nullable().optional(),
 });
 
 export type UpdateClientInput = z.input<typeof UpdateClientSchema>;
@@ -634,13 +641,129 @@ export async function updateClient(input: UpdateClientInput): Promise<UpdateClie
   if (v.notes !== undefined) patch.notes = v.notes;
 
   try {
-    const result = await db
-      .update(clients)
-      .set(patch)
-      .where(and(eq(clients.id, v.id), isNull(clients.deletedAt)))
-      .returning({ id: clients.id, name: clients.name });
-    if (result.length === 0) {
+    // The parent-row update and the registered-address upsert run in ONE
+    // transaction so a failed address write rolls back the client edit too
+    // (mirrors createClient's all-or-nothing semantics).
+    const txResult = await db.transaction(async (tx) => {
+      const updated = await tx
+        .update(clients)
+        .set(patch)
+        .where(and(eq(clients.id, v.id), isNull(clients.deletedAt)))
+        .returning({ id: clients.id, name: clients.name });
+      const client = updated[0];
+      if (!client) return null;
+
+      // Keep the registered address (a child `entity_addresses` row) consistent
+      // with the client. Two independent triggers:
+      //   (a) the address text was supplied  → upsert `line1` of the registered row;
+      //   (b) the GSTIN was part of this save → re-sync the registered row's state
+      //       code + per-address GSTIN, so a non-Maharashtra GSTIN added AFTER the
+      //       address can never leave a stale state code on the generated invoice.
+      // Only the kind='registered' row is ever touched, so a separately-managed
+      // billing/site address can never be clobbered. `gstinProvided` distinguishes
+      // "GSTIN omitted from this patch" from "GSTIN explicitly cleared" (→ null).
+      const gstinProvided = v.gstin !== undefined;
+      const addressText =
+        v.registeredAddress === undefined ? undefined : (v.registeredAddress ?? '').trim();
+      const wantAddressUpsert = addressText !== undefined && addressText.length > 0;
+
+      let addressChange: 'added' | 'updated' | null = null;
+
+      if (wantAddressUpsert || gstinProvided) {
+        // GSTIN to derive the place-of-supply state from: the patched value when
+        // supplied (null = cleared), otherwise the client's current value.
+        let gstinForState: string | null;
+        if (gstinProvided) {
+          gstinForState = v.gstin ?? null;
+        } else {
+          const [cur] = await tx
+            .select({ gstin: clients.gstin })
+            .from(clients)
+            .where(eq(clients.id, v.id))
+            .limit(1);
+          gstinForState = cur?.gstin ?? null;
+        }
+        const derivedState = stateFromGstin(gstinForState ?? undefined);
+
+        const [existing] = await tx
+          .select()
+          .from(entityAddresses)
+          .where(
+            and(
+              eq(entityAddresses.entityType, 'client'),
+              eq(entityAddresses.entityId, v.id),
+              eq(entityAddresses.kind, 'registered'),
+              isNull(entityAddresses.deletedAt),
+            ),
+          )
+          .limit(1);
+
+        if (existing) {
+          const set: Partial<typeof entityAddresses.$inferInsert> = { updatedBy: ctx.userId };
+          if (wantAddressUpsert) set.line1 = addressText!.slice(0, 250);
+          if (gstinProvided) {
+            // Track the client GSTIN exactly — including an explicit clear (→ null)
+            // so the address never carries a deleted GSTIN. Only overwrite the
+            // state code when we can actually derive one (a cleared GSTIN leaves
+            // the prior state, the best signal we have).
+            set.gstin = gstinForState;
+            if (derivedState) set.stateCode = derivedState;
+          } else if (derivedState) {
+            set.stateCode = derivedState;
+            set.gstin = gstinForState;
+          }
+          if (Object.keys(set).length > 1) {
+            await tx.update(entityAddresses).set(set).where(eq(entityAddresses.id, existing.id));
+            if (wantAddressUpsert) addressChange = 'updated';
+          }
+        } else if (wantAddressUpsert) {
+          // No registered row yet — create one, demoting any current primary so
+          // the single-primary-per-entity invariant holds (mirrors createAddress).
+          await tx
+            .update(entityAddresses)
+            .set({ isPrimary: false, updatedBy: ctx.userId })
+            .where(
+              and(
+                eq(entityAddresses.entityType, 'client'),
+                eq(entityAddresses.entityId, v.id),
+                eq(entityAddresses.isPrimary, true),
+                isNull(entityAddresses.deletedAt),
+              ),
+            );
+          await tx.insert(entityAddresses).values({
+            entityType: 'client',
+            entityId: v.id,
+            kind: 'registered',
+            line1: addressText!.slice(0, 250),
+            city: '—',
+            stateCode: derivedState ?? 'MH',
+            country: 'IN',
+            gstin: gstinForState,
+            isPrimary: true,
+            createdBy: ctx.userId,
+            updatedBy: ctx.userId,
+          });
+          addressChange = 'added';
+        }
+      }
+
+      return { client, addressChange, addressText };
+    });
+
+    if (!txResult) {
       return { ok: false, message: 'Client not found.', errors: {} };
+    }
+
+    // Audit trail: reflect the parent-row patch AND the registered-address
+    // mutation (a billing-critical field) so an address-only edit isn't recorded
+    // as an empty change set.
+    const auditChanges: Record<string, { before: null; after: unknown }> = Object.fromEntries(
+      Object.entries(patch)
+        .filter(([k]) => k !== 'updatedBy')
+        .map(([k, val]) => [k, { before: null, after: val }]),
+    );
+    if (txResult.addressChange) {
+      auditChanges.registeredAddress = { before: null, after: txResult.addressText ?? null };
     }
 
     await logAudit({
@@ -648,18 +771,16 @@ export async function updateClient(input: UpdateClientInput): Promise<UpdateClie
       entityType: 'client',
       entityId: v.id,
       action: 'update',
-      changes: Object.fromEntries(
-        Object.entries(patch)
-          .filter(([k]) => k !== 'updatedBy')
-          .map(([k, val]) => [k, { before: null, after: val }]),
-      ),
+      changes: auditChanges,
     });
     await logActivity({
       entityType: 'client',
       entityId: v.id,
       actorId: ctx.userId,
       kind: 'entity.updated',
-      summary: `Client "${result[0]!.name}" updated`,
+      summary: txResult.addressChange
+        ? `Client "${txResult.client.name}" updated (registered address ${txResult.addressChange})`
+        : `Client "${txResult.client.name}" updated`,
     });
 
     return { ok: true };

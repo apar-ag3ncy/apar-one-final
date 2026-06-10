@@ -427,6 +427,9 @@ export function ClientsApp({
               industry: input.industry || undefined,
               status: OS_TO_DB_CLIENT_STATUS[input.status] ?? 'active',
               accountManagerId: input.managerId ?? undefined,
+              gstin: input.gstin || undefined,
+              pan: input.pan || undefined,
+              registeredAddress: input.address || undefined,
             });
             if (!result.ok) {
               toast.error(result.message);
@@ -447,6 +450,9 @@ export function ClientsApp({
           initial={editing}
           onClose={() => setEditing(null)}
           onSubmit={async (input) => {
+            // NOTE: input.gstin/pan/address are not collected in edit mode and
+            // must NOT be forwarded here — the canonical edit path for GSTIN/PAN
+            // and the registered address is the client window's Edit dialog.
             const result = await updateClient({
               id: editing.id,
               name: input.name,
@@ -495,6 +501,14 @@ type ClientFormValues = {
   industry: string;
   managerId: string | null;
   status: string;
+  // Billing details — captured on CREATE only (present only when mode==='create').
+  // GSTIN + PAN + a registered address are what India B2B GST invoicing requires
+  // before an invoice can be raised, so capturing them up front lets a client be
+  // billing-ready from day one. They are intentionally absent in edit mode (the
+  // canonical edit path is the client window's Edit dialog).
+  gstin?: string;
+  pan?: string;
+  address?: string;
 };
 
 function ClientFormModal({
@@ -512,6 +526,11 @@ function ClientFormModal({
   const [industry, setIndustry] = useState(initial?.industry ?? '');
   const [managerId, setManagerId] = useState<string>(initial?.managerId ?? '');
   const [status, setStatus] = useState(initial?.status ?? CLIENT_STATUSES[0]!);
+  // Billing fields are captured on create only (mirrors the vendor form), so
+  // they start empty — the OS Client shape doesn't carry them for edit prefill.
+  const [gstin, setGstin] = useState('');
+  const [pan, setPan] = useState('');
+  const [address, setAddress] = useState('');
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const nameRef = useRef<HTMLInputElement | null>(null);
@@ -542,6 +561,10 @@ function ClientFormModal({
     const n = name.trim();
     if (!n) return setErr('Client name is required.');
     if (!industry.trim()) return setErr('Industry is required.');
+    const g = gstin.trim().toUpperCase();
+    if (g && !GSTIN_RE.test(g)) {
+      return setErr('GSTIN format looks off — expected 15 chars like 27ABCDE1234F1Z5.');
+    }
     setErr(null);
     setBusy(true);
     try {
@@ -550,6 +573,10 @@ function ClientFormModal({
         industry: industry.trim(),
         managerId: managerId || null,
         status,
+        // Billing fields are only collected (and only saved) on create.
+        ...(mode === 'create'
+          ? { gstin: g, pan: pan.trim().toUpperCase(), address: address.trim() }
+          : {}),
       });
     } finally {
       setBusy(false);
@@ -595,6 +622,41 @@ function ClientFormModal({
             ))}
           </select>
         </Field>
+        {/* Billing details — GSTIN/PAN live on the client row, the address in
+            entity_addresses. All optional at create; required before an invoice
+            can be raised. Shown only on create (mirrors the vendor form); edit
+            them later from the client window's Edit dialog so the form never
+            shows a field that won't save here. */}
+        {mode === 'create' ? (
+          <>
+            <Field label="GSTIN" hint="Optional. Required before invoicing. 15 chars.">
+              <input
+                value={gstin}
+                onChange={(e) => setGstin(e.target.value.toUpperCase())}
+                placeholder="27ABCDE1234F1Z5"
+                className="font-mono"
+                maxLength={15}
+              />
+            </Field>
+            <Field label="PAN" hint="Optional. Required before invoicing.">
+              <input
+                value={pan}
+                onChange={(e) => setPan(e.target.value.toUpperCase())}
+                placeholder="ABCDE1234F"
+                className="font-mono"
+                maxLength={10}
+              />
+            </Field>
+            <Field label="Registered address" full hint="Optional. Used on GST invoices.">
+              <textarea
+                rows={2}
+                value={address}
+                onChange={(e) => setAddress(e.target.value)}
+                placeholder="Registered office address"
+              />
+            </Field>
+          </>
+        ) : null}
         {err && <div className="os-form-error">{err}</div>}
         <div className="os-form-actions">
           <button type="button" className="btn" onClick={onClose} disabled={busy}>
