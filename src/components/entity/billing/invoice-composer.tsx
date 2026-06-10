@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { DownloadIcon, EyeIcon, PlusIcon, Trash2Icon } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -28,12 +28,15 @@ import { formatINR, paiseToRupees, rupeesToPaise } from '@/lib/money';
 import {
   createDraftInvoice,
   getInvoice,
+  getNextInvoiceNumber,
   updateDraftInvoice,
   type CreateInvoiceInput,
 } from '@/lib/server/billing/invoices';
 import { renderInvoicePreview } from '@/lib/server/billing/invoice-preview';
 import { sendInvoice } from '@/lib/server/billing/invoice-transitions';
 import { getDocumentSignedUrl } from '@/lib/server/entities/documents';
+import { listProjectOptionsForClient, type EntityOption } from '@/lib/server/entities/options';
+import { listAddresses, type AddressRow } from '@/lib/server/entities/addresses';
 import type { InvoiceThemeSummary } from '@/lib/server/billing/invoice-themes';
 import { GST_STATES_BY_NAME } from '@/lib/india/gst-states';
 
@@ -88,6 +91,22 @@ function computeLine(l: LineDraft): ComputedLine {
 }
 
 /* -------------------------------------------------------------------------- */
+/* Header pickers                                                              */
+/* -------------------------------------------------------------------------- */
+
+/** Radix Select forbids an empty-string item value, so the "no project"
+ *  option uses this sentinel; it maps back to `null` on submit. */
+const NO_PROJECT = '__none__';
+
+/** "billing — 12 MG Road, Pune 27" style label for a bill-to option. */
+function addressLabel(a: AddressRow): string {
+  const where = [a.line1, [a.city, a.stateCode].filter(Boolean).join(' ')]
+    .filter((s) => s.trim().length > 0)
+    .join(', ');
+  return `${a.kind} — ${where}`;
+}
+
+/* -------------------------------------------------------------------------- */
 /* Composer dialog                                                            */
 /* -------------------------------------------------------------------------- */
 
@@ -139,10 +158,27 @@ export function InvoiceComposerDialog({
   const [terms, setTerms] = useState('');
   const [notes, setNotes] = useState('');
   const [themeId, setThemeId] = useState<string>('');
-  // Preserved across edits (no picker in this composer): a draft created with a
-  // project keeps its association when re-saved here.
   const [projectId, setProjectId] = useState<string | null>(null);
   const [lines, setLines] = useState<LineDraft[]>([emptyLine()]);
+
+  // Document type (invoice vs proforma) and the editable document number.
+  const [documentType, setDocumentType] = useState<'invoice' | 'proforma'>('invoice');
+  const [documentNumber, setDocumentNumber] = useState('');
+  // The auto-suggested next number for the current FY; used to flag an
+  // out-of-sequence manual override (non-blocking).
+  const [suggestedNumber, setSuggestedNumber] = useState('');
+  // Mirrors the latest suggested number so the FY-refetch effect can decide
+  // whether the field still holds the auto value (and may auto-advance) without
+  // nesting state setters or re-running on every keystroke.
+  const suggestedNumberRef = useRef('');
+  useEffect(() => {
+    suggestedNumberRef.current = suggestedNumber;
+  }, [suggestedNumber]);
+
+  // Bill-to address + project options, scoped to this client.
+  const [addresses, setAddresses] = useState<readonly AddressRow[]>([]);
+  const [billToAddressId, setBillToAddressId] = useState<string | null>(null);
+  const [projectOptions, setProjectOptions] = useState<readonly EntityOption[]>([]);
 
   // (Re)initialise when the dialog opens. For an existing draft, hydrate from
   // the DB; for a new invoice, reset to a single empty line.
@@ -170,6 +206,10 @@ export function InvoiceComposerDialog({
             setNotes(invoice.notes ?? '');
             setThemeId(invoice.themeId ?? '');
             setProjectId(invoice.projectId ?? null);
+            setDocumentType(invoice.documentType);
+            setDocumentNumber(invoice.documentNumber);
+            setSuggestedNumber(invoice.documentNumber);
+            setBillToAddressId(invoice.billToAddressId ?? null);
             setLines(
               ls.length > 0
                 ? ls.map((l) => ({
@@ -190,20 +230,86 @@ export function InvoiceComposerDialog({
             if (!cancelled) setBusy(null);
           });
       } else {
-        setDocumentDate(TODAY_ISO());
+        const today = TODAY_ISO();
+        setDocumentDate(today);
         setDueDate('');
         setPlaceOfSupply(clientStateCode ?? '');
         setTerms('');
         setNotes('');
         setThemeId(defaultThemeId ?? '');
         setProjectId(null);
+        setDocumentType('invoice');
+        setDocumentNumber('');
+        setSuggestedNumber('');
+        setBillToAddressId(null);
         setLines([emptyLine()]);
+        // Pre-fill the editable number with the next FY series number.
+        getNextInvoiceNumber(today)
+          .then((r) => {
+            if (cancelled) return;
+            setSuggestedNumber(r.documentNumber);
+            setDocumentNumber(r.documentNumber);
+          })
+          .catch(() => {
+            /* non-fatal: the field stays editable and blank */
+          });
       }
     });
     return () => {
       cancelled = true;
     };
   }, [open, existingInvoiceId, supplierStateCode, clientStateCode, defaultThemeId]);
+
+  // Load this client's projects + bill-to addresses for the header pickers.
+  // On create, default bill-to to the primary (else first) address.
+  useEffect(() => {
+    if (!open || !clientId) return;
+    let cancelled = false;
+    listProjectOptionsForClient(clientId)
+      .then((opts) => {
+        if (!cancelled) setProjectOptions(opts);
+      })
+      .catch(() => {
+        if (!cancelled) setProjectOptions([]);
+      });
+    listAddresses({ entityType: 'client', entityId: clientId })
+      .then((rows) => {
+        if (cancelled) return;
+        setAddresses(rows);
+        if (!existingInvoiceId) {
+          const primary = rows.find((a) => a.isPrimary) ?? rows[0] ?? null;
+          setBillToAddressId(primary?.id ?? null);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setAddresses([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, clientId, existingInvoiceId]);
+
+  // Best-effort: when the document date's FY changes (create mode only), refetch
+  // the suggested next number so the out-of-sequence hint stays accurate.
+  useEffect(() => {
+    if (!open || existingInvoiceId || busy === 'loading') return;
+    let cancelled = false;
+    const prevSuggested = suggestedNumberRef.current;
+    getNextInvoiceNumber(documentDate)
+      .then((r) => {
+        if (cancelled) return;
+        setSuggestedNumber(r.documentNumber);
+        // Only auto-advance the field if the user hadn't diverged from the
+        // previous suggestion (i.e. they're still on the auto value).
+        setDocumentNumber((cur) => (cur === prevSuggested || cur === '' ? r.documentNumber : cur));
+      })
+      .catch(() => {
+        /* non-fatal */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [documentDate, open, existingInvoiceId, busy]);
 
   // Revoke object URLs to avoid leaks.
   useEffect(() => {
@@ -214,6 +320,13 @@ export function InvoiceComposerDialog({
 
   const computed = useMemo(() => lines.map(computeLine), [lines]);
   const intraState = placeOfSupply.trim() === supplierStateCode.trim();
+
+  // Non-blocking out-of-sequence hint: the entered number differs from the
+  // auto-suggested next number for the current FY.
+  const outOfSequence =
+    suggestedNumber.trim().length > 0 &&
+    documentNumber.trim().length > 0 &&
+    documentNumber.trim() !== suggestedNumber.trim();
 
   const totals = useMemo(() => {
     const subtotal = computed.reduce((a, c) => a + c.taxableValuePaise, 0n);
@@ -269,6 +382,9 @@ export function InvoiceComposerDialog({
     const base: Omit<CreateInvoiceInput, 'idempotencyKey'> = {
       clientId,
       projectId,
+      documentType,
+      documentNumber: documentNumber.trim() === '' ? null : documentNumber.trim(),
+      billToAddressId,
       documentDate,
       dueDate: dueDate.trim() === '' ? null : dueDate,
       subtotalPaise: totals.subtotal,
@@ -365,6 +481,40 @@ export function InvoiceComposerDialog({
           </div>
         ) : (
           <div className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
+            {/* Document type + number */}
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <div className="grid gap-1.5">
+                <Label htmlFor="inv-type">Document type</Label>
+                <Select
+                  value={documentType}
+                  onValueChange={(v) => setDocumentType(v as 'invoice' | 'proforma')}
+                >
+                  <SelectTrigger id="inv-type">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="invoice">Invoice</SelectItem>
+                    <SelectItem value="proforma">Proforma</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="grid gap-1.5 sm:col-span-3">
+                <Label htmlFor="inv-number">Invoice number</Label>
+                <Input
+                  id="inv-number"
+                  value={documentNumber}
+                  placeholder={suggestedNumber || 'Auto-allocated on save'}
+                  onChange={(e) => setDocumentNumber(e.target.value)}
+                />
+                {outOfSequence ? (
+                  <p className="text-xs text-amber-600 dark:text-amber-500">
+                    This is out of sequence — make sure it doesn’t leave a gap (next in series:{' '}
+                    {suggestedNumber}).
+                  </p>
+                ) : null}
+              </div>
+            </div>
+
             {/* Header fields */}
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
               <div className="grid gap-1.5">
@@ -416,6 +566,51 @@ export function InvoiceComposerDialog({
                   </SelectContent>
                 </Select>
               </div>
+            </div>
+
+            {/* Project + bill-to address */}
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="grid gap-1.5">
+                <Label htmlFor="inv-project">Project</Label>
+                <Select
+                  value={projectId ?? NO_PROJECT}
+                  onValueChange={(v) => setProjectId(v === NO_PROJECT ? null : v)}
+                >
+                  <SelectTrigger id="inv-project">
+                    <SelectValue placeholder="— No project —" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={NO_PROJECT}>— No project —</SelectItem>
+                    {projectOptions.map((p) => (
+                      <SelectItem key={p.id} value={p.id}>
+                        {p.label}
+                        {p.sub ? ` (${p.sub})` : ''}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              {addresses.length >= 2 ? (
+                <div className="grid gap-1.5">
+                  <Label htmlFor="inv-billto">Bill to</Label>
+                  <Select
+                    value={billToAddressId ?? undefined}
+                    onValueChange={(v) => setBillToAddressId(v)}
+                  >
+                    <SelectTrigger id="inv-billto">
+                      <SelectValue placeholder="Select address" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {addresses.map((a) => (
+                        <SelectItem key={a.id} value={a.id}>
+                          {addressLabel(a)}
+                          {a.isPrimary ? ' (primary)' : ''}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              ) : null}
             </div>
 
             {/* Lines */}

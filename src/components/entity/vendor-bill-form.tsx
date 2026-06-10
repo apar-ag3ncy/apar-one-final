@@ -10,6 +10,7 @@ import {
 } from '@/lib/server/entities/entity-documents';
 import { listClients } from '@/lib/server-stub/entity-actions';
 import { listVendors } from '@/lib/server-stub/entity-actions';
+import { listProjectOptionsForClient, type EntityOption } from '@/lib/server/entities/options';
 import { rupeesToPaise } from '@/lib/money';
 
 type LineItem = { description: string; amountRupees: string; gstRupees: string };
@@ -70,6 +71,7 @@ export function VendorBillForm({
   const [vendorOptions, setVendorOptions] = useState<Array<{ id: string; name: string }>>([]);
   const [clientOptions, setClientOptions] = useState<Array<{ id: string; name: string }>>([]);
   const [docOptions, setDocOptions] = useState<readonly EntityDocumentRow[]>([]);
+  const [projectOptions, setProjectOptions] = useState<readonly EntityOption[]>([]);
 
   // SPEC-AMENDMENT-001 §3.2: attribution has NO default — the user must
   // explicitly choose between client / opex / asset. The exception is when
@@ -80,6 +82,7 @@ export function VendorBillForm({
   );
   const [vendorId, setVendorId] = useState<string>(vendorIdProp ?? '');
   const [clientId, setClientId] = useState<string>(clientIdProp ?? '');
+  const [selectedProjectId, setSelectedProjectId] = useState<string>('');
   const [expenseAccountCode, setExpenseAccountCode] = useState<
     '6100' | '6200' | '6300' | '6400' | '6900' | '8100'
   >('6300');
@@ -111,6 +114,7 @@ export function VendorBillForm({
       setBillDocumentId('');
       setVendorId(vendorIdProp ?? '');
       setClientId(clientIdProp ?? '');
+      setSelectedProjectId('');
       setAttribution(lockAttributionToClient || clientIdProp ? 'client' : null);
     });
 
@@ -172,6 +176,34 @@ export function VendorBillForm({
       cancelled = true;
     };
   }, [open, attribution, vendorId, clientId]);
+
+  // Load the client's active projects for the "expenses on behalf" picker.
+  // Only relevant for client-attributed bills; clear (and reset the choice)
+  // whenever the client changes or the attribution leaves 'client'.
+  useEffect(() => {
+    if (!open) return;
+    if (attribution !== 'client' || !clientId) {
+      queueMicrotask(() => {
+        setProjectOptions([]);
+        setSelectedProjectId('');
+      });
+      return;
+    }
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (!cancelled) setSelectedProjectId('');
+    });
+    listProjectOptionsForClient(clientId)
+      .then((ps) => {
+        if (!cancelled) setProjectOptions(ps);
+      })
+      .catch(() => {
+        if (!cancelled) setProjectOptions([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, attribution, clientId]);
 
   function addLine() {
     setLineItems((prev) => [...prev, { description: '', amountRupees: '', gstRupees: '' }]);
@@ -254,6 +286,7 @@ export function VendorBillForm({
           attribution: 'client',
           ...common,
           onBehalfOfClientId: clientId,
+          projectId: selectedProjectId || undefined,
           tdsAmountPaise,
           ...(effectiveTdsSection ? { tdsSection: effectiveTdsSection } : {}),
         };
@@ -533,6 +566,30 @@ export function VendorBillForm({
               </div>
             )}
           </div>
+
+          {/* Project (expenses on behalf) — only when billing on behalf of a
+              known client. Scopes the bill to one of that client's projects. */}
+          {attribution === 'client' && clientId ? (
+            <div className="os-field">
+              <span className="os-field-label">Project (optional)</span>
+              <select
+                value={selectedProjectId}
+                onChange={(e) => setSelectedProjectId(e.target.value)}
+                disabled={submitting}
+                style={osInputStyle}
+              >
+                <option value="">— No project —</option>
+                {projectOptions.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.sub ? `${p.label} (${p.sub})` : p.label}
+                  </option>
+                ))}
+              </select>
+              <p className="os-field-hint">
+                Link this client-billed expense to one of the client&apos;s active projects.
+              </p>
+            </div>
+          ) : null}
 
           {/* Source document */}
           <div className="os-field">

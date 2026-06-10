@@ -1,6 +1,6 @@
 'use client';
 
-import { MapPinIcon, PencilIcon, PlusIcon, Trash2Icon } from 'lucide-react';
+import { MapPinIcon, PencilIcon, PlusIcon, StarIcon, Trash2Icon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { EmptyState } from '@/components/shared/empty-state';
@@ -33,6 +33,8 @@ export type AddressListProps = {
   entityName?: string;
   onAdd?: () => void;
   onEdit?: (address: Address) => void;
+  /** Promote a non-primary address to primary. Button only shows on non-primary cards. */
+  onSetPrimary?: (address: Address) => void;
   onDelete?: (address: Address) => void;
   className?: string;
 };
@@ -42,6 +44,7 @@ export function AddressList({
   entityName,
   onAdd,
   onEdit,
+  onSetPrimary,
   onDelete,
   className,
 }: AddressListProps) {
@@ -77,6 +80,9 @@ export function AddressList({
             key={address.id}
             address={address}
             onEdit={onEdit ? () => onEdit(address) : undefined}
+            onSetPrimary={
+              onSetPrimary && !address.isPrimary ? () => onSetPrimary(address) : undefined
+            }
             onDelete={onDelete ? () => onDelete(address) : undefined}
           />
         ))}
@@ -88,10 +94,12 @@ export function AddressList({
 function AddressCard({
   address,
   onEdit,
+  onSetPrimary,
   onDelete,
 }: {
   address: Address;
   onEdit?: () => void;
+  onSetPrimary?: () => void;
   onDelete?: () => void;
 }) {
   return (
@@ -117,6 +125,17 @@ function AddressCard({
           ) : null}
         </div>
         <div className="flex shrink-0 items-center gap-1">
+          {onSetPrimary ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onSetPrimary}
+              aria-label="Set as primary address"
+              title="Set as primary"
+            >
+              <StarIcon className="size-3.5" aria-hidden />
+            </Button>
+          ) : null}
           {onEdit ? (
             <Button variant="ghost" size="sm" onClick={onEdit} aria-label="Edit address">
               <PencilIcon className="size-3.5" aria-hidden />
