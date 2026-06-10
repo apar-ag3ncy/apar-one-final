@@ -3,7 +3,7 @@ import 'server-only';
 import { Document, Image, Page, StyleSheet, Text, View, renderToBuffer } from '@react-pdf/renderer';
 import * as React from 'react';
 
-import { APAR_MARK_DATA_URI } from '@/lib/brand/apar-mark';
+import { APAR_ORANGE_MARK_DATA_URI } from '@/lib/brand/apar-orange-mark';
 import { formatINR } from '@/lib/money';
 
 /**
@@ -301,7 +301,7 @@ function Header({
         {/* react-pdf's <Image> is a PDF primitive, not an HTML <img> — no `alt`. */}
         {/* eslint-disable-next-line jsx-a11y/alt-text */}
         <Image
-          src={theme.logoDataUri ?? APAR_MARK_DATA_URI}
+          src={theme.logoDataUri ?? APAR_ORANGE_MARK_DATA_URI}
           style={{ height: 40, maxWidth: 180, marginBottom: 8, objectFit: 'contain' }}
         />
         <Text>{data.supplier.address}</Text>
