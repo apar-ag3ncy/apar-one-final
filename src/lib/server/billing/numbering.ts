@@ -117,12 +117,14 @@ async function readLatestSequence(
   let docs: Array<{ documentNumber: string }> = [];
   switch (kind) {
     case 'invoice':
+      // ALL rows for the FY (not just the lexicographic top): invoices may now
+      // carry user-supplied document numbers that don't conform to the mask, so
+      // the next sequence must be the numeric MAX over conforming rows, computed
+      // below — never the lexicographically-highest string.
       docs = await client
         .select({ documentNumber: invoices.documentNumber })
         .from(invoices)
-        .where(eq(invoices.financialYearStart, fyStart))
-        .orderBy(desc(invoices.documentNumber))
-        .limit(1);
+        .where(eq(invoices.financialYearStart, fyStart));
       break;
     case 'estimate':
       docs = await client
@@ -165,9 +167,18 @@ async function readLatestSequence(
         .limit(1);
       break;
   }
-  if (docs.length === 0 || !docs[0]) return 0;
-  const seq = parseSequence(docs[0].documentNumber, mask);
-  return Number.isFinite(seq) ? seq : 0;
+  // Numeric max over rows that parse under the configured mask. A user-supplied
+  // invoice number that doesn't conform (or sorts lexicographically above the
+  // series) is ignored here rather than resetting the sequence to 0 — which
+  // would collide with the existing low numbers on the next auto-allocation and
+  // brick auto-numbering for the whole FY. Non-invoice kinds return a single row
+  // (their lexicographic top == numeric max, since they're auto-only).
+  let max = 0;
+  for (const d of docs) {
+    const seq = parseSequence(d.documentNumber, mask);
+    if (Number.isFinite(seq) && seq > max) max = seq;
+  }
+  return max;
 }
 
 /**

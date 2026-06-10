@@ -5,7 +5,7 @@ import { z } from 'zod';
 
 import { fyStartForDate, todayIstIso } from '@/lib/billing/fy';
 import { db, type DbClient } from '@/lib/db/client';
-import { clients, entityAddresses, invoiceLines, invoices } from '@/lib/db/schema';
+import { clients, entityAddresses, invoiceLines, invoices, projects } from '@/lib/db/schema';
 import { AppError } from '@/lib/errors';
 import { isValidStateCode, stateNameFromCode } from '@/lib/india/gst-states';
 import { requireCapability } from '@/lib/rbac';
@@ -67,6 +67,16 @@ const TaxSplitSchema = z
 const CreateInvoiceInputSchema = z.object({
   clientId: z.string().uuid(),
   projectId: z.string().uuid().nullish(),
+  /** Document type. 'proforma' is a labelled proforma; it otherwise behaves
+   *  like a tax 'invoice' (same numbering + ledger posting on send). */
+  documentType: z.enum(['invoice', 'proforma']).default('invoice'),
+  /** Optional user-supplied document number. Omitted → the next number in the
+   *  FY series is auto-allocated. Supplied → used verbatim; a duplicate within
+   *  the FY is rejected (never silently re-numbered). */
+  documentNumber: z.string().trim().min(1).max(60).nullish(),
+  /** Chosen bill-to address (one of the client's entity_addresses). Null → the
+   *  PDF falls back to the registered/primary address. */
+  billToAddressId: z.string().uuid().nullish(),
   documentDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'documentDate must be YYYY-MM-DD'),
   dueDate: z
     .string()
@@ -166,6 +176,48 @@ async function loadClientBillingReadiness(
   };
 }
 
+/** Reject a project that doesn't belong to this client (cross-client attach). */
+async function assertProjectBelongsToClient(
+  projectId: string | null | undefined,
+  clientId: string,
+  client: DbClient = db,
+): Promise<void> {
+  if (!projectId) return;
+  const [p] = await client
+    .select({ clientId: projects.clientId })
+    .from(projects)
+    .where(and(eq(projects.id, projectId), isNull(projects.deletedAt)))
+    .limit(1);
+  if (!p) throw new AppError('validation', 'The selected project no longer exists.');
+  if (p.clientId !== clientId) {
+    throw new AppError('validation', 'The selected project belongs to a different client.');
+  }
+}
+
+/** Reject a bill-to address that isn't a live address of this client. */
+async function assertBillToAddressBelongsToClient(
+  addressId: string | null | undefined,
+  clientId: string,
+  client: DbClient = db,
+): Promise<void> {
+  if (!addressId) return;
+  const [a] = await client
+    .select({ id: entityAddresses.id })
+    .from(entityAddresses)
+    .where(
+      and(
+        eq(entityAddresses.id, addressId),
+        eq(entityAddresses.entityType, 'client'),
+        eq(entityAddresses.entityId, clientId),
+        isNull(entityAddresses.deletedAt),
+      ),
+    )
+    .limit(1);
+  if (!a) {
+    throw new AppError('validation', 'The selected bill-to address is not valid for this client.');
+  }
+}
+
 /** Read a client's invoice-readiness — used by the composer/section to gate
  *  "New invoice" and to pre-fill place of supply. */
 export async function getClientBillingReadiness(clientId: string): Promise<ClientBillingReadiness> {
@@ -189,6 +241,10 @@ export async function createDraftInvoice(input: CreateInvoiceInput): Promise<Cre
       `This client is missing ${readiness.missing.join(', ')}. Add the client's GSTIN, PAN and address before generating an invoice.`,
     );
   }
+
+  // A linked project / bill-to address must belong to THIS client.
+  await assertProjectBelongsToClient(v.projectId, v.clientId);
+  await assertBillToAddressBelongsToClient(v.billToAddressId, v.clientId);
 
   // Short-circuit on idempotency key — if we've already created an
   // invoice with this key, return the same id.
@@ -220,11 +276,33 @@ export async function createDraftInvoice(input: CreateInvoiceInput): Promise<Cre
   };
   const flags = await runInvoiceValidations(snapshot);
 
-  const { id, documentNumber } = await withNumberingRetry(async () =>
+  const runInsert = async () =>
     db.transaction(async (tx) =>
       insertDraftInvoice(tx as unknown as DbClient, ctx.userId, v, fyStart, flags),
-    ),
-  );
+    );
+
+  let id: string;
+  let documentNumber: string;
+  const userNumber = v.documentNumber?.trim();
+  if (userNumber) {
+    // User chose the number: use it verbatim. A duplicate within the FY is a
+    // clean conflict — never silently re-number the user's choice (which the
+    // auto-allocation retry would otherwise do).
+    try {
+      ({ id, documentNumber } = await runInsert());
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (/duplicate key value/i.test(msg) && /document_number_per_fy_unique/i.test(msg)) {
+        throw new AppError(
+          'conflict',
+          `Invoice number "${userNumber}" already exists for this financial year. Choose a different number.`,
+        );
+      }
+      throw err;
+    }
+  } else {
+    ({ id, documentNumber } = await withNumberingRetry(runInsert));
+  }
 
   return { id, documentNumber, validationFlags: flags };
 }
@@ -236,17 +314,39 @@ async function insertDraftInvoice(
   fyStart: string,
   validationFlagsToStore: ValidationFlag[],
 ): Promise<{ id: string; documentNumber: string }> {
-  const { documentNumber } = await nextDocumentNumber('invoice', fyStart, tx);
+  // User-supplied number wins; otherwise allocate the next in the FY series.
+  // Pre-check uniqueness for the user-supplied path so a duplicate surfaces as a
+  // friendly conflict rather than a raw constraint error.
+  const userNumber = v.documentNumber?.trim();
+  let documentNumber: string;
+  if (userNumber) {
+    const dupe = await tx
+      .select({ id: invoices.id })
+      .from(invoices)
+      .where(and(eq(invoices.financialYearStart, fyStart), eq(invoices.documentNumber, userNumber)))
+      .limit(1);
+    if (dupe[0]) {
+      throw new AppError(
+        'conflict',
+        `Invoice number "${userNumber}" already exists for this financial year. Choose a different number.`,
+      );
+    }
+    documentNumber = userNumber;
+  } else {
+    ({ documentNumber } = await nextDocumentNumber('invoice', fyStart, tx));
+  }
 
   const [row] = await tx
     .insert(invoices)
     .values({
       documentNumber,
+      documentType: v.documentType ?? 'invoice',
       documentDate: v.documentDate,
       dueDate: v.dueDate ?? null,
       financialYearStart: fyStart,
       clientId: v.clientId,
       projectId: v.projectId ?? null,
+      billToAddressId: v.billToAddressId ?? null,
       state: 'draft',
       subtotalPaise: v.subtotalPaise,
       capturedTaxTotalPaise: v.capturedTaxTotalPaise,
@@ -329,11 +429,59 @@ export async function updateDraftInvoice(
     const patch: Partial<typeof invoices.$inferInsert> = { updatedBy: ctx.userId };
     if (v.clientId !== undefined) patch.clientId = v.clientId;
     if (v.projectId !== undefined) patch.projectId = v.projectId ?? null;
+    if (v.documentType !== undefined) patch.documentType = v.documentType;
+    if (v.billToAddressId !== undefined) patch.billToAddressId = v.billToAddressId ?? null;
     if (v.documentDate !== undefined) {
       patch.documentDate = v.documentDate;
       patch.financialYearStart = fyStartForDate(v.documentDate);
     }
     if (v.dueDate !== undefined) patch.dueDate = v.dueDate ?? null;
+    // Manual number override (draft only). Reject a duplicate within the FY.
+    if (v.documentNumber !== undefined && v.documentNumber?.trim()) {
+      const newNum = v.documentNumber.trim();
+      if (newNum !== current.documentNumber) {
+        const effectiveFy = patch.financialYearStart ?? current.financialYearStart;
+        const dupe = await tx
+          .select({ id: invoices.id })
+          .from(invoices)
+          .where(
+            and(eq(invoices.financialYearStart, effectiveFy), eq(invoices.documentNumber, newNum)),
+          )
+          .limit(1);
+        if (dupe[0]) {
+          throw new AppError(
+            'conflict',
+            `Invoice number "${newNum}" already exists for this financial year. Choose a different number.`,
+          );
+        }
+        patch.documentNumber = newNum;
+      }
+    }
+    // FY moved (date change) without a number change: the existing number is
+    // re-keyed into the new FY — pre-check it there too so a collision surfaces
+    // as a friendly conflict rather than a raw unique-violation.
+    if (
+      patch.financialYearStart &&
+      patch.financialYearStart !== current.financialYearStart &&
+      patch.documentNumber === undefined
+    ) {
+      const dupe = await tx
+        .select({ id: invoices.id })
+        .from(invoices)
+        .where(
+          and(
+            eq(invoices.financialYearStart, patch.financialYearStart),
+            eq(invoices.documentNumber, current.documentNumber),
+          ),
+        )
+        .limit(1);
+      if (dupe[0]) {
+        throw new AppError(
+          'conflict',
+          `Invoice number "${current.documentNumber}" already exists in the financial year of the new date. Change the number.`,
+        );
+      }
+    }
     if (v.subtotalPaise !== undefined) patch.subtotalPaise = v.subtotalPaise;
     if (v.capturedTaxTotalPaise !== undefined)
       patch.capturedTaxTotalPaise = v.capturedTaxTotalPaise;
@@ -344,6 +492,23 @@ export async function updateDraftInvoice(
     if (v.terms !== undefined) patch.terms = v.terms ?? null;
     if (v.notes !== undefined) patch.notes = v.notes ?? null;
     if (v.themeId !== undefined) patch.themeId = v.themeId ?? null;
+
+    // A newly-set project / bill-to address must belong to THIS client.
+    const effectiveClientId = patch.clientId ?? current.clientId;
+    if (v.projectId !== undefined) {
+      await assertProjectBelongsToClient(
+        v.projectId ?? null,
+        effectiveClientId,
+        tx as unknown as DbClient,
+      );
+    }
+    if (v.billToAddressId !== undefined) {
+      await assertBillToAddressBelongsToClient(
+        v.billToAddressId ?? null,
+        effectiveClientId,
+        tx as unknown as DbClient,
+      );
+    }
 
     // Re-derive a full snapshot for validation by merging the patch
     // over the current row (and the new lines if supplied).
@@ -413,6 +578,26 @@ export async function getInvoice(id: string): Promise<InvoiceWithLines | null> {
     .where(eq(invoiceLines.invoiceId, invoiceId))
     .orderBy(asc(invoiceLines.lineNo));
   return { invoice, lines };
+}
+
+/**
+ * The next auto-allocated invoice number for the FY of `documentDate` (today
+ * when omitted). Read-only — used to PRE-FILL the composer's editable number
+ * field. The actual number is still allocated atomically at create time, so a
+ * concurrent create may take this exact number first; the create then rejects a
+ * duplicate. Returns the FY start too so the caller can show the series.
+ */
+export async function getNextInvoiceNumber(
+  documentDate?: string,
+): Promise<{ documentNumber: string; financialYearStart: string }> {
+  const ctx = await getActorContext();
+  requireCapability(ctx, 'create_invoice');
+  const settings = await loadBillingSettings();
+  const dateIso =
+    documentDate && /^\d{4}-\d{2}-\d{2}$/.test(documentDate) ? documentDate : todayIstIso();
+  const fyStart = fyStartForDate(dateIso, settings.fyStartMonth);
+  const { documentNumber } = await nextDocumentNumber('invoice', fyStart);
+  return { documentNumber, financialYearStart: fyStart };
 }
 
 export type ListInvoicesFilters = {

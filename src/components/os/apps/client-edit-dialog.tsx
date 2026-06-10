@@ -25,6 +25,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
+import { listAddresses } from '@/lib/server/entities/addresses';
 import { updateClient, type UpdateClientInput } from '@/lib/server/entities/clients';
 import type { Client, ClientStatus } from '@/components/clients/types';
 
@@ -53,17 +54,19 @@ const formSchema = z.object({
   status: z.enum(['active', 'onboarding', 'inactive']),
   gstin: z.string().max(20).optional(),
   pan: z.string().max(20).optional(),
+  address: z.string().max(2000).optional(),
   notes: z.string().max(2000).optional(),
 });
 type FormValues = z.infer<typeof formSchema>;
 
-function toDefaults(c: Client): FormValues {
+function toDefaults(c: Client, address = ''): FormValues {
   return {
     name: c.name,
     industry: c.industry ?? '',
     status: toEditableStatus(c.status),
     gstin: c.gstin ?? '',
     pan: c.pan ?? '',
+    address,
     notes: c.notes ?? '',
   };
 }
@@ -76,13 +79,40 @@ function toDefaults(c: Client): FormValues {
 export function ClientEditDialog({ client, onSaved }: { client: Client; onSaved: () => void }) {
   const [open, setOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  // The registered address lives in `entity_addresses` (not on the `clients`
+  // row), so it's loaded lazily when the dialog opens. We keep the loaded value
+  // to diff against on save, so an in-flight load can never wipe the address.
+  const [initialAddress, setInitialAddress] = useState('');
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
     defaultValues: toDefaults(client),
   });
 
   useEffect(() => {
-    if (open) form.reset(toDefaults(client));
+    if (!open) return;
+    form.reset(toDefaults(client));
+    setInitialAddress('');
+    let active = true;
+    listAddresses({ entityType: 'client', entityId: client.id })
+      .then((rows) => {
+        // Don't clobber text the user already started typing while the load was
+        // in flight — only seed the field if it's still pristine.
+        if (!active || form.getFieldState('address').isDirty) return;
+        const registered =
+          rows.find((r) => r.kind === 'registered') ??
+          rows.find((r) => r.isPrimary) ??
+          rows[0] ??
+          null;
+        const line = registered?.line1 ?? '';
+        setInitialAddress(line);
+        form.setValue('address', line);
+      })
+      .catch(() => {
+        /* address is optional — a load failure just leaves the field empty */
+      });
+    return () => {
+      active = false;
+    };
   }, [open, client, form]);
 
   const submit = form.handleSubmit(async (values) => {
@@ -99,6 +129,14 @@ export function ClientEditDialog({ client, onSaved }: { client: Client; onSaved:
       if ((values.gstin ?? '') !== (client.gstin ?? ''))
         patch.gstin = values.gstin ? values.gstin : null;
       if ((values.pan ?? '') !== (client.pan ?? '')) patch.pan = values.pan ? values.pan : null;
+      // Only send a real, non-empty address change. Removing an address isn't
+      // supported here (the server treats empty as a no-op to guard against an
+      // in-flight load wiping data) — use the Addresses editor for that — so we
+      // never send a null that would report a phantom "saved".
+      const nextAddress = (values.address ?? '').trim();
+      if (nextAddress.length > 0 && nextAddress !== initialAddress.trim()) {
+        patch.registeredAddress = nextAddress;
+      }
       if ((values.notes ?? '') !== (client.notes ?? ''))
         patch.notes = values.notes ? values.notes : null;
 
@@ -199,6 +237,19 @@ export function ClientEditDialog({ client, onSaved }: { client: Client; onSaved:
                 <p className="text-destructive text-xs">{form.formState.errors.pan.message}</p>
               ) : null}
             </div>
+          </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor="client-address">Registered address</Label>
+            <Textarea
+              id="client-address"
+              rows={2}
+              placeholder="Registered office address (used on GST invoices)"
+              {...form.register('address')}
+            />
+            <p className="text-muted-foreground text-xs">
+              GSTIN, PAN &amp; a registered address are required before invoices can be generated
+              for this client.
+            </p>
           </div>
           <div className="grid gap-1.5">
             <Label htmlFor="client-notes">Notes</Label>

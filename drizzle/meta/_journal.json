@@ -281,6 +281,13 @@
       "when": 1780600005000,
       "tag": "0039_invoice_theme_immutability",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1780600006000,
+      "tag": "0040_invoice_types_and_billto",
+      "breakpoints": true
     }
   ]
 }

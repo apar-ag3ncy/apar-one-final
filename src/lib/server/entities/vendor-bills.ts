@@ -1,10 +1,10 @@
 'use server';
 
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, isNull, sql } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { db } from '@/lib/db/client';
-import { documents, entityDocuments, transactions } from '@/lib/db/schema';
+import { documents, entityDocuments, projects, transactions } from '@/lib/db/schema';
 import { AppError } from '@/lib/errors';
 import { getActorContext } from '@/lib/server/actor';
 import { createDraftTransaction } from '@/lib/server/ledger/transactions';
@@ -205,6 +205,20 @@ export async function createVendorBillDraft(input: VendorBillFormInput): Promise
 }> {
   const ctx = await getActorContext();
   const parsed = VendorBillFormSchema.parse(input);
+
+  // A project tagged on a client-attributed bill must belong to that client —
+  // otherwise a client's project P&L would absorb another client's spend.
+  if (parsed.attribution === 'client' && parsed.projectId) {
+    const [p] = await db
+      .select({ clientId: projects.clientId })
+      .from(projects)
+      .where(and(eq(projects.id, parsed.projectId), isNull(projects.deletedAt)))
+      .limit(1);
+    if (!p) throw new AppError('validation', 'The selected project no longer exists.');
+    if (p.clientId !== parsed.onBehalfOfClientId) {
+      throw new AppError('validation', 'The selected project belongs to a different client.');
+    }
+  }
 
   try {
     const result = await createDraftTransaction(ctx, {

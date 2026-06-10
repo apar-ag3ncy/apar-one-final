@@ -63,3 +63,31 @@ export async function listProjectOptions(): Promise<readonly EntityOption[]> {
     .orderBy(asc(projects.name));
   return rows.map((r) => ({ id: r.id, label: r.name, sub: r.code }));
 }
+
+/**
+ * Active (non-archived) projects for a single client — backs the project
+ * picker on the invoice composer and the "expenses on behalf" form, where the
+ * choices must be scoped to the client the document is for.
+ */
+export async function listProjectOptionsForClient(
+  clientId: string,
+): Promise<readonly EntityOption[]> {
+  await getActorContext();
+  if (!clientId) return [];
+  const rows = await db
+    .select({
+      id: projects.id,
+      name: projects.name,
+      code: projects.code,
+    })
+    .from(projects)
+    .where(
+      and(
+        eq(projects.clientId, clientId),
+        isNull(projects.deletedAt),
+        eq(projects.isArchived, false),
+      ),
+    )
+    .orderBy(asc(projects.name));
+  return rows.map((r) => ({ id: r.id, label: r.name, sub: r.code }));
+}

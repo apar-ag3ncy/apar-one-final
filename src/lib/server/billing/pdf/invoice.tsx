@@ -53,6 +53,8 @@ export type InvoicePdfData = {
     contactEmail: string | null;
   };
   documentNumber: string;
+  /** 'proforma' titles the document "PROFORMA INVOICE"; otherwise "TAX INVOICE". */
+  documentType?: 'invoice' | 'proforma';
   documentDate: string;
   dueDate: string | null;
   placeOfSupply: string | null;
@@ -245,11 +247,19 @@ export async function renderInvoicePdf(data: InvoicePdfData): Promise<Uint8Array
 
 export function InvoiceDocument({ data }: { data: InvoicePdfData }): React.JSX.Element {
   const theme = resolveTheme(data.themeOverrides);
+  // A proforma is titled "PROFORMA INVOICE" regardless of the theme's header
+  // text; a tax invoice uses the theme header (default "TAX INVOICE").
+  const isProforma = data.documentType === 'proforma';
+  const documentTitle = isProforma ? 'PROFORMA INVOICE' : theme.headerText;
   return (
     <Document
-      title={`Invoice ${data.documentNumber}`}
+      title={`${isProforma ? 'Proforma' : 'Invoice'} ${data.documentNumber}`}
       author={data.supplier.name}
-      subject={`Tax Invoice (Rule 46) — ${data.documentNumber}`}
+      subject={
+        isProforma
+          ? `Proforma Invoice — ${data.documentNumber}`
+          : `Tax Invoice (Rule 46) — ${data.documentNumber}`
+      }
     >
       <Page size="A4" style={[styles.page, { fontFamily: theme.font }]}>
         <Header data={data} theme={theme} />
@@ -267,7 +277,7 @@ export function InvoiceDocument({ data }: { data: InvoicePdfData }): React.JSX.E
         <Text
           style={styles.footer}
           render={({ pageNumber, totalPages }) =>
-            `${data.supplier.name} — ${theme.headerText} ${data.documentNumber} — Page ${pageNumber} of ${totalPages} — ${theme.footerText}`
+            `${data.supplier.name} — ${documentTitle} ${data.documentNumber} — Page ${pageNumber} of ${totalPages} — ${theme.footerText}`
           }
           fixed
         />
@@ -302,7 +312,9 @@ function Header({
         {data.supplier.contactPhone ? <Text>{data.supplier.contactPhone}</Text> : null}
       </View>
       <View style={styles.metaBlock}>
-        <Text style={[styles.metaTitle, { color: theme.primary }]}>{theme.headerText}</Text>
+        <Text style={[styles.metaTitle, { color: theme.primary }]}>
+          {data.documentType === 'proforma' ? 'PROFORMA INVOICE' : theme.headerText}
+        </Text>
         <View style={styles.metaRow}>
           <Text style={styles.metaLabel}>No.</Text>
           <Text>{data.documentNumber}</Text>

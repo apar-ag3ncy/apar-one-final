@@ -9,6 +9,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 
 import { ContactsSection } from '@/components/entity/contacts-section';
+import { AddressesSection } from '@/components/entity/addresses-section';
 import { EntitySettingsSection } from '@/components/entity/entity-settings-section';
 import { ClientEditDialog } from './client-edit-dialog';
 import { DocumentsSection } from '@/components/entity/documents-section';
@@ -45,6 +46,7 @@ export type ClientWindowProps = {
 type ClientTab =
   | 'overview'
   | 'contacts'
+  | 'addresses'
   | 'projects'
   | 'documents'
   | 'invoices'
@@ -57,6 +59,7 @@ type ClientTab =
 const TAB_LABELS: Record<ClientTab, string> = {
   overview: 'Overview',
   contacts: 'Contacts',
+  addresses: 'Addresses',
   projects: 'Projects',
   documents: 'Documents',
   invoices: 'Invoices',
@@ -152,6 +155,7 @@ export function ClientWindow({ clientId, onClose }: ClientWindowProps) {
   const tabs: readonly ClientTab[] = [
     'overview',
     'contacts',
+    'addresses',
     'projects',
     'documents',
     'invoices',
@@ -188,6 +192,9 @@ export function ClientWindow({ clientId, onClose }: ClientWindowProps) {
             initial={contacts}
           />
         ) : null}
+        {tab === 'addresses' ? (
+          <AddressesSection entityType="client" entityId={client.id} entityName={client.name} />
+        ) : null}
         {tab === 'projects' ? (
           <ProjectsBody
             client={client}
@@ -217,14 +224,21 @@ export function ClientWindow({ clientId, onClose }: ClientWindowProps) {
         {tab === 'ledger' ? <ClientLedgerBody clientId={client.id} /> : null}
         {tab === 'activity' ? <ActivityBody clientId={client.id} /> : null}
         {tab === 'settings' ? (
-          <EntitySettingsSection
-            kind="client"
-            entityId={client.id}
-            entityName={client.name}
-            isArchived={client.status === 'archived'}
-            onChanged={() => setReloadKey((k) => k + 1)}
-            onDeleted={onClose}
-          />
+          <div style={{ display: 'grid', gap: 24 }}>
+            {/* Address management lives here too — clients manage their (multiple)
+                addresses from Settings, in addition to the dedicated Addresses
+                tab. One primary, others secondary; add / edit / set-primary /
+                remove. */}
+            <AddressesSection entityType="client" entityId={client.id} entityName={client.name} />
+            <EntitySettingsSection
+              kind="client"
+              entityId={client.id}
+              entityName={client.name}
+              isArchived={client.status === 'archived'}
+              onChanged={() => setReloadKey((k) => k + 1)}
+              onDeleted={onClose}
+            />
+          </div>
         ) : null}
       </div>
     </div>
