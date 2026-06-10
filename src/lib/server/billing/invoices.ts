@@ -5,7 +5,7 @@ import { z } from 'zod';
 
 import { fyStartForDate, todayIstIso } from '@/lib/billing/fy';
 import { db, type DbClient } from '@/lib/db/client';
-import { clients, entityAddresses, invoiceLines, invoices } from '@/lib/db/schema';
+import { clients, entityAddresses, invoiceLines, invoices, projects } from '@/lib/db/schema';
 import { AppError } from '@/lib/errors';
 import { isValidStateCode, stateNameFromCode } from '@/lib/india/gst-states';
 import { requireCapability } from '@/lib/rbac';
@@ -176,6 +176,48 @@ async function loadClientBillingReadiness(
   };
 }
 
+/** Reject a project that doesn't belong to this client (cross-client attach). */
+async function assertProjectBelongsToClient(
+  projectId: string | null | undefined,
+  clientId: string,
+  client: DbClient = db,
+): Promise<void> {
+  if (!projectId) return;
+  const [p] = await client
+    .select({ clientId: projects.clientId })
+    .from(projects)
+    .where(and(eq(projects.id, projectId), isNull(projects.deletedAt)))
+    .limit(1);
+  if (!p) throw new AppError('validation', 'The selected project no longer exists.');
+  if (p.clientId !== clientId) {
+    throw new AppError('validation', 'The selected project belongs to a different client.');
+  }
+}
+
+/** Reject a bill-to address that isn't a live address of this client. */
+async function assertBillToAddressBelongsToClient(
+  addressId: string | null | undefined,
+  clientId: string,
+  client: DbClient = db,
+): Promise<void> {
+  if (!addressId) return;
+  const [a] = await client
+    .select({ id: entityAddresses.id })
+    .from(entityAddresses)
+    .where(
+      and(
+        eq(entityAddresses.id, addressId),
+        eq(entityAddresses.entityType, 'client'),
+        eq(entityAddresses.entityId, clientId),
+        isNull(entityAddresses.deletedAt),
+      ),
+    )
+    .limit(1);
+  if (!a) {
+    throw new AppError('validation', 'The selected bill-to address is not valid for this client.');
+  }
+}
+
 /** Read a client's invoice-readiness — used by the composer/section to gate
  *  "New invoice" and to pre-fill place of supply. */
 export async function getClientBillingReadiness(clientId: string): Promise<ClientBillingReadiness> {
@@ -199,6 +241,10 @@ export async function createDraftInvoice(input: CreateInvoiceInput): Promise<Cre
       `This client is missing ${readiness.missing.join(', ')}. Add the client's GSTIN, PAN and address before generating an invoice.`,
     );
   }
+
+  // A linked project / bill-to address must belong to THIS client.
+  await assertProjectBelongsToClient(v.projectId, v.clientId);
+  await assertBillToAddressBelongsToClient(v.billToAddressId, v.clientId);
 
   // Short-circuit on idempotency key — if we've already created an
   // invoice with this key, return the same id.
@@ -411,6 +457,31 @@ export async function updateDraftInvoice(
         patch.documentNumber = newNum;
       }
     }
+    // FY moved (date change) without a number change: the existing number is
+    // re-keyed into the new FY — pre-check it there too so a collision surfaces
+    // as a friendly conflict rather than a raw unique-violation.
+    if (
+      patch.financialYearStart &&
+      patch.financialYearStart !== current.financialYearStart &&
+      patch.documentNumber === undefined
+    ) {
+      const dupe = await tx
+        .select({ id: invoices.id })
+        .from(invoices)
+        .where(
+          and(
+            eq(invoices.financialYearStart, patch.financialYearStart),
+            eq(invoices.documentNumber, current.documentNumber),
+          ),
+        )
+        .limit(1);
+      if (dupe[0]) {
+        throw new AppError(
+          'conflict',
+          `Invoice number "${current.documentNumber}" already exists in the financial year of the new date. Change the number.`,
+        );
+      }
+    }
     if (v.subtotalPaise !== undefined) patch.subtotalPaise = v.subtotalPaise;
     if (v.capturedTaxTotalPaise !== undefined)
       patch.capturedTaxTotalPaise = v.capturedTaxTotalPaise;
@@ -421,6 +492,23 @@ export async function updateDraftInvoice(
     if (v.terms !== undefined) patch.terms = v.terms ?? null;
     if (v.notes !== undefined) patch.notes = v.notes ?? null;
     if (v.themeId !== undefined) patch.themeId = v.themeId ?? null;
+
+    // A newly-set project / bill-to address must belong to THIS client.
+    const effectiveClientId = patch.clientId ?? current.clientId;
+    if (v.projectId !== undefined) {
+      await assertProjectBelongsToClient(
+        v.projectId ?? null,
+        effectiveClientId,
+        tx as unknown as DbClient,
+      );
+    }
+    if (v.billToAddressId !== undefined) {
+      await assertBillToAddressBelongsToClient(
+        v.billToAddressId ?? null,
+        effectiveClientId,
+        tx as unknown as DbClient,
+      );
+    }
 
     // Re-derive a full snapshot for validation by merging the patch
     // over the current row (and the new lines if supplied).

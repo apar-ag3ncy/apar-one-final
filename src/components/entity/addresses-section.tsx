@@ -5,7 +5,7 @@
 // and the delete confirmation. Mirrors ContactsSection so Client / Vendor /
 // Employee windows can drop it in by entity-type alone.
 
-import { useEffect, useState, useTransition } from 'react';
+import { useEffect, useMemo, useState, useTransition } from 'react';
 import { toast } from 'sonner';
 
 import {
@@ -62,6 +62,28 @@ export function AddressesSection({ entityType, entityId, entityName }: Addresses
 
   // Delete confirmation state
   const [pendingDelete, setPendingDelete] = useState<AddressRow | null>(null);
+
+  // Stable identity for the form's initial values so AddressForm's reset effect
+  // (keyed on `initial`) only fires when the edited row actually changes — not
+  // on every section re-render, which could otherwise wipe in-progress edits.
+  const initialForForm = useMemo(
+    () =>
+      editing
+        ? {
+            kind: editing.kind,
+            line1: editing.line1,
+            line2: editing.line2,
+            city: editing.city,
+            stateCode: editing.stateCode,
+            postalCode: editing.postalCode,
+            country: editing.country,
+            gstin: editing.gstin,
+            isPrimary: editing.isPrimary,
+            notes: editing.notes,
+          }
+        : undefined,
+    [editing],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -209,22 +231,7 @@ export function AddressesSection({ entityType, entityId, entityName }: Addresses
           if (!v) setEditing(null);
         }}
         mode={editing ? 'edit' : 'create'}
-        initial={
-          editing
-            ? {
-                kind: editing.kind,
-                line1: editing.line1,
-                line2: editing.line2,
-                city: editing.city,
-                stateCode: editing.stateCode,
-                postalCode: editing.postalCode,
-                country: editing.country,
-                gstin: editing.gstin,
-                isPrimary: editing.isPrimary,
-                notes: editing.notes,
-              }
-            : undefined
-        }
+        initial={initialForForm}
         entityName={entityName}
         onSubmit={handleSubmit}
       />

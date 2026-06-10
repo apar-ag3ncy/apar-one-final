@@ -22,7 +22,7 @@
  *   - getEntityActivity — needs activity log query (Phase 3.3 consumer)
  */
 
-import { and, desc, eq, ilike, isNotNull, isNull, ne, or, sql } from 'drizzle-orm';
+import { and, desc, eq, ilike, isNotNull, isNull, ne, notExists, or, sql } from 'drizzle-orm';
 
 import { maybeCurrentUser } from '@/lib/auth';
 import { CAPABILITY_SET } from '@/lib/rbac';
@@ -619,6 +619,16 @@ export async function listProjectTransactions(projectId: string): Promise<Projec
           eq(ledgerTransactions.kind, 'vendor_bill'),
           isNotNull(ledgerTransactions.onBehalfOfClientId),
           ne(ledgerTransactions.status, 'reversed'),
+          // Exclude ledger vendor_bills that originated from a `bills` document
+          // row — those are already counted by the bills query above. Only the
+          // OS "expenses on behalf" path (createVendorBillDraft, ledger-only,
+          // no bills row) is counted here, so spend is never double-counted.
+          notExists(
+            db
+              .select({ one: sql`1` })
+              .from(bills)
+              .where(eq(bills.postedTransactionId, ledgerTransactions.id)),
+          ),
         ),
       )
       .groupBy(ledgerTransactions.id, clients.id)

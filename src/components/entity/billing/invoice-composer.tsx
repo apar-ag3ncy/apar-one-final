@@ -38,7 +38,7 @@ import { getDocumentSignedUrl } from '@/lib/server/entities/documents';
 import { listProjectOptionsForClient, type EntityOption } from '@/lib/server/entities/options';
 import { listAddresses, type AddressRow } from '@/lib/server/entities/addresses';
 import type { InvoiceThemeSummary } from '@/lib/server/billing/invoice-themes';
-import { GST_STATES_BY_NAME } from '@/lib/india/gst-states';
+import { GST_STATES_BY_NAME, stateNameFromCode } from '@/lib/india/gst-states';
 
 /* -------------------------------------------------------------------------- */
 /* Line model                                                                 */
@@ -292,7 +292,11 @@ export function InvoiceComposerDialog({
   // Best-effort: when the document date's FY changes (create mode only), refetch
   // the suggested next number so the out-of-sequence hint stays accurate.
   useEffect(() => {
-    if (!open || existingInvoiceId || busy === 'loading') return;
+    // Stop once a draft exists (existingInvoiceId, or draftId after the first
+    // preview/save) so a preview/save never silently re-advances the number the
+    // user is looking at. `busy` is deliberately NOT a dependency for the same
+    // reason — its toggling must not re-run this effect.
+    if (!open || existingInvoiceId || draftId) return;
     let cancelled = false;
     const prevSuggested = suggestedNumberRef.current;
     getNextInvoiceNumber(documentDate)
@@ -309,7 +313,7 @@ export function InvoiceComposerDialog({
     return () => {
       cancelled = true;
     };
-  }, [documentDate, open, existingInvoiceId, busy]);
+  }, [documentDate, open, existingInvoiceId, draftId]);
 
   // Revoke object URLs to avoid leaks.
   useEffect(() => {
@@ -327,6 +331,19 @@ export function InvoiceComposerDialog({
     suggestedNumber.trim().length > 0 &&
     documentNumber.trim().length > 0 &&
     documentNumber.trim() !== suggestedNumber.trim();
+
+  // Non-blocking: when the chosen bill-to address carries its own GSTIN whose
+  // state differs from the place of supply, flag it — place of supply drives the
+  // CGST/SGST-vs-IGST split, so a mismatch usually means one of them is wrong.
+  const billToMismatchState = (() => {
+    if (!billToAddressId || placeOfSupply.trim() === '') return null;
+    const addr = addresses.find((a) => a.id === billToAddressId);
+    const addrState = addr?.gstin && addr.gstin.length >= 2 ? addr.gstin.slice(0, 2) : null;
+    if (addrState && addrState !== placeOfSupply.trim()) {
+      return stateNameFromCode(addrState) ?? addrState;
+    }
+    return null;
+  })();
 
   const totals = useMemo(() => {
     const subtotal = computed.reduce((a, c) => a + c.taxableValuePaise, 0n);
@@ -609,6 +626,13 @@ export function InvoiceComposerDialog({
                       ))}
                     </SelectContent>
                   </Select>
+                  {billToMismatchState ? (
+                    <p className="text-xs text-amber-600">
+                      Bill-to GSTIN is registered in {billToMismatchState}, which differs from the
+                      selected place of supply — confirm the place of supply and the CGST/SGST vs
+                      IGST split.
+                    </p>
+                  ) : null}
                 </div>
               ) : null}
             </div>
