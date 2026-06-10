@@ -212,10 +212,10 @@
   display: none;
 }
 .os-root[data-theme='dark'] .menubar .wordmark-img--light {
-  display: none;
+  display: block;
 }
 .os-root[data-theme='dark'] .menubar .wordmark-img--dark {
-  display: block;
+  display: none;
 }
 .os-root .menubar .active-app {
   font-weight: 600;
@@ -299,7 +299,7 @@
    coloured initials. Image fills the circle, sized off the parent so
    the same rule works in the menubar (22px) and anywhere else. */
 .os-root .avatar.avatar-mark {
-  background: var(--apar-red);
+  background: #fff;
   overflow: hidden;
   padding: 0;
 }
@@ -1763,7 +1763,7 @@
   overflow: hidden;
 }
 .os-root .lock-screen__user-avatar.is-mark {
-  background: var(--apar-red);
+  background: #fff;
 }
 .os-root .lock-screen__user-avatar.is-mark img {
   width: 100%;
@@ -1808,7 +1808,7 @@
   overflow: hidden;
 }
 .os-root .lock-screen__avatar.is-mark {
-  background: var(--apar-red);
+  background: #fff;
 }
 .os-root .lock-screen__avatar.is-mark img {
   width: 100%;
