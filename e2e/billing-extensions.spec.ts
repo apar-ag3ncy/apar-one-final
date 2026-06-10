@@ -90,4 +90,10 @@ test('billing extensions render and behave end-to-end', async ({ page }) => {
 
   // Close the composer without finalizing.
   await page.getByRole('button', { name: 'Cancel' }).click();
+
+  // 8) Address management is ALSO reachable from the client's Settings tab
+  // (where it was originally requested), not only the dedicated Addresses tab.
+  await page.locator('.tab', { hasText: 'Settings' }).click();
+  await expect(page.getByText('Plot 4, Bandra Kurla Complex', { exact: false })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Add address' })).toBeVisible();
 });

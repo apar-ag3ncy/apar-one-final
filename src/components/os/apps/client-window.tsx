@@ -224,14 +224,21 @@ export function ClientWindow({ clientId, onClose }: ClientWindowProps) {
         {tab === 'ledger' ? <ClientLedgerBody clientId={client.id} /> : null}
         {tab === 'activity' ? <ActivityBody clientId={client.id} /> : null}
         {tab === 'settings' ? (
-          <EntitySettingsSection
-            kind="client"
-            entityId={client.id}
-            entityName={client.name}
-            isArchived={client.status === 'archived'}
-            onChanged={() => setReloadKey((k) => k + 1)}
-            onDeleted={onClose}
-          />
+          <div style={{ display: 'grid', gap: 24 }}>
+            {/* Address management lives here too — clients manage their (multiple)
+                addresses from Settings, in addition to the dedicated Addresses
+                tab. One primary, others secondary; add / edit / set-primary /
+                remove. */}
+            <AddressesSection entityType="client" entityId={client.id} entityName={client.name} />
+            <EntitySettingsSection
+              kind="client"
+              entityId={client.id}
+              entityName={client.name}
+              isArchived={client.status === 'archived'}
+              onChanged={() => setReloadKey((k) => k + 1)}
+              onDeleted={onClose}
+            />
+          </div>
         ) : null}
       </div>
     </div>
