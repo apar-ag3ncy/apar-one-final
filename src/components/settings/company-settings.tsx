@@ -85,6 +85,7 @@ function formatBytes(n: number): string {
   return `${(n / 1024 / 1024).toFixed(1)} MB`;
 }
 
+/** Dashboard wrapper — server component passes props; refresh re-runs the page query. */
 export function CompanySettingsClient({
   profile,
   documents,
@@ -92,10 +93,27 @@ export function CompanySettingsClient({
   profile: CompanyProfile;
   documents: readonly CompanyDocumentRow[];
 }) {
+  const router = useRouter();
+  return <CompanySettingsBody profile={profile} documents={documents} onChanged={router.refresh} />;
+}
+
+/**
+ * Shared body — also embedded by the OS Settings → Company documents pane,
+ * which fetches the data client-side and passes its own refetch as `onChanged`.
+ */
+export function CompanySettingsBody({
+  profile,
+  documents,
+  onChanged,
+}: {
+  profile: CompanyProfile;
+  documents: readonly CompanyDocumentRow[];
+  onChanged: () => void;
+}) {
   return (
     <div className="space-y-6">
-      <ProfileCard profile={profile} />
-      <DocumentsCard documents={documents} />
+      <ProfileCard profile={profile} onChanged={onChanged} />
+      <DocumentsCard documents={documents} onChanged={onChanged} />
     </div>
   );
 }
@@ -128,8 +146,7 @@ function toForm(p: CompanyProfile): ProfileForm {
   };
 }
 
-function ProfileCard({ profile }: { profile: CompanyProfile }) {
-  const router = useRouter();
+function ProfileCard({ profile, onChanged }: { profile: CompanyProfile; onChanged: () => void }) {
   const [pending, startTransition] = useTransition();
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState<ProfileForm>(() => toForm(profile));
@@ -158,7 +175,7 @@ function ProfileCard({ profile }: { profile: CompanyProfile }) {
       if (result.ok) {
         notify.success('Company details saved');
         setEditing(false);
-        router.refresh();
+        onChanged();
       } else {
         notify.error('Could not save', result.message);
       }
@@ -327,8 +344,13 @@ function ReadAddress({
 /* Documents                                                                  */
 /* -------------------------------------------------------------------------- */
 
-function DocumentsCard({ documents }: { documents: readonly CompanyDocumentRow[] }) {
-  const router = useRouter();
+function DocumentsCard({
+  documents,
+  onChanged,
+}: {
+  documents: readonly CompanyDocumentRow[];
+  onChanged: () => void;
+}) {
   const [pending, startTransition] = useTransition();
   const [uploadOpen, setUploadOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<CompanyDocumentRow | null>(null);
@@ -342,7 +364,7 @@ function DocumentsCard({ documents }: { documents: readonly CompanyDocumentRow[]
       const result = await deleteCompanyDocument(id);
       if (result.ok) {
         notify.success('Document removed');
-        router.refresh();
+        onChanged();
       } else {
         notify.error('Could not remove', result.message);
       }
@@ -440,16 +462,8 @@ function DocumentsCard({ documents }: { documents: readonly CompanyDocumentRow[]
         )}
       </CardContent>
 
-      <UploadDialog
-        open={uploadOpen}
-        onOpenChange={setUploadOpen}
-        onUploaded={() => router.refresh()}
-      />
-      <EditMetaDialog
-        doc={editTarget}
-        onClose={() => setEditTarget(null)}
-        onSaved={() => router.refresh()}
-      />
+      <UploadDialog open={uploadOpen} onOpenChange={setUploadOpen} onUploaded={onChanged} />
+      <EditMetaDialog doc={editTarget} onClose={() => setEditTarget(null)} onSaved={onChanged} />
 
       <AlertDialog
         open={deleteTarget !== null}

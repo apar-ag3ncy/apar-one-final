@@ -3,7 +3,7 @@ import type { Metadata } from 'next';
 import { ProfileHeader } from '@/components/entity/profile-header';
 import { Card, CardContent } from '@/components/ui/card';
 import { getCompanyProfile, listCompanyDocuments } from '@/lib/server/settings/company-data';
-import { CompanySettingsClient } from './company-settings-client';
+import { CompanySettingsClient } from '@/components/settings/company-settings';
 
 export const metadata: Metadata = { title: 'Company details · Settings · Apār Dashboard' };
 

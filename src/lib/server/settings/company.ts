@@ -12,6 +12,12 @@ import { logAudit } from '@/lib/audit';
 import { sniffMime } from '@/lib/storage';
 import { getActorContext } from '@/lib/server/actor';
 import { GSTIN_RE, IFSC_RE, PAN_RE } from '@/lib/validators';
+import {
+  getCompanyProfile,
+  listCompanyDocuments,
+  type CompanyDocumentRow,
+  type CompanyProfile,
+} from '@/lib/server/settings/company-data';
 
 /**
  * Settings → Company details + Billing write actions. The agency's own
@@ -27,6 +33,27 @@ import { GSTIN_RE, IFSC_RE, PAN_RE } from '@/lib/validators';
  */
 
 export type ActionResult = { ok: true } | { ok: false; message: string };
+
+/* -------------------------------------------------------------------------- */
+/* Read action                                                                */
+/* -------------------------------------------------------------------------- */
+
+export type CompanySettingsData = {
+  profile: CompanyProfile | null;
+  documents: CompanyDocumentRow[];
+};
+
+/**
+ * Read for client-side surfaces (the OS Settings → Company documents pane)
+ * that can't import the server-only readers directly. Same capability gate
+ * as the document view/download route handler.
+ */
+export async function getCompanySettings(): Promise<CompanySettingsData> {
+  const ctx = await getActorContext();
+  requireCapability(ctx, 'manage_company_profile');
+  const [profile, documents] = await Promise.all([getCompanyProfile(), listCompanyDocuments()]);
+  return { profile, documents };
+}
 
 const MAX_DOC_BYTES = 25 * 1024 * 1024; // 25 MB — matches uploadDocument default
 const TAN_RE = /^[A-Z]{4}[0-9]{5}[A-Z]$/;
