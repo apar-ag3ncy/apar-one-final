@@ -241,7 +241,7 @@ export function MenuBar({
         >
           {user.role === 'super_admin' || user.role === 'admin' ? (
             <div className="avatar avatar-mark" aria-label={user.fullName}>
-              <img src="/brand/apar-mark.png" alt="" draggable={false} />
+              <img src="/brand/apar-orange-square.png" alt="" draggable={false} />
             </div>
           ) : (
             <div className="avatar" style={{ background: user.tone }}>

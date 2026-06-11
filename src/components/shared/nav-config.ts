@@ -7,6 +7,7 @@ import {
   BarChart3Icon,
   BanknoteIcon,
   ScrollTextIcon,
+  SettingsIcon,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -25,6 +26,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { label: 'Payroll', href: '/payroll', icon: BanknoteIcon },
   { label: 'Reports', href: '/reports', icon: BarChart3Icon },
   { label: 'Audit log', href: '/audit', icon: ScrollTextIcon },
+  { label: 'Settings', href: '/settings', icon: SettingsIcon },
 ] as const;
 
 const LABEL_BY_HREF = new Map(NAV_ITEMS.map((item) => [item.href, item.label] as const));

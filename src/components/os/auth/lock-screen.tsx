@@ -101,7 +101,7 @@ export function LockScreen() {
             >
               {u.role === 'super_admin' || u.role === 'admin' ? (
                 <span className="lock-screen__user-avatar is-mark" aria-hidden>
-                  <img src="/brand/apar-mark.png" alt="" draggable={false} />
+                  <img src="/brand/apar-orange-square.png" alt="" draggable={false} />
                 </span>
               ) : (
                 <span
@@ -123,7 +123,7 @@ export function LockScreen() {
       <form key={selected.id} className="lock-screen__stack" onSubmit={submit}>
         {selected.role === 'super_admin' || selected.role === 'admin' ? (
           <div className="lock-screen__avatar is-mark" aria-hidden>
-            <img src="/brand/apar-mark.png" alt="" draggable={false} />
+            <img src="/brand/apar-orange-square.png" alt="" draggable={false} />
           </div>
         ) : (
           <div className="lock-screen__avatar" style={{ background: selected.tone }} aria-hidden>

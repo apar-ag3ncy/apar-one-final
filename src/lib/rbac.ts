@@ -79,6 +79,9 @@ export const CAPABILITIES = [
   'view_gst_reports',
   'manage_tax_reference_sections',
   'manage_invoice_themes',
+
+  // Company settings (Settings → Company details / Billing)
+  'manage_company_profile',
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];
@@ -152,6 +155,7 @@ export const CAPABILITY_LABELS: Record<Capability, string> = {
   view_gst_reports: 'View GST reports',
   manage_tax_reference_sections: 'Manage TDS/tax reference sections',
   manage_invoice_themes: 'Manage invoice themes',
+  manage_company_profile: 'Manage company profile & documents',
 };
 
 export type Role = 'partner' | 'admin' | 'manager' | 'accountant' | 'employee' | 'viewer';

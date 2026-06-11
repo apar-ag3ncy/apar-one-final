@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useTransition, type FormEvent, type ReactN
 import { APPS } from './data';
 import { useBusinessData } from './data-store';
 import { navigateBesideFocused } from './apps/navigate';
+import { CompanySettingsPane } from './apps/company-settings-pane';
 import { EntityRef } from '@/components/entity/entity-ref';
 import {
   listClients as listDbClients,
@@ -4531,7 +4532,14 @@ function UploadClientDocModal({
 /* -------------------------------------------------------------------------- */
 
 type SettingsSection = {
-  name: 'General' | 'Appearance' | 'Account' | 'Team' | 'Notifications' | 'Security';
+  name:
+    | 'General'
+    | 'Company documents'
+    | 'Appearance'
+    | 'Account'
+    | 'Team'
+    | 'Notifications'
+    | 'Security';
   icon: IconName;
 };
 
@@ -4555,6 +4563,7 @@ export function SettingsApp({
   const landingApps = APPS.filter((a) => a.id !== 'admin_console');
   const sections: readonly SettingsSection[] = [
     { name: 'General', icon: 'settings' },
+    { name: 'Company documents', icon: 'building' },
     { name: 'Appearance', icon: 'palette' },
     { name: 'Account', icon: 'user' },
     { name: 'Team', icon: 'users' },
@@ -4727,6 +4736,8 @@ export function SettingsApp({
               />
             </div>
           </div>
+        ) : section === 'Company documents' ? (
+          <CompanySettingsPane />
         ) : section === 'Account' ? (
           <AccountPanel onSignOut={onSignOut} onDisplayNameChange={onDisplayNameChange} />
         ) : section === 'Team' ? (
