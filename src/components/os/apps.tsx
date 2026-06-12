@@ -5,6 +5,7 @@ import { APPS } from './data';
 import { useBusinessData } from './data-store';
 import { navigateBesideFocused } from './apps/navigate';
 import { CompanySettingsPane } from './apps/company-settings-pane';
+import { VaultPane } from './apps/vault-pane';
 import { EntityRef } from '@/components/entity/entity-ref';
 import {
   listClients as listDbClients,
@@ -4535,6 +4536,7 @@ type SettingsSection = {
   name:
     | 'General'
     | 'Company documents'
+    | 'Vault'
     | 'Appearance'
     | 'Account'
     | 'Team'
@@ -4564,6 +4566,7 @@ export function SettingsApp({
   const sections: readonly SettingsSection[] = [
     { name: 'General', icon: 'settings' },
     { name: 'Company documents', icon: 'building' },
+    { name: 'Vault', icon: 'shield' },
     { name: 'Appearance', icon: 'palette' },
     { name: 'Account', icon: 'user' },
     { name: 'Team', icon: 'users' },
@@ -4738,6 +4741,8 @@ export function SettingsApp({
           </div>
         ) : section === 'Company documents' ? (
           <CompanySettingsPane />
+        ) : section === 'Vault' ? (
+          <VaultPane />
         ) : section === 'Account' ? (
           <AccountPanel onSignOut={onSignOut} onDisplayNameChange={onDisplayNameChange} />
         ) : section === 'Team' ? (

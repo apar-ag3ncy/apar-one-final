@@ -82,6 +82,9 @@ export const CAPABILITIES = [
 
   // Company settings (Settings → Company details / Billing)
   'manage_company_profile',
+
+  // Settings → Vault (password-protected credential store)
+  'manage_vault',
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];
@@ -156,6 +159,7 @@ export const CAPABILITY_LABELS: Record<Capability, string> = {
   manage_tax_reference_sections: 'Manage TDS/tax reference sections',
   manage_invoice_themes: 'Manage invoice themes',
   manage_company_profile: 'Manage company profile & documents',
+  manage_vault: 'Use the credentials vault',
 };
 
 export type Role = 'partner' | 'admin' | 'manager' | 'accountant' | 'employee' | 'viewer';
