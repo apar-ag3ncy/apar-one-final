@@ -1,11 +1,12 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
 import { createVendorBillDraft } from '@/lib/server/entities/vendor-bills';
 import {
   listEntityDocuments,
+  uploadDocument,
   type EntityDocumentRow,
 } from '@/lib/server/entities/entity-documents';
 import { listClients } from '@/lib/server-stub/entity-actions';
@@ -15,7 +16,19 @@ import { rupeesToPaise } from '@/lib/money';
 
 type LineItem = { description: string; amountRupees: string; gstRupees: string };
 
-type Attribution = 'client' | 'opex' | 'asset';
+type Attribution = 'client' | 'opex' | 'asset' | 'other';
+
+type DocSource = 'vendor' | 'client' | 'project';
+type DocOption = EntityDocumentRow & { source: DocSource };
+
+const DOC_SOURCE_LABEL: Record<DocSource, string> = {
+  vendor: 'Vendor documents',
+  client: 'Client documents',
+  project: 'Project documents',
+};
+
+// Document kinds worth offering as a bill source.
+const BILL_DOC_KINDS = new Set(['invoice', 'receipt', 'expense_receipt', 'other']);
 
 const OPEX_CODES: Array<{
   value: '6100' | '6200' | '6300' | '6400' | '6900' | '8100';
@@ -70,7 +83,7 @@ export function VendorBillForm({
 }: VendorBillFormProps) {
   const [vendorOptions, setVendorOptions] = useState<Array<{ id: string; name: string }>>([]);
   const [clientOptions, setClientOptions] = useState<Array<{ id: string; name: string }>>([]);
-  const [docOptions, setDocOptions] = useState<readonly EntityDocumentRow[]>([]);
+  const [docOptions, setDocOptions] = useState<readonly DocOption[]>([]);
   const [projectOptions, setProjectOptions] = useState<readonly EntityOption[]>([]);
 
   // SPEC-AMENDMENT-001 §3.2: attribution has NO default — the user must
@@ -96,7 +109,11 @@ export function VendorBillForm({
   const [tdsSection, setTdsSection] = useState<string>('none');
   const [isRcm, setIsRcm] = useState(false);
   const [notes, setNotes] = useState('');
+  const [otherDescription, setOtherDescription] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [docRefresh, setDocRefresh] = useState(0);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Pre-fetch vendor and client options + the vendor's bill documents when
   // the dialog opens. Each query is best-effort.
@@ -111,6 +128,7 @@ export function VendorBillForm({
       setTdsSection('none');
       setIsRcm(false);
       setNotes('');
+      setOtherDescription('');
       setBillDocumentId('');
       setVendorId(vendorIdProp ?? '');
       setClientId(clientIdProp ?? '');
@@ -137,37 +155,52 @@ export function VendorBillForm({
     };
   }, [open, vendorIdProp, clientIdProp, lockAttributionToClient]);
 
-  // Reload bill documents whenever the vendor changes (so the picker shows
-  // documents attached to the right entity). When the form is launched from
-  // a client side, the source doc lives under the client.
+  // Surface every document that could be the source bill: the vendor's own
+  // uploaded docs, plus — when the bill is on behalf of a client — that
+  // client's docs and the selected project's docs. Merged, de-duplicated by
+  // document id (most-specific source wins), and filtered to bill-like kinds.
+  // Re-runs on any of those selections, and after an inline upload bumps
+  // `docRefresh`.
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
-    const target =
-      attribution === 'client' && clientId
-        ? { entityType: 'client' as const, entityId: clientId }
-        : vendorId
-          ? { entityType: 'vendor' as const, entityId: vendorId }
-          : null;
-    if (!target) {
+    const targets: Array<{ entityType: 'vendor' | 'client' | 'project'; entityId: string; source: DocSource }> =
+      [];
+    if (attribution === 'client' && selectedProjectId) {
+      targets.push({ entityType: 'project', entityId: selectedProjectId, source: 'project' });
+    }
+    if (attribution === 'client' && clientId) {
+      targets.push({ entityType: 'client', entityId: clientId, source: 'client' });
+    }
+    if (vendorId) {
+      targets.push({ entityType: 'vendor', entityId: vendorId, source: 'vendor' });
+    }
+    if (targets.length === 0) {
       queueMicrotask(() => {
         if (!cancelled) setDocOptions([]);
       });
       return;
     }
-    listEntityDocuments(target)
-      .then((docs) => {
-        if (!cancelled) {
-          setDocOptions(
-            docs.filter(
-              (d) =>
-                d.kind === 'invoice' ||
-                d.kind === 'receipt' ||
-                d.kind === 'expense_receipt' ||
-                d.kind === 'other',
-            ),
-          );
+    Promise.all(
+      targets.map((t) =>
+        listEntityDocuments({ entityType: t.entityType, entityId: t.entityId })
+          .then((docs) => docs.map((d) => ({ ...d, source: t.source })))
+          .catch(() => [] as DocOption[]),
+      ),
+    )
+      .then((groups) => {
+        if (cancelled) return;
+        const seen = new Set<string>();
+        const merged: DocOption[] = [];
+        for (const group of groups) {
+          for (const d of group) {
+            if (!BILL_DOC_KINDS.has(d.kind)) continue;
+            if (seen.has(d.documentId)) continue;
+            seen.add(d.documentId);
+            merged.push(d);
+          }
         }
+        setDocOptions(merged);
       })
       .catch(() => {
         if (!cancelled) setDocOptions([]);
@@ -175,7 +208,45 @@ export function VendorBillForm({
     return () => {
       cancelled = true;
     };
-  }, [open, attribution, vendorId, clientId]);
+  }, [open, attribution, vendorId, clientId, selectedProjectId, docRefresh]);
+
+  // Inline upload — the user can attach the bill PDF/image right here instead
+  // of going to a Documents tab first. Files land under the client (for
+  // client-attributed bills, so they show on the client's tab and mirror to
+  // the vendor) or under the vendor otherwise, then auto-select.
+  async function handleUploadBill(file: File) {
+    const target =
+      attribution === 'client' && clientId
+        ? { entityType: 'client' as const, entityId: clientId }
+        : vendorId
+          ? { entityType: 'vendor' as const, entityId: vendorId }
+          : null;
+    if (!target) {
+      toast.error(
+        attribution === 'client'
+          ? 'Pick the vendor and client first.'
+          : 'Pick the vendor first.',
+      );
+      return;
+    }
+    setUploading(true);
+    try {
+      const fd = new FormData();
+      fd.set('file', file);
+      fd.set('entityType', target.entityType);
+      fd.set('entityId', target.entityId);
+      fd.set('kind', 'invoice');
+      if (vendorInvoiceNumber.trim()) fd.set('title', vendorInvoiceNumber.trim());
+      const { documentId } = await uploadDocument(fd);
+      setBillDocumentId(documentId);
+      setDocRefresh((n) => n + 1);
+      toast.success('Bill uploaded and attached.');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not upload the bill.');
+    } finally {
+      setUploading(false);
+    }
+  }
 
   // Load the client's active projects for the "expenses on behalf" picker.
   // Only relevant for client-attributed bills; clear (and reset the choice)
@@ -221,11 +292,15 @@ export function VendorBillForm({
       return;
     }
     if (attribution === null) {
-      toast.error('Choose whether this bill is for a client, OpEx, or an asset.');
+      toast.error('Choose whether this bill is for a client, an office expense, an asset, or other.');
       return;
     }
     if (attribution === 'client' && !clientId) {
       toast.error('Pick the client this bill is on behalf of.');
+      return;
+    }
+    if (attribution === 'other' && !otherDescription.trim()) {
+      toast.error('Describe what this "Other" bill is for.');
       return;
     }
     if (!billDocumentId) {
@@ -271,6 +346,13 @@ export function VendorBillForm({
 
     setSubmitting(true);
     try {
+      // "Other" is recorded as an Other-operating-expense (6900) bill, with the
+      // user's required description captured in the notes so the books always
+      // say what it was for.
+      const combinedNotes =
+        [attribution === 'other' ? `Other — ${otherDescription.trim()}` : '', notes.trim()]
+          .filter(Boolean)
+          .join('\n') || null;
       const common = {
         vendorId,
         billDocumentId,
@@ -278,7 +360,7 @@ export function VendorBillForm({
         txnDate,
         lineItems: parsedLines,
         isRcm,
-        notes: notes.trim() || null,
+        notes: combinedNotes,
       };
       let payload: Parameters<typeof createVendorBillDraft>[0];
       if (attribution === 'client') {
@@ -290,11 +372,11 @@ export function VendorBillForm({
           tdsAmountPaise,
           ...(effectiveTdsSection ? { tdsSection: effectiveTdsSection } : {}),
         };
-      } else if (attribution === 'opex') {
+      } else if (attribution === 'opex' || attribution === 'other') {
         payload = {
           attribution: 'opex',
           ...common,
-          expenseAccountCode,
+          expenseAccountCode: attribution === 'other' ? '6900' : expenseAccountCode,
           tdsAmountPaise,
           ...(effectiveTdsSection ? { tdsSection: effectiveTdsSection } : {}),
         };
@@ -329,7 +411,9 @@ export function VendorBillForm({
         ? ' — OpEx'
         : attribution === 'asset'
           ? ' — Asset'
-          : '';
+          : attribution === 'other'
+            ? ' — Other'
+            : '';
 
   // Esc to close.
   useEffect(() => {
@@ -398,8 +482,8 @@ export function VendorBillForm({
                 billed back via the AR ledger (5100 Vendor Costs).
               </p>
             ) : (
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
-                {(['client', 'opex', 'asset'] as Attribution[]).map((a) => {
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8 }}>
+                {(['client', 'opex', 'asset', 'other'] as Attribution[]).map((a) => {
                   const selected = attribution === a;
                   return (
                     <label
@@ -434,14 +518,22 @@ export function VendorBillForm({
                         }}
                       />
                       <span style={{ fontSize: 13, fontWeight: 500 }}>
-                        {a === 'client' ? 'For a client' : a === 'opex' ? 'OpEx' : 'Asset'}
+                        {a === 'client'
+                          ? 'For a client'
+                          : a === 'opex'
+                            ? 'Office expense'
+                            : a === 'asset'
+                              ? 'Asset'
+                              : 'Other'}
                       </span>
                       <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
                         {a === 'client'
                           ? '5100 + bill-back via AR'
                           : a === 'opex'
                             ? '6xxx office cost'
-                            : '1510 capital'}
+                            : a === 'asset'
+                              ? '1510 capital'
+                              : 'Anything else — describe it'}
                       </span>
                     </label>
                   );
@@ -550,6 +642,19 @@ export function VendorBillForm({
                   responsibility.
                 </p>
               </div>
+            ) : attribution === 'other' ? (
+              <div className="os-field">
+                <span className="os-field-label">What is this for?</span>
+                <input
+                  type="text"
+                  placeholder="e.g. Diwali gifting, legal retainer…"
+                  value={otherDescription}
+                  onChange={(e) => setOtherDescription(e.target.value)}
+                  disabled={submitting}
+                  style={osInputStyle}
+                />
+                <p className="os-field-hint">Recorded under 6900 Other operating expense.</p>
+              </div>
             ) : (
               <div className="os-field">
                 <span className="os-field-label">&nbsp;</span>
@@ -591,30 +696,64 @@ export function VendorBillForm({
             </div>
           ) : null}
 
-          {/* Source document */}
+          {/* Source document — pick an existing doc OR upload one inline */}
           <div className="os-field">
-            <span className="os-field-label">Source document (vendor invoice PDF)</span>
-            <select
-              value={billDocumentId}
-              onChange={(e) => setBillDocumentId(e.target.value)}
-              disabled={submitting}
-              style={osInputStyle}
-            >
-              <option value="">
-                {docOptions.length === 0
-                  ? 'No matching docs — upload one in the Documents tab'
-                  : 'Pick the bill PDF'}
-              </option>
-              {docOptions.map((d) => (
-                <option key={d.documentId} value={d.documentId}>
-                  {d.title ?? d.originalFilename} ({d.kind})
+            <span className="os-field-label">Source document (vendor invoice / bill)</span>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'stretch' }}>
+              <select
+                value={billDocumentId}
+                onChange={(e) => setBillDocumentId(e.target.value)}
+                disabled={submitting || uploading}
+                style={{ ...osInputStyle, flex: 1 }}
+              >
+                <option value="">
+                  {docOptions.length === 0
+                    ? 'No documents yet — upload the bill →'
+                    : 'Pick an existing document'}
                 </option>
-              ))}
-            </select>
+                {(['project', 'client', 'vendor'] as DocSource[]).map((src) => {
+                  const inGroup = docOptions.filter((d) => d.source === src);
+                  if (inGroup.length === 0) return null;
+                  return (
+                    <optgroup key={src} label={DOC_SOURCE_LABEL[src]}>
+                      {inGroup.map((d) => (
+                        <option key={d.documentId} value={d.documentId}>
+                          {d.title ?? d.originalFilename} ({d.kind})
+                        </option>
+                      ))}
+                    </optgroup>
+                  );
+                })}
+              </select>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".pdf,.png,.jpg,.jpeg,.webp"
+                style={{ display: 'none' }}
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) void handleUploadBill(f);
+                  e.target.value = '';
+                }}
+              />
+              <button
+                type="button"
+                className="btn"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={
+                  submitting ||
+                  uploading ||
+                  (attribution === 'client' ? !clientId || !vendorId : !vendorId)
+                }
+                style={{ whiteSpace: 'nowrap' }}
+              >
+                {uploading ? 'Uploading…' : 'Upload bill'}
+              </button>
+            </div>
             <p className="os-field-hint">
               {attribution === 'client'
-                ? 'Looking under the client. Switch to vendor side if the doc is attached there.'
-                : 'Looking under the vendor.'}
+                ? 'Showing documents from the project, client and vendor — or upload the bill right here.'
+                : 'Showing the vendor’s documents — or upload the bill right here; no need to add it elsewhere first.'}
             </p>
           </div>
 
