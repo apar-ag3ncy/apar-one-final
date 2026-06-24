@@ -99,6 +99,7 @@ export function ProjectsList({
         data={data as Project[]}
         exportFilename="projects"
         initialSorting={[{ id: 'startedAt', desc: true }]}
+        onRowClick={(row) => router.push(`/projects/${row.original.id}`)}
         searchPlaceholder="Search projects, code, client, lead…"
         tableKey="projects.list"
         bulkActions={actions}

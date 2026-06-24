@@ -40,6 +40,7 @@ export type Employee = {
   employmentType: EmploymentType;
   status: EmployeeStatus;
   workEmail: string;
+  personalEmail?: string;
   phone: string;
   city: string;
   joinedAt: Date;
@@ -48,5 +49,6 @@ export type Employee = {
   panMasked: string | null; // e.g. XXXXX1234X
   aadhaarMasked: string | null; // last 4 only
   documentsCount: number;
+  noticePeriodDays?: string | null;
   notes: string | null;
 };

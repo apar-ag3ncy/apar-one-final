@@ -1,45 +1,48 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useTransition } from 'react';
+import { toast } from 'sonner';
 import { CapabilityMatrix, type CapabilityGrants } from '@/components/entity/capability-matrix';
-import { DEFAULT_GRANTS, type Capability, type Role } from '@/components/entity/capability-types';
+import { ROLES, type Capability, type Role } from '@/lib/capabilities';
+import { setRoleCapability } from '@/lib/server/settings/role-capabilities';
 
 /**
- * Client wrapper for the capability matrix. Local optimistic state until
- * Backend ships `getRoleCapabilities` + `setRoleCapability` server actions.
- *
- * TODO(backend): replace useState with React Query against A's actions.
- * The matrix UI itself is already wired so this swap is one-file.
+ * Client wrapper for the capability matrix. The server page loads the
+ * initial grants (and gates the whole page on `manage_role_capabilities`);
+ * each toggle applies optimistically, calls `setRoleCapability`, and
+ * reverts with a toast if the server rejects it.
  */
-export function RolesClient() {
-  const [grants, setGrants] = useState<CapabilityGrants>(() => cloneDefaults());
+export function RolesClient({ initialGrants }: { initialGrants: Record<Role, Capability[]> }) {
+  const [grants, setGrants] = useState<CapabilityGrants>(() => toSets(initialGrants));
+  const [, startTransition] = useTransition();
 
-  function handleToggle(role: Role, capability: Capability, next: boolean) {
+  function applyToggle(role: Role, capability: Capability, next: boolean) {
     setGrants((current) => {
       const updated = new Set(current[role]);
       if (next) updated.add(capability);
       else updated.delete(capability);
       return { ...current, [role]: updated };
     });
-    // TODO(backend): call A.setRoleCapability(role, capability, next).
   }
 
-  return (
-    <CapabilityMatrix
-      grants={grants}
-      onToggle={handleToggle}
-      // TODO(backend): set readOnly when current user lacks `manage_capabilities`.
-    />
-  );
+  function handleToggle(role: Role, capability: Capability, next: boolean) {
+    applyToggle(role, capability, next);
+    startTransition(async () => {
+      const result = await setRoleCapability(role, capability, next);
+      if (!result.ok) {
+        applyToggle(role, capability, !next);
+        toast.error(result.message);
+      }
+    });
+  }
+
+  return <CapabilityMatrix grants={grants} onToggle={handleToggle} />;
 }
 
-function cloneDefaults(): CapabilityGrants {
-  return {
-    partner: new Set(DEFAULT_GRANTS.partner),
-    admin: new Set(DEFAULT_GRANTS.admin),
-    manager: new Set(DEFAULT_GRANTS.manager),
-    accountant: new Set(DEFAULT_GRANTS.accountant),
-    employee: new Set(DEFAULT_GRANTS.employee),
-    viewer: new Set(DEFAULT_GRANTS.viewer),
-  };
+function toSets(grants: Record<Role, Capability[]>): CapabilityGrants {
+  const sets = {} as Record<Role, ReadonlySet<Capability>>;
+  for (const role of ROLES) {
+    sets[role] = new Set(grants[role] ?? []);
+  }
+  return sets;
 }

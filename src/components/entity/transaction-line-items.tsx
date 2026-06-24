@@ -77,7 +77,7 @@ export function TransactionLineItems({
   return (
     <div className={cn('space-y-2', className)}>
       <div className="text-muted-foreground grid grid-cols-12 gap-2 px-2 text-[10px] tracking-wide uppercase">
-        <div className="col-span-4">Description</div>
+        <div className={showTds ? 'col-span-3' : 'col-span-4'}>Description</div>
         {showHsn ? <div className="col-span-1">HSN</div> : null}
         <div className="col-span-1">Qty</div>
         <div className="col-span-2 text-right">Unit ₹</div>
@@ -92,7 +92,7 @@ export function TransactionLineItems({
         return (
           <div key={idx} className="grid grid-cols-12 items-center gap-2 rounded-md border p-2">
             <Input
-              className="col-span-4"
+              className={showTds ? 'col-span-3' : 'col-span-4'}
               value={line.description}
               onChange={(e) => patch(idx, { description: e.target.value })}
               placeholder="Description"

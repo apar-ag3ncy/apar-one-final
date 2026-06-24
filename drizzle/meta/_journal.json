@@ -295,6 +295,13 @@
       "when": 1780600007000,
       "tag": "0041_company_settings",
       "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1780600007001,
+      "tag": "0042_vault",
+      "breakpoints": true
     }
   ]
 }

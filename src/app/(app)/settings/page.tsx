@@ -3,6 +3,7 @@ import Link from 'next/link';
 import {
   Building2Icon,
   CalendarRangeIcon,
+  KeyRoundIcon,
   LandmarkIcon,
   type LucideIcon,
   PercentIcon,
@@ -35,6 +36,12 @@ const SECTIONS: readonly SettingsLink[] = [
     title: 'Billing · Bank accounts',
     description: 'Apār’s own bank accounts, with a primary and secondary.',
     icon: LandmarkIcon,
+  },
+  {
+    href: '/settings/vault',
+    title: 'Vault',
+    description: 'Account IDs & passwords, encrypted behind a vault password.',
+    icon: KeyRoundIcon,
   },
   {
     href: '/settings/periods',

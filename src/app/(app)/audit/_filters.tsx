@@ -25,6 +25,8 @@ const ENTITY_TYPES = [
   'invoice',
   'bill',
   'receipt',
+  'vault',
+  'vault_item',
 ] as const;
 
 export function AuditFilters() {

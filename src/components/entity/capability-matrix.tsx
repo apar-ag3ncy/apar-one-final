@@ -11,7 +11,7 @@ import {
   ROLES,
   type Capability,
   type Role,
-} from './capability-types';
+} from '@/lib/capabilities';
 
 export type CapabilityGrants = Record<Role, ReadonlySet<Capability>>;
 
@@ -25,7 +25,7 @@ export type CapabilityMatrixProps = {
    * onToggle. Server should also reject any attempt to change partner.
    */
   onToggle?: (role: Role, capability: Capability, next: boolean) => void;
-  /** Disable interaction (e.g. when current user lacks `manage_capabilities`). */
+  /** Disable interaction (e.g. when current user lacks `manage_role_capabilities`). */
   readOnly?: boolean;
   className?: string;
 };

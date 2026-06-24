@@ -339,6 +339,7 @@ export async function listEmployees(): Promise<readonly Employee[]> {
       status: employees.status,
       isArchived: employees.isArchived,
       workEmail: employees.workEmail,
+      personalEmail: employees.personalEmail,
       phone: employees.phone,
       joinedOn: employees.joinedOn,
       separatedOn: employees.separatedOn,
@@ -346,6 +347,7 @@ export async function listEmployees(): Promise<readonly Employee[]> {
       maskedAadhaar: employees.maskedAadhaar,
       notes: employees.notes,
       reportsToEmployeeId: employees.reportsToEmployeeId,
+      noticePeriodDays: employees.noticePeriodDays,
       documentsCount: sql<number>`(select count(*)::int from entity_documents where entity_type = 'employee' and entity_id = ${employees.id})`,
     })
     .from(employees)
@@ -361,6 +363,7 @@ export async function listEmployees(): Promise<readonly Employee[]> {
       employmentType: mapEmploymentType(r.employmentType),
       status: mapEmployeeStatus(r.status, r.isArchived),
       workEmail: r.workEmail ?? '',
+      personalEmail: r.personalEmail ?? '',
       phone: r.phone ?? '',
       city: '',
       joinedAt: new Date(r.joinedOn),
@@ -369,6 +372,7 @@ export async function listEmployees(): Promise<readonly Employee[]> {
       panMasked: r.maskedPan,
       aadhaarMasked: r.maskedAadhaar,
       documentsCount: r.documentsCount,
+      noticePeriodDays: r.noticePeriodDays,
       notes: r.notes,
     }),
   );
@@ -403,6 +407,7 @@ const PROJECT_LIST_COLUMNS = {
   code: projects.code,
   clientId: projects.clientId,
   clientName: clients.name,
+  clientArchived: clients.isArchived,
   status: projects.status,
   feePaise: projects.feePaise,
   isArchived: projects.isArchived,
@@ -426,6 +431,7 @@ type ProjectListRowResult = {
   code: string | null;
   clientId: string;
   clientName: string | null;
+  clientArchived: boolean | null;
   status: 'pitch' | 'won' | 'active' | 'on_hold' | 'completed' | 'cancelled';
   feePaise: bigint;
   isArchived: boolean;
@@ -446,6 +452,7 @@ function rowToProject(r: ProjectListRowResult): Project {
     name: r.name,
     clientId: r.clientId,
     clientName: r.clientName ?? '—',
+    clientArchived: r.clientArchived ?? true,
     status: mapProjectStatus(r.status, r.isArchived),
     dbStatus: r.status,
     billingModel: FALLBACK_BILLING,
@@ -486,8 +493,13 @@ export async function listProjectsByClient(clientId: string): Promise<readonly P
 }
 
 export async function getProject(id: string): Promise<Project | null> {
-  const all = await listProjects();
-  return all.find((p) => p.id === id) ?? null;
+  const rows = await db
+    .select(PROJECT_LIST_COLUMNS)
+    .from(projects)
+    .leftJoin(clients, eq(projects.clientId, clients.id))
+    .where(and(eq(projects.id, id), isNull(projects.deletedAt)))
+    .limit(1);
+  return rows[0] ? rowToProject(rows[0]) : null;
 }
 
 export type TeamUser = {
@@ -631,7 +643,17 @@ export async function listProjectTransactions(projectId: string): Promise<Projec
           ),
         ),
       )
-      .groupBy(ledgerTransactions.id, clients.id)
+      .groupBy(
+        ledgerTransactions.id,
+        ledgerTransactions.txnDate,
+        ledgerTransactions.description,
+        ledgerTransactions.status,
+        ledgerTransactions.onBehalfOfClientId,
+        clients.id,
+        clients.name,
+        clients.isArchived,
+        clients.deletedAt
+      )
       .orderBy(desc(ledgerTransactions.txnDate)),
   ]);
 

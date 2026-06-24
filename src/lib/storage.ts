@@ -213,9 +213,16 @@ const MIME_MAGIC: Array<{
  * "Sniffs MIME type from file bytes (not just trust the browser's
  * header); rejects mismatch."
  *
- * Caller passes the first 64+ bytes of the file. Returns the detected
- * MIME or `null` if unknown. Throws `storage.mime_mismatch` (via the
- * caller wrapping the result) if `expected` is set and detected differs.
+ * Caller passes the first 16+ bytes of the file. Returns the confirmed MIME
+ * when the header matches a fingerprint, otherwise the browser-declared
+ * `expected` type (or `application/octet-stream` when none was supplied).
+ *
+ * Throws `storage.mime_mismatch` only on a *positive* contradiction — i.e. the
+ * header fingerprints as one type while the browser claimed a different one
+ * (a lie we can prove). We only fingerprint a handful of formats, so an
+ * unrecognised header is NOT a mismatch: it just means we can't confirm it,
+ * and the common case is a perfectly valid file we don't sniff (GIF, WebP,
+ * SVG, CSV, plain text, legacy .doc/.xls, …). Rejecting those broke uploads.
  */
 export function sniffMime(bytes: Uint8Array, expected?: string): string {
   for (const { mime, test } of MIME_MAGIC) {
@@ -234,11 +241,8 @@ export function sniffMime(bytes: Uint8Array, expected?: string): string {
       return mime;
     }
   }
-  if (expected) {
-    throw new AppError(
-      'storage.mime_mismatch',
-      `MIME could not be confirmed from bytes; client claimed "${expected}".`,
-    );
-  }
-  return 'application/octet-stream';
+  // No fingerprint matched — we can't confirm the type, but that is not proof
+  // of a lie. Fall back to the browser-declared type so we don't reject the
+  // many valid formats outside the small magic table above.
+  return expected ?? 'application/octet-stream';
 }

@@ -91,7 +91,15 @@ function ProfileTab({ employee }: { employee: Employee }) {
                 )
               }
             />
+            <Detail
+              label="Notice period"
+              value={employee.noticePeriodDays ?? <span className="text-muted-foreground">—</span>}
+            />
             <Detail label="Work email" value={employee.workEmail} />
+            <Detail
+              label="Personal email"
+              value={employee.personalEmail || <span className="text-muted-foreground">—</span>}
+            />
             <Detail label="Phone" value={<span className="tabular-nums">{employee.phone}</span>} />
             <Detail label="City" value={employee.city} />
           </dl>

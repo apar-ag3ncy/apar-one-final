@@ -50,6 +50,7 @@ type EmployeeValues = {
   reportsToEmployeeId: string;
   joinedOn: string;
   confirmedOn: string;
+  separatedOn: string;
   noticePeriodDays: string;
   // KYC & address
   pan: string;
@@ -85,6 +86,7 @@ const INITIAL: EmployeeValues = {
   reportsToEmployeeId: '',
   joinedOn: '',
   confirmedOn: '',
+  separatedOn: '',
   noticePeriodDays: '',
   pan: '',
   aadhaar: '',
@@ -104,6 +106,7 @@ const INITIAL: EmployeeValues = {
 
 const PAN_RE = /^[A-Z]{5}[0-9]{4}[A-Z]$/;
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export function EmployeeWizard() {
   const router = useRouter();
@@ -118,6 +121,12 @@ export function EmployeeWizard() {
       validate: (v) => {
         const e: Record<string, string> = {};
         if (!v.fullName.trim()) e.fullName = 'Full name is required';
+        if (v.workEmail.trim() && !EMAIL_RE.test(v.workEmail.trim())) {
+          e.workEmail = 'Enter a valid work email';
+        }
+        if (v.personalEmail.trim() && !EMAIL_RE.test(v.personalEmail.trim())) {
+          e.personalEmail = 'Enter a valid personal email';
+        }
         return e;
       },
       render: ({ values, onPatch, errors }) => (
@@ -153,14 +162,14 @@ export function EmployeeWizard() {
               onChange={(e) => onPatch({ phone: e.target.value })}
             />
           </Field>
-          <Field label="Work email">
+          <Field label="Work email" error={errors.workEmail}>
             <Input
               type="email"
               value={values.workEmail}
               onChange={(e) => onPatch({ workEmail: e.target.value })}
             />
           </Field>
-          <Field label="Personal email">
+          <Field label="Personal email" error={errors.personalEmail}>
             <Input
               type="email"
               value={values.personalEmail}
@@ -178,6 +187,12 @@ export function EmployeeWizard() {
         const e: Record<string, string> = {};
         if (!v.employmentType) e.employmentType = 'Employment type is required';
         if (!v.joinedOn || !ISO.test(v.joinedOn)) e.joinedOn = 'Joining date is required';
+        if (
+          (v.status === 'notice' || v.status === 'separated') &&
+          (!v.separatedOn || !ISO.test(v.separatedOn))
+        ) {
+          e.separatedOn = 'Last working day is required for Notice/Separated status';
+        }
         return e;
       },
       render: ({ values, onPatch, errors }) => (
@@ -212,6 +227,7 @@ export function EmployeeWizard() {
                 <SelectItem value="active">Active</SelectItem>
                 <SelectItem value="on_leave">On leave</SelectItem>
                 <SelectItem value="notice">Notice</SelectItem>
+                <SelectItem value="separated">Separated</SelectItem>
               </SelectContent>
             </Select>
           </Field>
@@ -253,6 +269,20 @@ export function EmployeeWizard() {
               onChange={(e) => onPatch({ confirmedOn: e.target.value })}
             />
           </Field>
+          {(values.status === 'notice' || values.status === 'separated') && (
+            <Field
+              label="Last working day"
+              error={errors.separatedOn}
+              required
+              hint="Required for notice/separated status"
+            >
+              <Input
+                type="date"
+                value={values.separatedOn}
+                onChange={(e) => onPatch({ separatedOn: e.target.value })}
+              />
+            </Field>
+          )}
         </div>
       ),
     },
@@ -559,6 +589,7 @@ export function EmployeeWizard() {
       reportsToEmployeeId: values.reportsToEmployeeId || undefined,
       joinedOn: values.joinedOn,
       confirmedOn: values.confirmedOn || undefined,
+      separatedOn: values.separatedOn || undefined,
       noticePeriodDays: values.noticePeriodDays || undefined,
       pan: values.pan || undefined,
       aadhaar: values.aadhaar || undefined,
@@ -712,12 +743,17 @@ function ReviewBlock({ values }: { values: EmployeeValues }) {
       <dl className="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2">
         <Row label="Full name" value={values.fullName || '—'} />
         <Row label="Employee code" value={values.employeeCode || 'Auto (APAR-NNN)'} />
+        <Row label="Work email" value={values.workEmail || '—'} />
+        <Row label="Personal email" value={values.personalEmail || '—'} />
+        <Row label="Phone" value={values.phone || '—'} />
+        <Row label="Status" value={values.status} />
         <Row
           label="Employment"
           value={`${values.employmentType || '—'}${values.designation ? ` · ${values.designation}` : ''}`}
         />
         <Row label="Department" value={values.department || '—'} />
         <Row label="Joining date" value={values.joinedOn || '—'} />
+        <Row label="Notice period" value={values.noticePeriodDays || '—'} />
         <Row label="PAN" value={values.pan || '—'} />
         <Row label="Contract" value={values.contract.kind} />
         <Row
