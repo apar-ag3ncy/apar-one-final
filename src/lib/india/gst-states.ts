@@ -54,12 +54,60 @@ export const GST_STATES_BY_NAME: readonly GstState[] = [...GST_STATES].sort((a, 
 );
 
 const CODE_TO_NAME = new Map(GST_STATES.map((s) => [s.code, s.name]));
+const ALPHA_TO_CODE = new Map([
+  ['JK', '01'],
+  ['HP', '02'],
+  ['PB', '03'],
+  ['CH', '04'],
+  ['UK', '05'],
+  ['HR', '06'],
+  ['DL', '07'],
+  ['RJ', '08'],
+  ['UP', '09'],
+  ['BR', '10'],
+  ['SK', '11'],
+  ['AR', '12'],
+  ['NL', '13'],
+  ['MN', '14'],
+  ['MZ', '15'],
+  ['TR', '16'],
+  ['ML', '17'],
+  ['AS', '18'],
+  ['WB', '19'],
+  ['JH', '20'],
+  ['OD', '21'],
+  ['CG', '22'],
+  ['MP', '23'],
+  ['GJ', '24'],
+  ['DN', '26'],
+  ['DD', '26'],
+  ['MH', '27'],
+  ['KA', '29'],
+  ['GA', '30'],
+  ['LD', '31'],
+  ['KL', '32'],
+  ['TN', '33'],
+  ['PY', '34'],
+  ['AN', '35'],
+  ['TS', '36'],
+  ['TG', '36'],
+  ['AP', '37'],
+  ['LA', '38'],
+]);
 
 export function stateNameFromCode(code: string | null | undefined): string | null {
   if (!code) return null;
-  return CODE_TO_NAME.get(code) ?? null;
+  const normalized = stateCodeToGstCode(code);
+  return normalized ? (CODE_TO_NAME.get(normalized) ?? null) : null;
 }
 
 export function isValidStateCode(code: string | null | undefined): boolean {
-  return !!code && CODE_TO_NAME.has(code);
+  return !!stateCodeToGstCode(code);
+}
+
+export function stateCodeToGstCode(code: string | null | undefined): string | null {
+  if (!code) return null;
+  const trimmed = code.trim().toUpperCase();
+  if (CODE_TO_NAME.has(trimmed)) return trimmed;
+  return ALPHA_TO_CODE.get(trimmed) ?? null;
 }

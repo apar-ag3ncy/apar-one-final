@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useTransition } from 'react';
+import { useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { CircleCheckIcon, UploadIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -22,6 +22,7 @@ import {
 import { ValidationFlags } from '@/components/entity/validation-flags';
 import type { TransactionFlag } from '@/components/entity/transaction-detail';
 import { createDraftTransaction, postTransaction } from '@/lib/server-stub/ledger-actions';
+import { uploadDocument } from '@/lib/server/entities/entity-documents';
 import { notify } from '@/lib/client/toast';
 
 type VendorOption = { id: string; name: string };
@@ -50,10 +51,8 @@ const EXPENSE_ACCOUNTS = [
   { code: '6200', name: 'Utilities' },
   { code: '6300', name: 'Salaries' },
   { code: '6400', name: 'Software & SaaS' },
-  { code: '6500', name: 'Travel' },
-  { code: '6600', name: 'Office supplies' },
-  { code: '6700', name: 'Marketing' },
-  { code: '6800', name: 'Professional fees' },
+  { code: '6900', name: 'Other operating expense' },
+  { code: '8100', name: 'Finance cost / bank charges' },
 ];
 
 export function VendorBillForm({ vendors, clients, projects }: VendorBillFormProps) {
@@ -78,6 +77,8 @@ export function VendorBillForm({ vendors, clients, projects }: VendorBillFormPro
   const [acked, setAcked] = useState<ReadonlySet<string>>(new Set());
   const [postMessage, setPostMessage] = useState<string | null>(null);
   const [postedId, setPostedId] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const projectsForClient = projects.filter((p) => p.clientId === clientId);
   const blockFlags = draft?.flags.filter((f) => f.severity === 'block') ?? [];
@@ -85,9 +86,37 @@ export function VendorBillForm({ vendors, clients, projects }: VendorBillFormPro
   const allWarnsAcked = warnFlags.every((f) => acked.has(f.id));
   const canPost = draft !== null && blockFlags.length === 0 && allWarnsAcked && !pending;
 
-  function handleSimulateUpload() {
-    setSourceDocumentName('bill_acme_april_2026.pdf');
-    setSourceDocumentId('doc_simulated_' + Math.random().toString(36).slice(2, 8));
+  async function handleUploadFile(file: File) {
+    if (!vendorId) {
+      notify.error('Pick a vendor first', 'The bill is filed against the selected vendor.');
+      return;
+    }
+    setUploading(true);
+    try {
+      const fd = new FormData();
+      fd.set('file', file);
+      fd.set('entityType', 'vendor');
+      fd.set('entityId', vendorId);
+      fd.set('kind', 'invoice');
+      if (billNumber.trim()) fd.set('title', billNumber.trim());
+      const { documentId } = await uploadDocument(fd);
+      setSourceDocumentId(documentId);
+      setSourceDocumentName(file.name);
+      notify.success('Bill attached', file.name);
+    } catch (e) {
+      notify.error('Upload failed', e instanceof Error ? e.message : 'Could not attach the bill.');
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  function handleAttributionChange(next: Exclude<Attribution, null>) {
+    setAttribution(next);
+    setClientId('');
+    setProjectId('');
+    setExpenseAccountCode('');
+    setDraft(null);
+    setAcked(new Set());
   }
 
   function handleCreateDraft() {
@@ -103,6 +132,9 @@ export function VendorBillForm({ vendors, clients, projects }: VendorBillFormPro
         expenseAccountCode: attribution === 'opex' ? expenseAccountCode || undefined : undefined,
         vendorId: vendorId || undefined,
         sourceDocumentId,
+        billNumber: billNumber || undefined,
+        billDate,
+        memo: memo || undefined,
         lines: lines.map((l) => ({
           description: l.description,
           hsn: l.hsn,
@@ -165,22 +197,6 @@ export function VendorBillForm({ vendors, clients, projects }: VendorBillFormPro
 
   return (
     <div className="space-y-4">
-      <Card className="border-amber-200 bg-amber-50/40 dark:border-amber-900 dark:bg-amber-950/30">
-        <CardContent className="py-3 text-sm">
-          <p className="font-medium">Typed vendor-bill form coming in a follow-up</p>
-          <p className="text-muted-foreground mt-1 text-xs">
-            The real backend needs a per-kind typed input with attribution (client / opex / asset),
-            line items with paise bigints + GST captured per line, optional TDS section, and an
-            attached source document. The typed form ships in a follow-up. To record a vendor bill
-            now, use the{' '}
-            <a className="underline" href="/ledger/new/journal-voucher">
-              Journal Voucher
-            </a>{' '}
-            — it accepts any debit/credit pair against the real chart of accounts and posts to the
-            live ledger immediately.
-          </p>
-        </CardContent>
-      </Card>
       {/* Step 1: Vendor */}
       <Card>
         <CardHeader>
@@ -218,21 +234,21 @@ export function VendorBillForm({ vendors, clients, projects }: VendorBillFormPro
             <AttributionCard
               value="client"
               current={attribution}
-              onSelect={setAttribution}
+              onSelect={handleAttributionChange}
               title="For a client"
               description="Posts to direct project cost (5100). Required: client. Optional: project."
             />
             <AttributionCard
               value="opex"
               current={attribution}
-              onSelect={setAttribution}
+              onSelect={handleAttributionChange}
               title="OpEx"
               description="Posts to an expense account in the 6xxx range. Required: account."
             />
             <AttributionCard
               value="asset"
               current={attribution}
-              onSelect={setAttribution}
+              onSelect={handleAttributionChange}
               title="Asset"
               description="Posts to fixed assets (1510)."
             />
@@ -335,7 +351,8 @@ export function VendorBillForm({ vendors, clients, projects }: VendorBillFormPro
         <CardHeader>
           <CardTitle className="text-base">Source document</CardTitle>
           <p className="text-muted-foreground text-xs">
-            Required. Upload the PDF or image of the actual bill from the vendor.
+            Upload the PDF or image of the actual bill from the vendor. Optional — leave blank to
+            record the bill now and attach the scan later from the vendor&apos;s Documents tab.
           </p>
         </CardHeader>
         <CardContent>
@@ -356,10 +373,30 @@ export function VendorBillForm({ vendors, clients, projects }: VendorBillFormPro
               </Button>
             </div>
           ) : (
-            <Button variant="outline" onClick={handleSimulateUpload}>
-              <UploadIcon className="mr-1.5 size-3.5" aria-hidden />
-              Simulate upload (Backend `uploadDocument` not yet shipped)
-            </Button>
+            <div className="flex flex-col gap-1.5">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".pdf,.png,.jpg,.jpeg,.webp"
+                className="sr-only"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) void handleUploadFile(file);
+                  e.target.value = '';
+                }}
+              />
+              <Button
+                variant="outline"
+                disabled={uploading || !vendorId}
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <UploadIcon className="mr-1.5 size-3.5" aria-hidden />
+                {uploading ? 'Uploading…' : 'Upload bill (PDF / image)'}
+              </Button>
+              {!vendorId ? (
+                <span className="text-muted-foreground text-xs">Choose a vendor first.</span>
+              ) : null}
+            </div>
           )}
         </CardContent>
       </Card>

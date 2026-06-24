@@ -15,6 +15,7 @@ import {
 } from '@/lib/db/schema';
 import { AppError } from '@/lib/errors';
 import { createAdminClient } from '@/lib/supabase/server';
+import { stateCodeToGstCode, stateNameFromCode } from '@/lib/india/gst-states';
 
 import type { InvoicePdfData } from './invoice';
 
@@ -60,27 +61,38 @@ export async function loadInvoicePdfData(
     throw new AppError('not_found', `client ${invoice.clientId} not found`);
   }
 
-  // Recipient address — the invoice's chosen bill-to when set, else the
-  // primary, else the registered, else any. Soft-deleted rows are excluded.
-  const recipientAddresses = await client
-    .select()
-    .from(entityAddresses)
-    .where(
-      and(
-        eq(entityAddresses.entityType, 'client'),
-        eq(entityAddresses.entityId, invoice.clientId),
-        isNull(entityAddresses.deletedAt),
-      ),
-    )
-    .orderBy(asc(entityAddresses.kind));
-  const recipientAddress =
-    (invoice.billToAddressId
-      ? (recipientAddresses.find((a) => a.id === invoice.billToAddressId) ?? null)
-      : null) ??
-    recipientAddresses.find((a) => a.isPrimary) ??
-    recipientAddresses.find((a) => a.kind === 'registered') ??
-    recipientAddresses[0] ??
-    null;
+  // Recipient address. The invoice's chosen bill-to wins when set — and we
+  // resolve it DIRECTLY by id (even if it was later soft-deleted), so the
+  // address printed on a past invoice never silently swaps to a different one
+  // when an address is archived. Only when no bill-to was captured do we fall
+  // back to the client's primary / registered / first *current* address.
+  let recipientAddress: typeof entityAddresses.$inferSelect | null = null;
+  if (invoice.billToAddressId) {
+    const [chosen] = await client
+      .select()
+      .from(entityAddresses)
+      .where(eq(entityAddresses.id, invoice.billToAddressId))
+      .limit(1);
+    recipientAddress = chosen ?? null;
+  }
+  if (!recipientAddress) {
+    const recipientAddresses = await client
+      .select()
+      .from(entityAddresses)
+      .where(
+        and(
+          eq(entityAddresses.entityType, 'client'),
+          eq(entityAddresses.entityId, invoice.clientId),
+          isNull(entityAddresses.deletedAt),
+        ),
+      )
+      .orderBy(asc(entityAddresses.kind));
+    recipientAddress =
+      recipientAddresses.find((a) => a.isPrimary) ??
+      recipientAddresses.find((a) => a.kind === 'registered') ??
+      recipientAddresses[0] ??
+      null;
+  }
 
   // Recipient GSTIN — first entity_tax_identifiers row with kind='gstin'.
   const recipientTaxIds = await client
@@ -114,9 +126,8 @@ export async function loadInvoicePdfData(
     supplierOrg.gstin && supplierOrg.gstin.length >= 2 ? supplierOrg.gstin.slice(0, 2) : '27';
 
   const recipientStateCode =
-    (recipientAddress?.stateCode && recipientAddress.stateCode.length === 2
-      ? recipientAddress.stateCode
-      : null) ?? (recipientGstin && recipientGstin.length >= 2 ? recipientGstin.slice(0, 2) : null);
+    stateCodeToGstCode(recipientAddress?.stateCode) ??
+    (recipientGstin && recipientGstin.length >= 2 ? recipientGstin.slice(0, 2) : null);
 
   const themeOverrides = await resolveThemeOverrides(client, invoice.themeId);
 
@@ -138,7 +149,11 @@ export async function loadInvoicePdfData(
         ? [
             recipientAddress.line1,
             recipientAddress.line2 ?? '',
-            [recipientAddress.city, recipientAddress.stateCode, recipientAddress.postalCode]
+            [
+              recipientAddress.city,
+              stateNameFromCode(recipientAddress.stateCode) ?? recipientAddress.stateCode,
+              recipientAddress.postalCode,
+            ]
               .filter(Boolean)
               .join(', '),
           ].filter((s) => s && s.length > 0)
@@ -152,7 +167,7 @@ export async function loadInvoicePdfData(
     documentType: invoice.documentType,
     documentDate: invoice.documentDate,
     dueDate: invoice.dueDate,
-    placeOfSupply: invoice.placeOfSupply,
+    placeOfSupply: stateNameFromCode(invoice.placeOfSupply) ?? invoice.placeOfSupply,
     isReverseCharge: false, // sales side: reverse charge is rare; flip on later if needed
     lines: lines.map((l) => ({
       lineNo: l.lineNo,

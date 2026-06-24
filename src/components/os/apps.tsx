@@ -3666,6 +3666,10 @@ export function EmployeeProfileEditor({
       setErrors({ joinedOn: 'Joining date is required.' });
       return;
     }
+    if ((form.status === 'notice' || form.status === 'separated') && !form.separatedOn) {
+      setErrors({ separatedOn: 'Last working day is required for Notice/Separated status.' });
+      return;
+    }
     setErrors({});
     setBusy(true);
     try {
@@ -3683,6 +3687,7 @@ export function EmployeeProfileEditor({
           reportsToEmployeeId: form.reportsToEmployeeId || undefined,
           joinedOn: form.joinedOn,
           confirmedOn: form.confirmedOn || undefined,
+          separatedOn: form.separatedOn || undefined,
           noticePeriodDays: form.noticePeriodDays.trim() || undefined,
           notes: form.notes.trim() || undefined,
         });
@@ -3746,6 +3751,7 @@ export function EmployeeProfileEditor({
               onChange={(e) => set('displayName', e.target.value)}
               placeholder="Short / nick name"
             />
+            {errors.displayName ? <FieldErr msg={errors.displayName} /> : null}
           </Field>
           <Field label="Designation">
             <input
@@ -3753,6 +3759,7 @@ export function EmployeeProfileEditor({
               onChange={(e) => set('designation', e.target.value)}
               placeholder="Senior Visualiser"
             />
+            {errors.designation ? <FieldErr msg={errors.designation} /> : null}
           </Field>
           <Field label="Department">
             <input
@@ -3766,6 +3773,7 @@ export function EmployeeProfileEditor({
                 <option key={d} value={departmentLabel(d)} />
               ))}
             </datalist>
+            {errors.department ? <FieldErr msg={errors.department} /> : null}
           </Field>
           <Field label="Employment type">
             <select
@@ -3819,6 +3827,7 @@ export function EmployeeProfileEditor({
               value={form.personalEmail}
               onChange={(e) => set('personalEmail', e.target.value)}
             />
+            {errors.personalEmail ? <FieldErr msg={errors.personalEmail} /> : null}
           </Field>
           <Field label="Phone">
             <input
@@ -3826,6 +3835,7 @@ export function EmployeeProfileEditor({
               onChange={(e) => set('phone', e.target.value)}
               placeholder="+91…"
             />
+            {errors.phone ? <FieldErr msg={errors.phone} /> : null}
           </Field>
           <Field label="Joined on">
             <input
@@ -3841,14 +3851,16 @@ export function EmployeeProfileEditor({
               value={form.confirmedOn}
               onChange={(e) => set('confirmedOn', e.target.value)}
             />
+            {errors.confirmedOn ? <FieldErr msg={errors.confirmedOn} /> : null}
           </Field>
-          {mode === 'edit' ? (
-            <Field label="Separated on">
+          {mode === 'edit' || form.status === 'notice' || form.status === 'separated' ? (
+            <Field label={form.status === 'notice' || form.status === 'separated' ? "Last working day" : "Separated on"}>
               <input
                 type="date"
                 value={form.separatedOn}
                 onChange={(e) => set('separatedOn', e.target.value)}
               />
+              {errors.separatedOn ? <FieldErr msg={errors.separatedOn} /> : null}
             </Field>
           ) : null}
           <Field label="Notice period">
@@ -3857,6 +3869,7 @@ export function EmployeeProfileEditor({
               onChange={(e) => set('noticePeriodDays', e.target.value)}
               placeholder="e.g. 30 days"
             />
+            {errors.noticePeriodDays ? <FieldErr msg={errors.noticePeriodDays} /> : null}
           </Field>
           <Field label="Notes" full>
             <textarea

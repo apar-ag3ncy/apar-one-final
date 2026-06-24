@@ -29,7 +29,7 @@
  */
 
 import { db } from '@/lib/db/client';
-import { accounts, validationRules as validationRulesTable } from '@/lib/db/schema';
+import { accounts, documents, validationRules as validationRulesTable } from '@/lib/db/schema';
 import { asc, eq } from 'drizzle-orm';
 
 import { getActorContext } from '@/lib/server/actor';
@@ -369,6 +369,9 @@ export async function createDraftTransaction(input: {
   projectId?: string;
   expenseAccountCode?: string;
   vendorId?: string;
+  billNumber?: string;
+  billDate?: string;
+  memo?: string;
   lines: readonly {
     description: string;
     hsn?: string;
@@ -380,7 +383,156 @@ export async function createDraftTransaction(input: {
   sourceDocumentId?: string;
   reason?: string;
 }): Promise<DraftResult> {
-  await getActorContext();
+  const ctx = await getActorContext();
+  if (input.kind === 'vendor_bill') {
+    const flags: TransactionFlag[] = [];
+    if (!input.vendorId) {
+      flags.push({
+        id: 'f_vendor',
+        severity: 'block',
+        code: 'vendor_missing',
+        message: 'Choose a vendor before creating the draft.',
+      });
+    }
+    if (!input.attribution) {
+      flags.push({
+        id: 'f_attr',
+        severity: 'block',
+        code: 'client_attribution_missing',
+        message:
+          'Vendor bill must declare whether it is for a client, OpEx, or an asset. Per-client profitability depends on this answer.',
+      });
+    }
+    if (input.attribution === 'client' && !input.clientId) {
+      flags.push({
+        id: 'f_client',
+        severity: 'block',
+        code: 'client_missing',
+        message: 'Choose the client this vendor bill is for.',
+      });
+    }
+    if (input.attribution === 'opex' && !input.expenseAccountCode) {
+      flags.push({
+        id: 'f_expense',
+        severity: 'block',
+        code: 'expense_account_missing',
+        message: 'Choose the expense account for this OpEx bill.',
+      });
+    }
+    if (!input.billNumber) {
+      flags.push({
+        id: 'f_bill_number',
+        severity: 'block',
+        code: 'bill_number_missing',
+        message: 'Enter the vendor bill number.',
+      });
+    }
+    const validLines = input.lines.filter(
+      (line) =>
+        line.description.trim().length > 0 &&
+        BigInt(Math.max(0, Math.floor(line.quantity ?? 1))) * line.unitPricePaise > 0n,
+    );
+    if (validLines.length === 0) {
+      flags.push({
+        id: 'f_lines',
+        severity: 'block',
+        code: 'no_line_items',
+        message: 'Add at least one line item with a description and amount before posting.',
+      });
+    }
+    if (flags.length > 0) {
+      return { draftId: `invalid_${Math.random().toString(36).slice(2, 10)}`, flags };
+    }
+
+    try {
+      const sourceDocumentId =
+        input.sourceDocumentId ??
+        (await createPlaceholderVendorBillDocument({
+          vendorId: input.vendorId!,
+          filename: `${input.billNumber}.pdf`,
+          userId: ctx.userId,
+        }));
+      const lineItems = validLines.map((line) => {
+        const quantity = BigInt(Math.max(0, Math.floor(line.quantity ?? 1)));
+        const amountPaise = quantity * line.unitPricePaise;
+        const gstAmountPaiseCaptured =
+          (amountPaise * BigInt(Math.max(0, Math.floor((line.gstPct ?? 0) * 100)))) / 10000n;
+        return {
+          description: line.description,
+          amountPaise,
+          gstAmountPaiseCaptured,
+        };
+      });
+      const common = {
+        vendorId: input.vendorId!,
+        billDocumentId: sourceDocumentId,
+        vendorInvoiceNumber: input.billNumber!,
+        txnDate: input.billDate ?? new Date().toISOString().slice(0, 10),
+        lineItems,
+        tdsAmountPaise: 0n,
+        tdsSection: '' as const,
+        isRcm: false,
+        notes: input.memo,
+      };
+      const kindInput: TransactionKindInput =
+        input.attribution === 'client'
+          ? {
+              kind: 'vendor_bill',
+              input: {
+                ...common,
+                attribution: 'client',
+                onBehalfOfClientId: input.clientId!,
+                projectId: input.projectId || undefined,
+              },
+            }
+          : input.attribution === 'opex'
+            ? {
+                kind: 'vendor_bill',
+                input: {
+                  ...common,
+                  attribution: 'opex',
+                  expenseAccountCode: input.expenseAccountCode as
+                    | '6100'
+                    | '6200'
+                    | '6300'
+                    | '6400'
+                    | '6900'
+                    | '8100',
+                },
+              }
+            : {
+                kind: 'vendor_bill',
+                input: {
+                  ...common,
+                  attribution: 'asset',
+                },
+              };
+      const res = await realCreateDraftTransaction(ctx, kindInput);
+      return {
+        draftId: res.transactionId,
+        flags: res.validationFlags.map(
+          (f): TransactionFlag => ({
+            id: f.code,
+            severity: f.severity === 'block' ? 'block' : 'warn',
+            code: f.code,
+            message: f.message,
+          }),
+        ),
+      };
+    } catch (e) {
+      return {
+        draftId: `invalid_${Math.random().toString(36).slice(2, 10)}`,
+        flags: [
+          {
+            id: 'f_error',
+            severity: 'block',
+            code: 'vendor_bill_draft_failed',
+            message: e instanceof Error ? e.message : 'Could not create vendor bill draft.',
+          },
+        ],
+      };
+    }
+  }
   const flags: TransactionFlag[] = [
     {
       id: 'f0',
@@ -417,6 +569,31 @@ export async function createDraftTransaction(input: {
     draftId: `legacy_${Math.random().toString(36).slice(2, 10)}`,
     flags,
   };
+}
+
+async function createPlaceholderVendorBillDocument(args: {
+  vendorId: string;
+  filename: string;
+  userId: string;
+}): Promise<string> {
+  const [row] = await db
+    .insert(documents)
+    .values({
+      entityType: 'vendor',
+      entityId: args.vendorId,
+      bucket: 'internal-docs',
+      storagePath: `manual/vendor-bills/${args.vendorId}/${Date.now()}-${args.filename}`,
+      visibility: 'internal',
+      category: 'invoice',
+      originalFilename: args.filename,
+      mimeType: 'application/pdf',
+      sizeBytes: 0,
+      createdBy: args.userId,
+      updatedBy: args.userId,
+    })
+    .returning({ id: documents.id });
+  if (!row) throw new Error('Could not create vendor bill document reference.');
+  return row.id;
 }
 
 export async function postTransaction(args: {
@@ -494,8 +671,8 @@ export async function createDraftTransactionTyped(
   return {
     transactionId: res.transactionId,
     flags: res.validationFlags.map(
-      (f, i): TransactionFlag => ({
-        id: `f${i}`,
+      (f): TransactionFlag => ({
+        id: f.code,
         severity: f.severity === 'block' ? 'block' : 'warn',
         code: f.code,
         message: f.message,

@@ -401,7 +401,7 @@ export function InvoiceComposerDialog({
       projectId,
       documentType,
       documentNumber: documentNumber.trim() === '' ? null : documentNumber.trim(),
-      billToAddressId,
+      billToAddressId: addresses.length >= 2 ? billToAddressId : null,
       documentDate,
       dueDate: dueDate.trim() === '' ? null : dueDate,
       subtotalPaise: totals.subtotal,

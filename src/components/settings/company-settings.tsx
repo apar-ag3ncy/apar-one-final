@@ -524,6 +524,17 @@ function UploadDialog({
       notify.error('Choose a file', 'Pick a PDF or image to upload.');
       return;
     }
+    // Mirror the server's 25 MB cap client-side: gives instant feedback and
+    // keeps the request under the Server Action body limit, so an oversized
+    // file fails with a clear message instead of crashing the upload silently.
+    const MAX_DOC_BYTES = 25 * 1024 * 1024;
+    if (file.size > MAX_DOC_BYTES) {
+      notify.error(
+        'File too large',
+        `Documents must be 25 MB or smaller — this one is ${(file.size / 1024 / 1024).toFixed(1)} MB.`,
+      );
+      return;
+    }
     if (!title.trim()) {
       notify.error('Add a title', 'Give the document a short title.');
       return;
@@ -535,14 +546,24 @@ function UploadDialog({
     fd.set('referenceNumber', referenceNumber.trim());
     fd.set('notes', notes.trim());
     startTransition(async () => {
-      const result = await uploadCompanyDocument(fd);
-      if (result.ok) {
-        notify.success('Document uploaded');
-        reset();
-        onOpenChange(false);
-        onUploaded();
-      } else {
-        notify.error('Upload failed', result.message);
+      try {
+        const result = await uploadCompanyDocument(fd);
+        if (result.ok) {
+          notify.success('Document uploaded');
+          reset();
+          onOpenChange(false);
+          onUploaded();
+        } else {
+          notify.error('Upload failed', result.message);
+        }
+      } catch (e) {
+        // A throw here (e.g. the request exceeded the transport body limit, or
+        // a network error) would otherwise bubble to the error boundary and
+        // close the dialog with no explanation. Surface it as a toast instead.
+        notify.error(
+          'Upload failed',
+          e instanceof Error ? e.message : 'Something went wrong while uploading.',
+        );
       }
     });
   }

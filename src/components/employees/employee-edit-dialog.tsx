@@ -61,7 +61,9 @@ const formSchema = z.object({
   department: z.string().max(120).optional(),
   employmentType: z.enum(['full_time', 'part_time', 'contractor', 'intern']),
   workEmail: z.string().max(200).optional(),
+  personalEmail: z.string().max(200).optional(),
   phone: z.string().max(40).optional(),
+  noticePeriodDays: z.string().max(40).optional(),
   notes: z.string().max(2000).optional(),
 });
 
@@ -74,7 +76,9 @@ function toDefaults(employee: Employee): FormValues {
     department: employee.department ? departmentLabel(employee.department) : '',
     employmentType: employee.employmentType,
     workEmail: employee.workEmail ?? '',
+    personalEmail: employee.personalEmail ?? '',
     phone: employee.phone ?? '',
+    noticePeriodDays: employee.noticePeriodDays ?? '',
     notes: employee.notes ?? '',
   };
 }
@@ -138,8 +142,14 @@ export function EmployeeEditDialog({ employee }: { employee: Employee }) {
       if ((values.workEmail ?? '') !== (employee.workEmail ?? '')) {
         patch.workEmail = values.workEmail ? values.workEmail : null;
       }
+      if ((values.personalEmail ?? '') !== (employee.personalEmail ?? '')) {
+        patch.personalEmail = values.personalEmail ? values.personalEmail : null;
+      }
       if ((values.phone ?? '') !== (employee.phone ?? '')) {
         patch.phone = values.phone ? values.phone : null;
+      }
+      if ((values.noticePeriodDays ?? '') !== (employee.noticePeriodDays ?? '')) {
+        patch.noticePeriodDays = values.noticePeriodDays ? values.noticePeriodDays : null;
       }
       if ((values.notes ?? '') !== (employee.notes ?? '')) {
         patch.notes = values.notes ? values.notes : null;
@@ -153,7 +163,14 @@ export function EmployeeEditDialog({ employee }: { employee: Employee }) {
 
       const result = await updateEmployee(patch);
       if (!result.ok) {
-        const fieldKeys = ['fullName', 'workEmail', 'phone', 'designation'] as const;
+        const fieldKeys = [
+          'fullName',
+          'workEmail',
+          'personalEmail',
+          'phone',
+          'designation',
+          'noticePeriodDays',
+        ] as const;
         let attached = false;
         for (const key of fieldKeys) {
           if (result.errors[key]) {
@@ -261,17 +278,45 @@ export function EmployeeEditDialog({ employee }: { employee: Employee }) {
             </div>
           </div>
 
+          <div className="grid grid-cols-2 gap-3">
+            <div className="grid gap-1.5">
+              <Label htmlFor="employee-email">Work email</Label>
+              <Input
+                id="employee-email"
+                type="email"
+                placeholder="name@apar.example"
+                {...form.register('workEmail')}
+                aria-invalid={form.formState.errors.workEmail ? true : undefined}
+              />
+              {form.formState.errors.workEmail ? (
+                <p className="text-destructive text-xs">{form.formState.errors.workEmail.message}</p>
+              ) : null}
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="employee-personal-email">Personal email</Label>
+              <Input
+                id="employee-personal-email"
+                type="email"
+                placeholder="personal@example.com"
+                {...form.register('personalEmail')}
+                aria-invalid={form.formState.errors.personalEmail ? true : undefined}
+              />
+              {form.formState.errors.personalEmail ? (
+                <p className="text-destructive text-xs">{form.formState.errors.personalEmail.message}</p>
+              ) : null}
+            </div>
+          </div>
+
           <div className="grid gap-1.5">
-            <Label htmlFor="employee-email">Work email</Label>
+            <Label htmlFor="employee-notice-period">Notice period</Label>
             <Input
-              id="employee-email"
-              type="email"
-              placeholder="name@apar.example"
-              {...form.register('workEmail')}
-              aria-invalid={form.formState.errors.workEmail ? true : undefined}
+              id="employee-notice-period"
+              placeholder="e.g. 30 days"
+              {...form.register('noticePeriodDays')}
+              aria-invalid={form.formState.errors.noticePeriodDays ? true : undefined}
             />
-            {form.formState.errors.workEmail ? (
-              <p className="text-destructive text-xs">{form.formState.errors.workEmail.message}</p>
+            {form.formState.errors.noticePeriodDays ? (
+              <p className="text-destructive text-xs">{form.formState.errors.noticePeriodDays.message}</p>
             ) : null}
           </div>
 

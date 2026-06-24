@@ -49,7 +49,7 @@ export type {
   EntityStatus,
   FieldConfidence,
 } from '@/components/entity/types';
-export type { Role, Capability } from '@/components/entity/capability-types';
+export type { Role, Capability } from '@/lib/capabilities';
 export type {
   FormField,
   FormFieldType,

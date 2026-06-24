@@ -7,7 +7,7 @@ import { fyStartForDate, todayIstIso } from '@/lib/billing/fy';
 import { db, type DbClient } from '@/lib/db/client';
 import { clients, entityAddresses, invoiceLines, invoices, projects } from '@/lib/db/schema';
 import { AppError } from '@/lib/errors';
-import { isValidStateCode, stateNameFromCode } from '@/lib/india/gst-states';
+import { isValidStateCode, stateCodeToGstCode, stateNameFromCode } from '@/lib/india/gst-states';
 import { requireCapability } from '@/lib/rbac';
 import { getActorContext } from '@/lib/server/actor';
 import type { ValidationFlag } from '@/lib/server/ledger/types';
@@ -155,8 +155,8 @@ async function loadClientBillingReadiness(
   const gstinState = c.gstin && c.gstin.length >= 2 ? c.gstin.slice(0, 2) : null;
   const addrState = addrs[0]?.stateCode ?? null;
   const stateCode =
-    (gstinState && isValidStateCode(gstinState) && gstinState) ||
-    (addrState && isValidStateCode(addrState) && addrState) ||
+    (gstinState && isValidStateCode(gstinState) && stateCodeToGstCode(gstinState)) ||
+    (addrState && isValidStateCode(addrState) && stateCodeToGstCode(addrState)) ||
     null;
 
   const missing: string[] = [];

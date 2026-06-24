@@ -33,7 +33,7 @@ export const employeeColumns: ColumnDef<Employee>[] = [
     header: ({ column }) => <DataTableColumnHeader column={column} title="Employee" />,
     meta: { exportLabel: 'Employee' },
     cell: ({ row }) => (
-      <div className="flex flex-col">
+      <div className="flex flex-col max-w-[320px] break-words whitespace-normal">
         <Link
           href={`/employees/${row.original.id}`}
           className="text-foreground font-medium hover:underline"

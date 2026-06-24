@@ -33,6 +33,7 @@ import { IFSC_RE, PAN_RE, last4, maskAadhaar, maskPAN } from '@/lib/validators';
  */
 
 const EmployeeIdSchema = z.string().uuid();
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export async function archiveEmployee(id: string): Promise<void> {
   await archiveEmployees([id]);
@@ -302,6 +303,7 @@ const CreateEmployeeSchema = z.object({
   reportsToEmployeeId: z.string().uuid().optional(),
   joinedOn: z.string().regex(ISO_DATE, 'Joining date must be YYYY-MM-DD'),
   confirmedOn: z.string().regex(ISO_DATE).optional(),
+  separatedOn: z.string().regex(ISO_DATE).optional(),
   noticePeriodDays: z.string().trim().max(40).optional(),
   // KYC — masked on row, full lives only in the restricted-kyc scan
   pan: z.string().trim().toUpperCase().optional(),
@@ -385,9 +387,38 @@ export async function createEmployee(input: CreateEmployeeInput): Promise<Create
   }
   const v = parsed.data;
 
+  const fieldErrors: Record<string, string> = {};
+  const workEmail = (v.workEmail ?? '').trim();
+  const personalEmail = (v.personalEmail ?? '').trim();
+  const normalizedWorkEmail = workEmail ? workEmail.toLowerCase() : null;
+  const normalizedPersonalEmail = personalEmail ? personalEmail.toLowerCase() : null;
+  if (workEmail && !EMAIL_RE.test(workEmail)) {
+    fieldErrors.workEmail = 'Enter a valid work email.';
+  }
+  if (personalEmail && !EMAIL_RE.test(personalEmail)) {
+    fieldErrors.personalEmail = 'Enter a valid personal email.';
+  }
+  if (Object.keys(fieldErrors).length > 0) {
+    return { ok: false, message: 'Please fix the highlighted fields.', errors: fieldErrors };
+  }
+
+  if (normalizedWorkEmail) {
+    const dup = await db
+      .select({ id: employees.id })
+      .from(employees)
+      .where(and(isNull(employees.deletedAt), eq(employees.workEmail, normalizedWorkEmail)))
+      .limit(1);
+    if (dup.length > 0) {
+      return {
+        ok: false,
+        message: 'That work email is already in use.',
+        errors: { workEmail: 'Already used by another employee.' },
+      };
+    }
+  }
+
   // KYC format checks + masking. We compute the mask and discard the full
   // value — it must never be persisted in clear (CLAUDE rule #28).
-  const fieldErrors: Record<string, string> = {};
   let maskedPan: string | null = null;
   let maskedAadhaar: string | null = null;
   if (v.pan) {
@@ -447,8 +478,8 @@ export async function createEmployee(input: CreateEmployeeInput): Promise<Create
           employeeCode,
           fullName: v.fullName,
           displayName: v.displayName || null,
-          workEmail: v.workEmail || null,
-          personalEmail: v.personalEmail || null,
+          workEmail: normalizedWorkEmail,
+          personalEmail: normalizedPersonalEmail,
           phone: v.phone || null,
           employmentType: v.employmentType,
           status: v.status ?? 'active',
@@ -457,6 +488,7 @@ export async function createEmployee(input: CreateEmployeeInput): Promise<Create
           reportsToEmployeeId: v.reportsToEmployeeId || null,
           joinedOn: v.joinedOn,
           confirmedOn: v.confirmedOn || null,
+          separatedOn: v.separatedOn || null,
           noticePeriodDays: v.noticePeriodDays || null,
           maskedPan,
           maskedAadhaar,
@@ -614,8 +646,6 @@ export async function createEmployee(input: CreateEmployeeInput): Promise<Create
 /* -------------------------------------------------------------------------- */
 /* updateEmployee — backs the OS "Edit teammate" modal + dashboard Edit        */
 /* -------------------------------------------------------------------------- */
-
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const UpdateEmployeeSchema = z.object({
   id: z.string().uuid(),
@@ -844,4 +874,27 @@ export async function getEmployeeEditable(id: string): Promise<EditableEmployee 
     .where(and(eq(employees.id, id), isNull(employees.deletedAt)))
     .limit(1);
   return rows[0] ?? null;
+}
+
+export async function importEmployees(inputs: CreateEmployeeInput[]): Promise<{
+  successCount: number;
+  errors: Array<{ index: number; name: string; message: string }>;
+}> {
+  const ctx = await getActorContext();
+  requireCapability(ctx, 'create_employee');
+
+  let successCount = 0;
+  const errors: Array<{ index: number; name: string; message: string }> = [];
+
+  for (let i = 0; i < inputs.length; i++) {
+    const input = inputs[i]!;
+    const res = await createEmployee(input);
+    if (res.ok) {
+      successCount++;
+    } else {
+      errors.push({ index: i, name: input.fullName, message: res.message });
+    }
+  }
+
+  return { successCount, errors };
 }
