@@ -325,12 +325,20 @@ export function InvoiceComposerDialog({
   const computed = useMemo(() => lines.map(computeLine), [lines]);
   const intraState = placeOfSupply.trim() === supplierStateCode.trim();
 
-  // Non-blocking out-of-sequence hint: the entered number differs from the
-  // auto-suggested next number for the current FY.
-  const outOfSequence =
-    suggestedNumber.trim().length > 0 &&
-    documentNumber.trim().length > 0 &&
-    documentNumber.trim() !== suggestedNumber.trim();
+  // Non-blocking out-of-sequence hint. The invoice number is NEVER locked to a
+  // format — any value is accepted and stored verbatim. We only nudge when the
+  // user stays inside the auto series (same non-numeric stem as the suggestion)
+  // but picks a different trailing number, since that's the only case where a
+  // "gap in the series" is meaningful. An intentional custom format (different
+  // stem, e.g. "ABC-001" vs "INV/2026-27/0001") is left alone.
+  const outOfSequence = (() => {
+    const sug = suggestedNumber.trim();
+    const cur = documentNumber.trim();
+    if (!sug || !cur || cur === sug) return false;
+    const stem = (s: string) => s.replace(/\d+\s*$/, '');
+    const sugStem = stem(sug);
+    return sugStem.length > 0 && sugStem === stem(cur);
+  })();
 
   // Non-blocking: when the chosen bill-to address carries its own GSTIN whose
   // state differs from the place of supply, flag it — place of supply drives the
