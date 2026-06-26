@@ -4,6 +4,11 @@ import { Document, Image, Page, StyleSheet, Text, View, renderToBuffer } from '@
 import * as React from 'react';
 
 import { APAR_ORANGE_MARK_DATA_URI } from '@/lib/brand/apar-orange-mark';
+import {
+  DEFAULT_INVOICE_LAYOUT,
+  type InvoiceBlockId,
+  type InvoiceLayout,
+} from '@/lib/billing/invoice-layout';
 import { formatRupeesPlain, rupeesInWordsINR } from '@/lib/money';
 
 /**
@@ -86,6 +91,13 @@ export type InvoicePdfData = {
   } | null;
   terms: string | null;
   notes: string | null;
+  /**
+   * Block placement for the page (from the selected theme's `tokens.layout`,
+   * sanitised by `loadInvoicePdfData`). Optional — the renderer falls back to
+   * the classic layout when absent. The line-items + GST table is fixed and is
+   * not part of this.
+   */
+  layout?: InvoiceLayout;
   /**
    * Optional theme overlay (from the selected/ default `invoice_themes` row,
    * resolved by `loadInvoicePdfData`). Brand tokens only — the layout is
@@ -177,8 +189,10 @@ const styles = StyleSheet.create({
   metaBlock: { width: '40%', alignItems: 'flex-end' },
   supplierName: { fontSize: 12, fontWeight: 'bold', marginBottom: 3 },
   logo: { height: 34, maxWidth: 160, marginBottom: 8, objectFit: 'contain' },
+  logoWrap: { width: '100%' },
   metaTitle: { fontSize: 13, fontWeight: 'bold', marginBottom: 4 },
   metaLine: { textAlign: 'right' },
+  textRight: { textAlign: 'right' },
 
   rule: { height: 1, backgroundColor: '#111111', marginVertical: 12 },
 
@@ -256,8 +270,53 @@ export async function renderInvoicePdf(data: InvoicePdfData): Promise<Uint8Array
 
 export function InvoiceDocument({ data }: { data: InvoicePdfData }): React.JSX.Element {
   const theme = resolveTheme(data.themeOverrides);
+  const layout = data.layout ?? DEFAULT_INVOICE_LAYOUT;
   const isProforma = data.documentType === 'proforma';
   const title = isProforma ? 'PROFORMA INVOICE' : theme.headerText;
+
+  // Map a layout block id to its rendered element. Header blocks know their
+  // column side (for text alignment); body blocks are full-width. Each returns
+  // null when it has no content, so an empty block simply collapses.
+  const headerBlock = (id: InvoiceBlockId, align: 'left' | 'right'): React.JSX.Element | null => {
+    switch (id) {
+      case 'logo':
+        return <LogoBlock key={id} theme={theme} align={layout.logoAlign ?? align} />;
+      case 'supplier':
+        return <SupplierBlock key={id} data={data} align={align} />;
+      case 'meta':
+        return <MetaBlock key={id} data={data} theme={theme} title={title} align={align} />;
+      case 'billTo':
+        return <BilledTo key={id} data={data} align={align} />;
+      default:
+        return null;
+    }
+  };
+
+  const bodyBlock = (id: InvoiceBlockId): React.JSX.Element | null => {
+    switch (id) {
+      case 'billTo':
+        return <BilledTo key={id} data={data} align="left" />;
+      case 'amountWords':
+        return (
+          <Text key={id} style={styles.amountWords}>
+            {rupeesInWordsINR(data.capturedTotalPaise)}
+          </Text>
+        );
+      case 'terms':
+        return <TermsBlock key={id} data={data} />;
+      case 'notes':
+        return <NotesBlock key={id} data={data} />;
+      case 'payment':
+        return data.payment ? <PaymentDetails key={id} payment={data.payment} /> : null;
+      case 'paymentLink':
+        return data.paymentLink ? <PaymentBlock key={id} link={data.paymentLink} /> : null;
+      case 'signatory':
+        return <Signatory key={id} data={data} />;
+      default:
+        return null;
+    }
+  };
+
   return (
     <Document
       title={`${isProforma ? 'Proforma' : 'Invoice'} ${data.documentNumber}`}
@@ -269,20 +328,24 @@ export function InvoiceDocument({ data }: { data: InvoicePdfData }): React.JSX.E
       }
     >
       <Page size="A4" style={[styles.page, { fontFamily: theme.font }]}>
-        <Header data={data} theme={theme} title={title} />
+        <View style={styles.headerRow}>
+          <View style={styles.supplierBlock}>
+            {layout.header.left.map((id) => headerBlock(id, 'left'))}
+          </View>
+          <View style={styles.metaBlock}>
+            {layout.header.right.map((id) => headerBlock(id, 'right'))}
+          </View>
+        </View>
         <View style={[styles.rule, { backgroundColor: theme.primary }]} />
-        <BilledTo data={data} />
+        {layout.aboveTable.map((id) => bodyBlock(id))}
+        {/* Reverse-charge flag stays pinned directly above the (fixed) table. */}
         {data.isReverseCharge ? (
           <Text style={styles.reverseChargeFlag}>
             Reverse charge applicable — recipient pays GST under §9(3)/9(4) of the CGST Act.
           </Text>
         ) : null}
         <LinesTable data={data} />
-        <Text style={styles.amountWords}>{rupeesInWordsINR(data.capturedTotalPaise)}</Text>
-        <TermsNotes data={data} />
-        {data.payment ? <PaymentDetails payment={data.payment} /> : null}
-        {data.paymentLink ? <PaymentBlock link={data.paymentLink} /> : null}
-        <Signatory data={data} />
+        {layout.belowTable.map((id) => bodyBlock(id))}
         <Text
           style={styles.footer}
           render={({ pageNumber, totalPages }) =>
@@ -295,53 +358,104 @@ export function InvoiceDocument({ data }: { data: InvoicePdfData }): React.JSX.E
   );
 }
 
-function Header({
-  data,
+function LogoBlock({
   theme,
-  title,
+  align,
 }: {
-  data: InvoicePdfData;
   theme: ResolvedTheme;
-  title: string;
+  align: 'left' | 'center' | 'right';
 }): React.JSX.Element {
+  const alignItems = align === 'center' ? 'center' : align === 'left' ? 'flex-start' : 'flex-end';
   return (
-    <View style={styles.headerRow}>
-      <View style={styles.supplierBlock}>
-        <Text style={styles.supplierName}>{data.supplier.name}</Text>
-        {data.supplier.address ? <Text>{data.supplier.address}</Text> : null}
-        {data.supplier.contactPhone ? <Text>Ph: {data.supplier.contactPhone}</Text> : null}
-        {data.supplier.gstin ? <Text>GST Reg. No.: {data.supplier.gstin}</Text> : null}
-        {data.supplier.pan ? <Text>PAN: {data.supplier.pan}</Text> : null}
-        {data.supplier.contactEmail ? <Text>{data.supplier.contactEmail}</Text> : null}
-      </View>
-      <View style={styles.metaBlock}>
-        {/* The brand mark — the orange Apar wordmark on a transparent background,
-            or the theme's own uploaded logo. */}
-        {/* react-pdf's <Image> is a PDF primitive, not an HTML <img> — no `alt`. */}
-        {/* eslint-disable-next-line jsx-a11y/alt-text */}
-        <Image src={theme.logoDataUri ?? APAR_ORANGE_MARK_DATA_URI} style={styles.logo} />
-        <Text style={[styles.metaTitle, { color: theme.primary }]}>{title}</Text>
-        <Text style={styles.metaLine}>Invoice: {data.documentNumber}</Text>
-        <Text style={styles.metaLine}>Date: {data.documentDate}</Text>
-        {data.dueDate ? <Text style={styles.metaLine}>Due by: {data.dueDate}</Text> : null}
-        {data.placeOfSupply ? (
-          <Text style={styles.metaLine}>Place of supply: {data.placeOfSupply}</Text>
-        ) : null}
-      </View>
+    <View style={[styles.logoWrap, { alignItems }]}>
+      {/* The brand mark — the orange Apar wordmark, or the theme's uploaded logo. */}
+      {/* react-pdf's <Image> is a PDF primitive, not an HTML <img> — no `alt`. */}
+      {/* eslint-disable-next-line jsx-a11y/alt-text */}
+      <Image src={theme.logoDataUri ?? APAR_ORANGE_MARK_DATA_URI} style={styles.logo} />
     </View>
   );
 }
 
-function BilledTo({ data }: { data: InvoicePdfData }): React.JSX.Element {
+function SupplierBlock({
+  data,
+  align,
+}: {
+  data: InvoicePdfData;
+  align: 'left' | 'right';
+}): React.JSX.Element {
+  const ta = align === 'right' ? styles.textRight : undefined;
+  return (
+    <View>
+      <Text
+        style={align === 'right' ? [styles.supplierName, styles.textRight] : styles.supplierName}
+      >
+        {data.supplier.name}
+      </Text>
+      {data.supplier.address ? <Text style={ta}>{data.supplier.address}</Text> : null}
+      {data.supplier.contactPhone ? <Text style={ta}>Ph: {data.supplier.contactPhone}</Text> : null}
+      {data.supplier.gstin ? <Text style={ta}>GST Reg. No.: {data.supplier.gstin}</Text> : null}
+      {data.supplier.pan ? <Text style={ta}>PAN: {data.supplier.pan}</Text> : null}
+      {data.supplier.contactEmail ? <Text style={ta}>{data.supplier.contactEmail}</Text> : null}
+    </View>
+  );
+}
+
+function MetaBlock({
+  data,
+  theme,
+  title,
+  align,
+}: {
+  data: InvoicePdfData;
+  theme: ResolvedTheme;
+  title: string;
+  align: 'left' | 'right';
+}): React.JSX.Element {
+  const right = align === 'right';
+  const lineStyle = right ? styles.metaLine : undefined;
+  const titleStyle = right
+    ? [styles.metaTitle, styles.textRight, { color: theme.primary }]
+    : [styles.metaTitle, { color: theme.primary }];
+  return (
+    <View>
+      <Text style={titleStyle}>{title}</Text>
+      <Text style={lineStyle}>Invoice: {data.documentNumber}</Text>
+      <Text style={lineStyle}>Date: {data.documentDate}</Text>
+      {data.dueDate ? <Text style={lineStyle}>Due by: {data.dueDate}</Text> : null}
+      {data.placeOfSupply ? (
+        <Text style={lineStyle}>Place of supply: {data.placeOfSupply}</Text>
+      ) : null}
+    </View>
+  );
+}
+
+function BilledTo({
+  data,
+  align = 'left',
+}: {
+  data: InvoicePdfData;
+  align?: 'left' | 'right';
+}): React.JSX.Element {
+  const ta = align === 'right' ? styles.textRight : undefined;
   return (
     <View style={styles.billedTo}>
-      <Text style={styles.billedToLabel}>Billed To,</Text>
-      <Text style={styles.billedToName}>{data.recipient.name}</Text>
+      <Text
+        style={align === 'right' ? [styles.billedToLabel, styles.textRight] : styles.billedToLabel}
+      >
+        Billed To,
+      </Text>
+      <Text
+        style={align === 'right' ? [styles.billedToName, styles.textRight] : styles.billedToName}
+      >
+        {data.recipient.name}
+      </Text>
       {data.recipient.addressLines.map((l, i) => (
-        <Text key={i}>{l}</Text>
+        <Text key={i} style={ta}>
+          {l}
+        </Text>
       ))}
-      {data.recipient.gstin ? <Text>GST Reg. No.: {data.recipient.gstin}</Text> : null}
-      {data.recipient.pan ? <Text>PAN: {data.recipient.pan}</Text> : null}
+      {data.recipient.gstin ? <Text style={ta}>GST Reg. No.: {data.recipient.gstin}</Text> : null}
+      {data.recipient.pan ? <Text style={ta}>PAN: {data.recipient.pan}</Text> : null}
     </View>
   );
 }
@@ -405,22 +519,22 @@ function LinesTable({ data }: { data: InvoicePdfData }): React.JSX.Element {
   );
 }
 
-function TermsNotes({ data }: { data: InvoicePdfData }): React.JSX.Element | null {
-  if (!data.terms && !data.notes) return null;
+function TermsBlock({ data }: { data: InvoicePdfData }): React.JSX.Element | null {
+  if (!data.terms) return null;
   return (
     <View style={styles.block}>
-      {data.terms ? (
-        <View style={{ marginBottom: 4 }}>
-          <Text style={styles.blockHeading}>Terms</Text>
-          <Text>{data.terms}</Text>
-        </View>
-      ) : null}
-      {data.notes ? (
-        <View>
-          <Text style={styles.blockHeading}>Notes</Text>
-          <Text>{data.notes}</Text>
-        </View>
-      ) : null}
+      <Text style={styles.blockHeading}>Terms</Text>
+      <Text>{data.terms}</Text>
+    </View>
+  );
+}
+
+function NotesBlock({ data }: { data: InvoicePdfData }): React.JSX.Element | null {
+  if (!data.notes) return null;
+  return (
+    <View style={styles.block}>
+      <Text style={styles.blockHeading}>Notes</Text>
+      <Text>{data.notes}</Text>
     </View>
   );
 }

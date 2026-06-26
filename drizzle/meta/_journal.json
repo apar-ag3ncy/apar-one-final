@@ -309,6 +309,13 @@
       "when": 1780600007002,
       "tag": "0043_company_bank_upi",
       "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1780600007003,
+      "tag": "0044_invoice_bank_account",
+      "breakpoints": true
     }
   ]
 }

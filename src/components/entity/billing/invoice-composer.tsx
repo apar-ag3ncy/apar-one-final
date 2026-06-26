@@ -38,6 +38,7 @@ import { getDocumentSignedUrl } from '@/lib/server/entities/documents';
 import { listProjectOptionsForClient, type EntityOption } from '@/lib/server/entities/options';
 import { listAddresses, type AddressRow } from '@/lib/server/entities/addresses';
 import type { InvoiceThemeSummary } from '@/lib/server/billing/invoice-themes';
+import type { CompanyBankAccountOption } from '@/lib/server/settings/company';
 import { GST_STATES_BY_NAME, stateNameFromCode } from '@/lib/india/gst-states';
 
 /* -------------------------------------------------------------------------- */
@@ -98,6 +99,10 @@ function computeLine(l: LineDraft): ComputedLine {
  *  option uses this sentinel; it maps back to `null` on submit. */
 const NO_PROJECT = '__none__';
 
+/** Sentinel for "print the primary account" — maps back to `null` (the renderer
+ *  then resolves the primary account at generation time). */
+const BANK_PRIMARY = '__primary__';
+
 /** "billing — 12 MG Road, Pune 27" style label for a bill-to option. */
 function addressLabel(a: AddressRow): string {
   const where = [a.line1, [a.city, a.stateCode].filter(Boolean).join(' ')]
@@ -122,6 +127,8 @@ export type InvoiceComposerDialogProps = {
   clientStateCode?: string | null;
   themes: InvoiceThemeSummary[];
   defaultThemeId?: string | null;
+  /** The agency's bank accounts, for the "which account to print" picker. */
+  bankAccounts?: CompanyBankAccountOption[];
   /** When set, edit an existing draft instead of creating a new one. */
   existingInvoiceId?: string | null;
   /** Called after a successful finalise (send), so the host reloads its list. */
@@ -143,6 +150,7 @@ export function InvoiceComposerDialog({
   clientStateCode,
   themes,
   defaultThemeId,
+  bankAccounts = [],
   existingInvoiceId,
   onFinalized,
 }: InvoiceComposerDialogProps) {
@@ -158,6 +166,7 @@ export function InvoiceComposerDialog({
   const [terms, setTerms] = useState('');
   const [notes, setNotes] = useState('');
   const [themeId, setThemeId] = useState<string>('');
+  const [bankAccountId, setBankAccountId] = useState<string>(BANK_PRIMARY);
   const [projectId, setProjectId] = useState<string | null>(null);
   const [lines, setLines] = useState<LineDraft[]>([emptyLine()]);
 
@@ -205,6 +214,7 @@ export function InvoiceComposerDialog({
             setTerms(invoice.terms ?? '');
             setNotes(invoice.notes ?? '');
             setThemeId(invoice.themeId ?? '');
+            setBankAccountId(invoice.bankAccountId ?? BANK_PRIMARY);
             setProjectId(invoice.projectId ?? null);
             setDocumentType(invoice.documentType);
             setDocumentNumber(invoice.documentNumber);
@@ -237,6 +247,7 @@ export function InvoiceComposerDialog({
         setTerms('');
         setNotes('');
         setThemeId(defaultThemeId ?? '');
+        setBankAccountId(BANK_PRIMARY);
         setProjectId(null);
         setDocumentType('invoice');
         setDocumentNumber('');
@@ -425,6 +436,7 @@ export function InvoiceComposerDialog({
       terms: terms.trim() === '' ? null : terms.trim(),
       notes: notes.trim() === '' ? null : notes.trim(),
       themeId: themeId === '' ? null : themeId,
+      bankAccountId: bankAccountId === BANK_PRIMARY ? null : bankAccountId,
       lines: payloadLines,
     };
 
@@ -644,6 +656,32 @@ export function InvoiceComposerDialog({
                 </div>
               ) : null}
             </div>
+
+            {/* Which company bank account prints in the payment block. */}
+            {bankAccounts.length > 0 ? (
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="grid gap-1.5">
+                  <Label htmlFor="inv-bank">Bank account</Label>
+                  <Select value={bankAccountId} onValueChange={setBankAccountId}>
+                    <SelectTrigger id="inv-bank">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={BANK_PRIMARY}>Default (primary account)</SelectItem>
+                      {bankAccounts.map((b) => (
+                        <SelectItem key={b.id} value={b.id}>
+                          {b.label}
+                          {b.isPrimary ? ' (primary)' : ''}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-muted-foreground text-xs">
+                    The account shown in this invoice’s payment / bank-details block.
+                  </p>
+                </div>
+              </div>
+            ) : null}
 
             {/* Lines */}
             <div className="space-y-2">

@@ -4,6 +4,7 @@ import { and, asc, desc, eq, isNull } from 'drizzle-orm';
 
 import { db } from '@/lib/db/client';
 import { documents, invoiceThemes, type InvoiceTheme } from '@/lib/db/schema';
+import { sanitizeInvoiceLayout, type InvoiceLayout } from '@/lib/billing/invoice-layout';
 import { AppError } from '@/lib/errors';
 import { requireCapability } from '@/lib/rbac';
 import { getActorContext } from '@/lib/server/actor';
@@ -26,6 +27,7 @@ import { createAdminClient } from '@/lib/supabase/server';
 const THEME_BUCKET = 'internal-docs' as const;
 const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 const MAX_DOCX_BYTES = 10 * 1024 * 1024; // 10 MB
+const MAX_LOGO_BYTES = 2 * 1024 * 1024; // 2 MB — react-pdf inlines it as base64
 
 export type InvoiceThemeSummary = {
   id: string;
@@ -43,7 +45,15 @@ export type InvoiceThemeSummary = {
   imported: boolean;
   /** Built-in themes are read-only; everything else can be edited/deleted. */
   editable: boolean;
+  /** Block placement for the PDF (sanitised; defaults reproduce the classic layout). */
+  layout: InvoiceLayout;
 };
+
+/** Read the persisted layout out of the theme's `tokens` jsonb bag. */
+function readLayout(tokens: unknown): InvoiceLayout {
+  const bag = (tokens && typeof tokens === 'object' ? tokens : {}) as Record<string, unknown>;
+  return sanitizeInvoiceLayout(bag.layout);
+}
 
 function toSummary(t: InvoiceTheme): InvoiceThemeSummary {
   return {
@@ -60,6 +70,7 @@ function toSummary(t: InvoiceTheme): InvoiceThemeSummary {
     hasLogo: t.logoDocumentId != null,
     imported: t.sourceDocumentId != null,
     editable: t.kind !== 'builtin',
+    layout: readLayout(t.tokens),
   };
 }
 
@@ -96,14 +107,32 @@ export type InvoiceThemeEditInput = {
   accentColor?: string | null;
   fontFamily?: string | null;
   makeDefault?: boolean;
+  /** Block placement. Omit to leave a theme's existing layout untouched. */
+  layout?: InvoiceLayout | null;
 };
+
+/** Merge a (possibly undefined) layout into a theme's `tokens` jsonb bag. */
+function mergeLayoutIntoTokens(
+  existingTokens: unknown,
+  layout: InvoiceLayout | null | undefined,
+  hasExplicitLayout: boolean,
+): Record<string, unknown> {
+  const bag = (
+    existingTokens && typeof existingTokens === 'object' ? existingTokens : {}
+  ) as Record<string, unknown>;
+  // When the caller didn't pass a layout, keep whatever was stored before.
+  const source = hasExplicitLayout ? layout : bag.layout;
+  return { ...bag, layout: sanitizeInvoiceLayout(source) };
+}
 
 /**
  * Create a hand-authored ("custom") invoice theme — the dynamic
  * invoice-format editor's "new format" path. Stored as a `docx`-kind row
  * with no source document (so it's editable + deletable, unlike built-ins).
  */
-export async function createInvoiceTheme(input: InvoiceThemeEditInput): Promise<InvoiceThemeSummary> {
+export async function createInvoiceTheme(
+  input: InvoiceThemeEditInput,
+): Promise<InvoiceThemeSummary> {
   const ctx = await getActorContext();
   requireCapability(ctx, 'manage_invoice_themes');
   const name = normText(input.name, 120);
@@ -128,6 +157,7 @@ export async function createInvoiceTheme(input: InvoiceThemeEditInput): Promise<
         fontFamily: normFont(input.fontFamily),
         headerText: normText(input.headerText, 60),
         footerText: normText(input.footerText, 240),
+        tokens: mergeLayoutIntoTokens({}, input.layout, 'layout' in input),
         createdBy: ctx.userId,
         updatedBy: ctx.userId,
       })
@@ -158,7 +188,10 @@ export async function updateInvoiceTheme(
       .limit(1);
     if (!target) throw new AppError('not_found', `invoice theme ${id} not found`);
     if (target.kind === 'builtin') {
-      throw new AppError('validation', 'Built-in formats are read-only. Duplicate it to customise.');
+      throw new AppError(
+        'validation',
+        'Built-in formats are read-only. Duplicate it to customise.',
+      );
     }
     if (input.makeDefault && !target.isDefault) {
       await tx
@@ -176,6 +209,7 @@ export async function updateInvoiceTheme(
         fontFamily: normFont(input.fontFamily),
         headerText: normText(input.headerText, 60),
         footerText: normText(input.footerText, 240),
+        tokens: mergeLayoutIntoTokens(target.tokens, input.layout, 'layout' in input),
         ...(input.makeDefault ? { isDefault: true } : {}),
         updatedBy: ctx.userId,
       })
@@ -382,4 +416,111 @@ export async function deleteInvoiceTheme(id: string): Promise<void> {
     .update(invoiceThemes)
     .set({ deletedAt: new Date(), updatedBy: ctx.userId })
     .where(eq(invoiceThemes.id, id));
+}
+
+/**
+ * Upload a logo image (PNG/JPEG) for a hand-built custom format. react-pdf can
+ * only inline PNG/JPEG, so other formats are rejected. The image is stored as a
+ * `documents` row (mirrors the logo path in `uploadDocxTheme`) and pointed to by
+ * `invoiceThemes.logoDocumentId`. Built-in themes are read-only.
+ */
+export async function uploadThemeLogo(formData: FormData): Promise<InvoiceThemeSummary> {
+  const ctx = await getActorContext();
+  requireCapability(ctx, 'manage_invoice_themes');
+
+  const themeId = (formData.get('themeId') as string | null)?.trim();
+  if (!themeId) throw new AppError('validation', 'Missing themeId.');
+  const file = formData.get('file');
+  if (!(file instanceof File)) {
+    throw new AppError('validation', 'Missing or invalid image file in upload payload.');
+  }
+  if (file.size === 0) throw new AppError('validation', 'File is empty.');
+  if (file.size > MAX_LOGO_BYTES) {
+    throw new AppError(
+      'storage.size_exceeded',
+      `Logo exceeds ${Math.round(MAX_LOGO_BYTES / 1024 / 1024)} MB limit.`,
+    );
+  }
+
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  // Sniff the magic bytes — never trust the browser-declared MIME.
+  let ext: 'png' | 'jpg';
+  let contentType: 'image/png' | 'image/jpeg';
+  if (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) {
+    ext = 'png';
+    contentType = 'image/png';
+  } else if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+    ext = 'jpg';
+    contentType = 'image/jpeg';
+  } else {
+    throw new AppError('storage.mime_mismatch', 'Logo must be a PNG or JPEG image.');
+  }
+
+  const [target] = await db
+    .select()
+    .from(invoiceThemes)
+    .where(and(eq(invoiceThemes.id, themeId), isNull(invoiceThemes.deletedAt)))
+    .limit(1);
+  if (!target) throw new AppError('not_found', `invoice theme ${themeId} not found`);
+  if (target.kind === 'builtin') {
+    throw new AppError('validation', 'Built-in formats are read-only.');
+  }
+
+  const admin = createAdminClient();
+  const logoPath = `invoice_themes/${themeId}/logo.${ext}`;
+  const { error: upErr } = await admin.storage
+    .from(THEME_BUCKET)
+    .upload(logoPath, bytes, { contentType, upsert: true });
+  if (upErr) {
+    throw new AppError('internal', `Failed to upload logo to Storage: ${upErr.message}`);
+  }
+
+  const updated = await db.transaction(async (tx) => {
+    const [logoRow] = await tx
+      .insert(documents)
+      .values({
+        entityType: 'invoice_theme',
+        entityId: themeId,
+        bucket: THEME_BUCKET,
+        storagePath: logoPath,
+        visibility: 'internal',
+        category: 'invoice_theme_logo',
+        originalFilename: file.name || `logo.${ext}`,
+        mimeType: contentType,
+        sizeBytes: bytes.byteLength,
+        createdBy: ctx.userId,
+        updatedBy: ctx.userId,
+      })
+      .returning({ id: documents.id });
+
+    const [row] = await tx
+      .update(invoiceThemes)
+      .set({ logoDocumentId: logoRow?.id ?? null, updatedBy: ctx.userId })
+      .where(eq(invoiceThemes.id, themeId))
+      .returning();
+    return row!;
+  });
+
+  return toSummary(updated);
+}
+
+/** Clear a custom format's logo (it falls back to the default brand mark). */
+export async function removeThemeLogo(themeId: string): Promise<InvoiceThemeSummary> {
+  const ctx = await getActorContext();
+  requireCapability(ctx, 'manage_invoice_themes');
+  const [target] = await db
+    .select()
+    .from(invoiceThemes)
+    .where(and(eq(invoiceThemes.id, themeId), isNull(invoiceThemes.deletedAt)))
+    .limit(1);
+  if (!target) throw new AppError('not_found', `invoice theme ${themeId} not found`);
+  if (target.kind === 'builtin') {
+    throw new AppError('validation', 'Built-in formats are read-only.');
+  }
+  const [row] = await db
+    .update(invoiceThemes)
+    .set({ logoDocumentId: null, updatedBy: ctx.userId })
+    .where(eq(invoiceThemes.id, themeId))
+    .returning();
+  return toSummary(row!);
 }
