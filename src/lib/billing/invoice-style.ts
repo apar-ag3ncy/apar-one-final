@@ -11,6 +11,27 @@ export type InvoiceDensity = 'compact' | 'normal' | 'relaxed';
 export type InvoiceLogoSize = 'sm' | 'md' | 'lg';
 export type InvoiceLogoAlign = 'left' | 'center' | 'right';
 
+/** Which optional line-item table columns are shown (Description + Amount are
+ *  always shown). */
+export type InvoiceColumns = {
+  srNo: boolean;
+  hsn: boolean;
+  /** Separate Quantity + Rate-per-unit columns. */
+  qtyRate: boolean;
+  /** Per-line GST rate column (e.g. "18%"). */
+  taxPct: boolean;
+};
+
+/** Per-element colour overrides. `null` → derive from primary/accent. Hex. */
+export type InvoiceColors = {
+  tableHeaderBg: string | null;
+  tableHeaderText: string | null;
+  totalBg: string | null;
+  totalText: string | null;
+  heading: string | null;
+  title: string | null;
+};
+
 export type InvoiceStyle = {
   /** Base font multiplier (0.85–1.25). 1 = the classic 9pt body. */
   fontScale: number;
@@ -26,6 +47,26 @@ export type InvoiceStyle = {
   emphasizeTotal: boolean;
   /** Tint section headings (Terms, Notes, Payment details…) with the brand colour. */
   colorHeadings: boolean;
+  /** Configurable line-item columns. */
+  columns: InvoiceColumns;
+  /** Per-element colour overrides. */
+  colors: InvoiceColors;
+};
+
+export const DEFAULT_INVOICE_COLUMNS: InvoiceColumns = {
+  srNo: true,
+  hsn: true,
+  qtyRate: false,
+  taxPct: false,
+};
+
+export const DEFAULT_INVOICE_COLORS: InvoiceColors = {
+  tableHeaderBg: null,
+  tableHeaderText: null,
+  totalBg: null,
+  totalText: null,
+  heading: null,
+  title: null,
 };
 
 export const DEFAULT_INVOICE_STYLE: InvoiceStyle = {
@@ -36,6 +77,8 @@ export const DEFAULT_INVOICE_STYLE: InvoiceStyle = {
   accentHeaderBand: false,
   emphasizeTotal: true,
   colorHeadings: true,
+  columns: DEFAULT_INVOICE_COLUMNS,
+  colors: DEFAULT_INVOICE_COLORS,
 };
 
 export const FONT_SCALE_MIN = 0.85;
@@ -56,10 +99,20 @@ function oneOf<T extends string>(v: unknown, allowed: readonly T[], fallback: T)
 function bool(v: unknown, fallback: boolean): boolean {
   return typeof v === 'boolean' ? v : fallback;
 }
+const HEX_RE = /^#[0-9a-fA-F]{6}$/;
+/** A 6-digit hex colour, or null. */
+function hexOrNull(v: unknown): string | null {
+  return typeof v === 'string' && HEX_RE.test(v.trim()) ? v.trim().toUpperCase() : null;
+}
 
 /** Coerce any persisted/JSON value into a complete, valid `InvoiceStyle`. */
 export function sanitizeInvoiceStyle(raw: unknown): InvoiceStyle {
   const r = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  const cols = (r.columns && typeof r.columns === 'object' ? r.columns : {}) as Record<
+    string,
+    unknown
+  >;
+  const cl = (r.colors && typeof r.colors === 'object' ? r.colors : {}) as Record<string, unknown>;
   return {
     fontScale: Math.round(clampNum(r.fontScale, FONT_SCALE_MIN, FONT_SCALE_MAX, 1) * 100) / 100,
     density: oneOf(r.density, DENSITIES, 'normal'),
@@ -68,7 +121,76 @@ export function sanitizeInvoiceStyle(raw: unknown): InvoiceStyle {
     accentHeaderBand: bool(r.accentHeaderBand, false),
     emphasizeTotal: bool(r.emphasizeTotal, true),
     colorHeadings: bool(r.colorHeadings, true),
+    columns: {
+      srNo: bool(cols.srNo, true),
+      hsn: bool(cols.hsn, true),
+      qtyRate: bool(cols.qtyRate, false),
+      taxPct: bool(cols.taxPct, false),
+    },
+    colors: {
+      tableHeaderBg: hexOrNull(cl.tableHeaderBg),
+      tableHeaderText: hexOrNull(cl.tableHeaderText),
+      totalBg: hexOrNull(cl.totalBg),
+      totalText: hexOrNull(cl.totalText),
+      heading: hexOrNull(cl.heading),
+      title: hexOrNull(cl.title),
+    },
   };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Line-item table columns                                                    */
+/* -------------------------------------------------------------------------- */
+
+export type TableColKey = 'srNo' | 'description' | 'hsn' | 'qty' | 'rate' | 'taxPct' | 'amount';
+
+export type TableCol = { key: TableColKey; label: string; width: number; align: 'left' | 'right' };
+
+// Fixed widths (in %) for every non-description column; Description flexes to
+// fill whatever's left so the row always sums to 100%.
+const COL_FIXED_WIDTH: Record<Exclude<TableColKey, 'description'>, number> = {
+  srNo: 7,
+  hsn: 13,
+  qty: 8,
+  rate: 15,
+  taxPct: 10,
+  amount: 20,
+};
+
+/** Ordered, sized columns for the line-items table given the style config. */
+export function invoiceTableColumns(style: InvoiceStyle): TableCol[] {
+  const c = style.columns;
+  const out: TableCol[] = [];
+  if (c.srNo)
+    out.push({ key: 'srNo', label: 'Sr. No.', width: COL_FIXED_WIDTH.srNo, align: 'left' });
+  out.push({ key: 'description', label: 'Description', width: 0, align: 'left' });
+  if (c.hsn) out.push({ key: 'hsn', label: 'HSN/SAC', width: COL_FIXED_WIDTH.hsn, align: 'left' });
+  if (c.qtyRate) {
+    out.push({ key: 'qty', label: 'Qty', width: COL_FIXED_WIDTH.qty, align: 'right' });
+    out.push({ key: 'rate', label: 'Rate', width: COL_FIXED_WIDTH.rate, align: 'right' });
+  }
+  if (c.taxPct)
+    out.push({ key: 'taxPct', label: 'Tax %', width: COL_FIXED_WIDTH.taxPct, align: 'right' });
+  out.push({ key: 'amount', label: 'Amount (INR)', width: COL_FIXED_WIDTH.amount, align: 'right' });
+
+  const fixed = out.reduce((s, col) => s + col.width, 0);
+  const desc = out.find((col) => col.key === 'description');
+  if (desc) desc.width = Math.max(20, 100 - fixed);
+  return out;
+}
+
+/** The width (%) of the Amount column — summary rows align their value to it. */
+export const AMOUNT_COL_WIDTH = COL_FIXED_WIDTH.amount;
+
+/** Black or white text, whichever reads better on the given hex background. */
+export function readableTextOn(hex: string): string {
+  const h = hex.replace('#', '');
+  if (h.length !== 6) return '#111111';
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  return lum > 0.6 ? '#111111' : '#FFFFFF';
 }
 
 /**

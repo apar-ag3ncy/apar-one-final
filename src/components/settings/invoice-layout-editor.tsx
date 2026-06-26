@@ -35,7 +35,14 @@ import {
   type InvoiceLayout,
   type InvoiceLayoutContainer,
 } from '@/lib/billing/invoice-layout';
-import type { InvoiceStyle } from '@/lib/billing/invoice-style';
+import {
+  AMOUNT_COL_WIDTH,
+  invoiceTableColumns,
+  readableTextOn,
+  type InvoiceStyle,
+  type TableCol,
+} from '@/lib/billing/invoice-style';
+import type { CompanyPreview } from '@/lib/server/settings/company';
 
 /* -------------------------------------------------------------------------- */
 /* Container <-> layout conversion                                            */
@@ -98,6 +105,8 @@ export type InvoiceLayoutEditorProps = {
   fontFamily: string;
   headerText: string;
   style: InvoiceStyle;
+  /** Real (editable) company header details for the preview. */
+  company: CompanyPreview;
 };
 
 /**
@@ -115,6 +124,7 @@ export function InvoiceLayoutEditor({
   fontFamily,
   headerText,
   style,
+  company,
 }: InvoiceLayoutEditorProps) {
   const [containers, setContainers] = useState<Containers>(() => layoutToContainers(defaultValue));
   const [activeId, setActiveId] = useState<InvoiceBlockId | null>(null);
@@ -274,6 +284,7 @@ export function InvoiceLayoutEditor({
           fontFamily={fontFamily}
           headerText={headerText}
           style={style}
+          company={company}
         />
       </div>
 
@@ -435,8 +446,24 @@ const MOCK = {
     ['IFSC', 'HDFC0000123'],
   ] as const,
   items: [
-    ['1', 'Brand identity refresh — Phase 1', '9983', '2,50,000.00'],
-    ['2', 'Festive campaign films (3 × 30s)', '9983', '3,60,000.00'],
+    {
+      sr: '1',
+      desc: 'Brand identity refresh — Phase 1',
+      hsn: '9983',
+      qty: '1',
+      rate: '2,50,000.00',
+      tax: '18%',
+      amount: '2,50,000.00',
+    },
+    {
+      sr: '2',
+      desc: 'Festive campaign films (3 × 30s)',
+      hsn: '9983',
+      qty: '3',
+      rate: '1,20,000.00',
+      tax: '18%',
+      amount: '3,60,000.00',
+    },
   ] as const,
   summary: [
     ['Sub Total', '6,10,000.00'],
@@ -453,6 +480,7 @@ function LayoutPreview({
   fontFamily,
   headerText,
   style,
+  company,
 }: {
   containers: Containers;
   primaryColor: string;
@@ -460,6 +488,7 @@ function LayoutPreview({
   fontFamily: string;
   headerText: string;
   style: InvoiceStyle;
+  company: CompanyPreview;
 }) {
   const font =
     fontFamily === 'Times-Roman'
@@ -469,7 +498,7 @@ function LayoutPreview({
         : 'sans-serif';
   const pad = style.density === 'relaxed' ? 16 : style.density === 'compact' ? 8 : 12;
   const gap = style.density === 'relaxed' ? 11 : style.density === 'compact' ? 5 : 8;
-  const ctx = { primaryColor, accentColor, headerText, style };
+  const ctx = { primaryColor, accentColor, headerText, style, company };
 
   return (
     <div className="space-y-1 lg:sticky lg:top-0">
@@ -524,7 +553,13 @@ type Ctx = {
   accentColor: string;
   headerText: string;
   style: InvoiceStyle;
+  company: CompanyPreview;
 };
+
+/** Heading colour respecting the per-element override + the colorHeadings flag. */
+function headingColorOf(style: InvoiceStyle, primaryColor: string): string {
+  return style.colors.heading ?? (style.colorHeadings ? primaryColor : '#111111');
+}
 
 /** A small label/value line used inside several blocks. */
 function Line({ children, size, color }: { children: ReactNode; size: number; color?: string }) {
@@ -540,12 +575,13 @@ function PreviewBlock({
   align = 'left',
   ...ctx
 }: { id: InvoiceBlockId; align?: 'left' | 'right' } & Ctx) {
-  const { primaryColor, accentColor, headerText, style } = ctx;
+  const { primaryColor, accentColor, headerText, style, company } = ctx;
   const fs = style.fontScale;
   const body = 6.8 * fs;
   const muted = 6 * fs;
   const name = 9 * fs;
-  const headingColor = style.colorHeadings ? primaryColor : '#111111';
+  const headingColor = headingColorOf(style, primaryColor);
+  const titleColor = style.colors.title ?? primaryColor;
   const right = align === 'right';
 
   switch (id) {
@@ -573,19 +609,25 @@ function PreviewBlock({
         </div>
       );
     }
-    case 'supplier':
+    case 'supplier': {
+      const lines = [
+        company.address,
+        company.gstin ? `GSTIN ${company.gstin}` : null,
+        company.pan ? `PAN ${company.pan}` : null,
+      ].filter((l): l is string => !!l && l.length > 0);
       return (
         <div className={right ? 'text-right' : 'text-left'}>
           <div style={{ fontSize: name, fontWeight: 700 }} className="truncate">
-            {MOCK.company}
+            {company.name || 'Your Company'}
           </div>
-          {MOCK.companyLines.map((l, i) => (
+          {lines.map((l, i) => (
             <Line key={i} size={muted} color={MUTED}>
               {l}
             </Line>
           ))}
         </div>
       );
+    }
     case 'meta':
       return (
         <div className={right ? 'text-right' : 'text-left'}>
@@ -593,14 +635,14 @@ function PreviewBlock({
             <div className={cn('mb-0.5 flex', right ? 'justify-end' : 'justify-start')}>
               <span
                 className="rounded-sm px-1.5 py-0.5 font-bold"
-                style={{ backgroundColor: accentColor, color: primaryColor, fontSize: 9.5 * fs }}
+                style={{ backgroundColor: accentColor, color: titleColor, fontSize: 9.5 * fs }}
               >
                 {headerText || 'TAX INVOICE'}
               </span>
             </div>
           ) : (
             <div
-              style={{ fontSize: 9.5 * fs, fontWeight: 700, color: primaryColor }}
+              style={{ fontSize: 9.5 * fs, fontWeight: 700, color: titleColor }}
               className="truncate"
             >
               {headerText || 'TAX INVOICE'}
@@ -676,7 +718,7 @@ function PreviewBlock({
       return (
         <div className="ml-auto text-right" style={{ width: '48%' }}>
           <div style={{ fontSize: body, fontWeight: 700, color: headingColor }}>
-            For {MOCK.company}
+            For {company.name || 'Your Company'}
           </div>
           <div style={{ height: 16 * fs }} />
           <Line size={body}>Authorised Signatory</Line>
@@ -720,65 +762,79 @@ function Cell({
   );
 }
 
-/** The fixed GST line-items + tax-summary table — always present. */
-function PreviewTable({ primaryColor, accentColor, style }: Ctx) {
+const ITEM_FIELD: Record<TableCol['key'], keyof (typeof MOCK.items)[number]> = {
+  srNo: 'sr',
+  description: 'desc',
+  hsn: 'hsn',
+  qty: 'qty',
+  rate: 'rate',
+  taxPct: 'tax',
+  amount: 'amount',
+};
+
+/** The GST line-items + tax-summary table — columns + colours driven by style. */
+function PreviewTable({ accentColor, style }: Ctx) {
   const cell = 6 * style.fontScale;
   const border = '#9ca3af';
-  const head: CSSProperties = {
-    backgroundColor: accentColor,
-    color: primaryColor,
-    fontWeight: 700,
-  };
+  const cols = invoiceTableColumns(style);
+  const labelW = `${100 - AMOUNT_COL_WIDTH}%`;
+  const amtW = `${AMOUNT_COL_WIDTH}%`;
+
+  const hb = style.colors.tableHeaderBg ?? accentColor;
+  const ht = style.colors.tableHeaderText ?? readableTextOn(hb);
+  const tb = style.colors.totalBg ?? accentColor;
+  const tt = style.colors.totalText ?? readableTextOn(tb);
+  const head: CSSProperties = { backgroundColor: hb, color: ht, fontWeight: 700 };
   const totalStyle: CSSProperties = style.emphasizeTotal
-    ? { backgroundColor: accentColor, color: primaryColor, fontWeight: 700 }
+    ? { backgroundColor: tb, color: tt, fontWeight: 700 }
     : { fontWeight: 700 };
+
   return (
     <div style={{ borderTop: `0.5px solid ${border}`, borderLeft: `0.5px solid ${border}` }}>
       <div className="flex">
-        <Cell w="11%" size={cell} border={border} st={head}>
-          Sr.
-        </Cell>
-        <Cell w="49%" size={cell} border={border} st={head}>
-          Description
-        </Cell>
-        <Cell w="16%" size={cell} border={border} st={head}>
-          HSN/SAC
-        </Cell>
-        <Cell w="24%" size={cell} border={border} right st={head}>
-          Amount (INR)
-        </Cell>
+        {cols.map((c) => (
+          <Cell
+            key={c.key}
+            w={`${c.width}%`}
+            size={cell}
+            border={border}
+            right={c.align === 'right'}
+            st={head}
+          >
+            {c.key === 'amount' ? 'Amount (INR)' : c.label}
+          </Cell>
+        ))}
       </div>
       {MOCK.items.map((it) => (
-        <div className="flex" key={it[0]}>
-          <Cell w="11%" size={cell} border={border}>
-            {it[0]}
-          </Cell>
-          <Cell w="49%" size={cell} border={border}>
-            {it[1]}
-          </Cell>
-          <Cell w="16%" size={cell} border={border}>
-            {it[2]}
-          </Cell>
-          <Cell w="24%" size={cell} border={border} right>
-            {it[3]}
-          </Cell>
+        <div className="flex" key={it.sr}>
+          {cols.map((c) => (
+            <Cell
+              key={c.key}
+              w={`${c.width}%`}
+              size={cell}
+              border={border}
+              right={c.align === 'right'}
+            >
+              {it[ITEM_FIELD[c.key]]}
+            </Cell>
+          ))}
         </div>
       ))}
       {MOCK.summary.map(([k, v]) => (
         <div className="flex" key={k}>
-          <Cell w="76%" size={cell} border={border} right st={{ fontWeight: 700 }}>
+          <Cell w={labelW} size={cell} border={border} right st={{ fontWeight: 700 }}>
             {k}
           </Cell>
-          <Cell w="24%" size={cell} border={border} right>
+          <Cell w={amtW} size={cell} border={border} right>
             {v}
           </Cell>
         </div>
       ))}
       <div className="flex">
-        <Cell w="76%" size={cell} border={border} right st={totalStyle}>
+        <Cell w={labelW} size={cell} border={border} right st={totalStyle}>
           TOTAL
         </Cell>
-        <Cell w="24%" size={cell} border={border} right st={totalStyle}>
+        <Cell w={amtW} size={cell} border={border} right st={totalStyle}>
           {MOCK.total}
         </Cell>
       </div>

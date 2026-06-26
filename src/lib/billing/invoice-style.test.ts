@@ -1,12 +1,20 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  AMOUNT_COL_WIDTH,
   DEFAULT_INVOICE_STYLE,
   FONT_SCALE_MAX,
   FONT_SCALE_MIN,
+  invoiceTableColumns,
   metricsFor,
+  readableTextOn,
   sanitizeInvoiceStyle,
 } from './invoice-style';
+
+const withCols = (c: Partial<typeof DEFAULT_INVOICE_STYLE.columns>) => ({
+  ...DEFAULT_INVOICE_STYLE,
+  columns: { ...DEFAULT_INVOICE_STYLE.columns, ...c },
+});
 
 describe('sanitizeInvoiceStyle', () => {
   it('returns the default style for empty/garbage input', () => {
@@ -52,5 +60,44 @@ describe('metricsFor', () => {
     const relaxed = metricsFor({ ...DEFAULT_INVOICE_STYLE, density: 'relaxed', logoSize: 'lg' });
     expect(relaxed.pagePadTop).toBeGreaterThan(compact.pagePadTop);
     expect(relaxed.logoHeight).toBeGreaterThan(compact.logoHeight);
+  });
+});
+
+describe('columns + colours', () => {
+  it('sanitises columns + colours with sane defaults', () => {
+    const s = sanitizeInvoiceStyle({});
+    expect(s.columns).toEqual({ srNo: true, hsn: true, qtyRate: false, taxPct: false });
+    expect(s.colors.tableHeaderBg).toBeNull();
+    // invalid colour → null; valid hex kept (upper-cased)
+    expect(sanitizeInvoiceStyle({ colors: { totalBg: 'red' } }).colors.totalBg).toBeNull();
+    expect(sanitizeInvoiceStyle({ colors: { totalBg: '#abcdef' } }).colors.totalBg).toBe('#ABCDEF');
+  });
+
+  it('invoiceTableColumns: default columns sum to 100% with a flexible Description', () => {
+    const cols = invoiceTableColumns(DEFAULT_INVOICE_STYLE);
+    expect(cols.map((c) => c.key)).toEqual(['srNo', 'description', 'hsn', 'amount']);
+    const sum = cols.reduce((a, c) => a + c.width, 0);
+    expect(Math.round(sum)).toBe(100);
+    expect(cols.find((c) => c.key === 'description')!.width).toBeGreaterThanOrEqual(20);
+  });
+
+  it('invoiceTableColumns: all columns present + still sum to 100%', () => {
+    const cols = invoiceTableColumns(withCols({ qtyRate: true, taxPct: true }));
+    expect(cols.map((c) => c.key)).toEqual([
+      'srNo',
+      'description',
+      'hsn',
+      'qty',
+      'rate',
+      'taxPct',
+      'amount',
+    ]);
+    expect(Math.round(cols.reduce((a, c) => a + c.width, 0))).toBe(100);
+    expect(cols.find((c) => c.key === 'amount')!.width).toBe(AMOUNT_COL_WIDTH);
+  });
+
+  it('readableTextOn picks readable text', () => {
+    expect(readableTextOn('#0B3D91')).toBe('#FFFFFF'); // dark bg → white
+    expect(readableTextOn('#F3F4F6')).toBe('#111111'); // light bg → dark
   });
 });
