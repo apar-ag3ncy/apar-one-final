@@ -3143,7 +3143,7 @@ type SettingsSection = {
   name:
     | 'General'
     | 'Company documents'
-    | 'Billing'
+    | 'Bank accounts'
     | 'Invoice format'
     | 'Vault'
     | 'Appearance'
@@ -3175,7 +3175,7 @@ export function SettingsApp({
   const SECTION_NAMES: readonly SettingsSection['name'][] = [
     'General',
     'Company documents',
-    'Billing',
+    'Bank accounts',
     'Invoice format',
     'Vault',
     'Appearance',
@@ -3194,7 +3194,7 @@ export function SettingsApp({
   const sections: readonly SettingsSection[] = [
     { name: 'General', icon: 'settings' },
     { name: 'Company documents', icon: 'building' },
-    { name: 'Billing', icon: 'book' },
+    { name: 'Bank accounts', icon: 'book' },
     { name: 'Invoice format', icon: 'filetext' },
     { name: 'Vault', icon: 'shield' },
     { name: 'Appearance', icon: 'palette' },
@@ -3371,7 +3371,7 @@ export function SettingsApp({
           </div>
         ) : section === 'Company documents' ? (
           <CompanySettingsPane />
-        ) : section === 'Billing' ? (
+        ) : section === 'Bank accounts' ? (
           <BillingSettingsPane />
         ) : section === 'Invoice format' ? (
           <div style={{ padding: 20 }}>
