@@ -62,12 +62,34 @@ function triggerDownload(blob: Blob, filename: string) {
   URL.revokeObjectURL(url);
 }
 
-export function exportTableToCsv<TData>(table: Table<TData>, filename: string) {
+/** Coerce a built-row value (Date / bool / null / object) into a PDF cell. */
+function toPdfCell(v: unknown): string | number {
+  if (v === null || v === undefined) return '';
+  if (typeof v === 'number' || typeof v === 'string') return v;
+  if (typeof v === 'boolean') return v ? 'Yes' : 'No';
+  if (v instanceof Date) return v.toISOString().slice(0, 10);
+  return String(v);
+}
+
+export function exportTableToPdf<TData>(table: Table<TData>, filename: string) {
   const { headers, rows } = buildRows(table);
-  const sheet = XLSX.utils.json_to_sheet(rows, { header: headers });
-  const csv = XLSX.utils.sheet_to_csv(sheet);
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-  triggerDownload(blob, filename.endsWith('.csv') ? filename : `${filename}.csv`);
+  const pdfRows = rows.map((r) => {
+    const out: Record<string, string | number> = {};
+    for (const h of headers) out[h] = toPdfCell(r[h]);
+    return out;
+  });
+  // Code-split @react-pdf/renderer; render off the click with its own error
+  // handling so this stays a plain (non-async) call for the toolbar.
+  void (async () => {
+    try {
+      const { downloadRowsAsPdf } = await import('@/lib/client/table-pdf');
+      await downloadRowsAsPdf(pdfRows, headers, filename, 'Export');
+    } catch (e) {
+      console.error('PDF export failed', e);
+      const { toast } = await import('sonner');
+      toast.error('Could not generate the PDF.');
+    }
+  })();
 }
 
 export function exportTableToXlsx<TData>(table: Table<TData>, filename: string) {

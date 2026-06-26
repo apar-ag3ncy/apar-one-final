@@ -11,12 +11,12 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
-import { exportTableToCsv, exportTableToXlsx } from './exporters';
+import { exportTableToPdf, exportTableToXlsx } from './exporters';
 import { DataTableViewOptions } from './data-table-view-options';
 
 type Props<TData> = {
   table: Table<TData>;
-  /** Filename root used for CSV/Excel exports. ".csv" / ".xlsx" appended automatically. */
+  /** Filename root used for PDF/Excel exports. ".pdf" / ".xlsx" appended automatically. */
   exportFilename: string;
   /** Hide the global search input. */
   hideSearch?: boolean;
@@ -93,8 +93,8 @@ export function DataTableToolbar<TData>({
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
-            <DropdownMenuItem onSelect={() => exportTableToCsv(table, exportFilename)}>
-              CSV
+            <DropdownMenuItem onSelect={() => exportTableToPdf(table, exportFilename)}>
+              PDF (.pdf)
             </DropdownMenuItem>
             <DropdownMenuItem onSelect={() => exportTableToXlsx(table, exportFilename)}>
               Excel (.xlsx)

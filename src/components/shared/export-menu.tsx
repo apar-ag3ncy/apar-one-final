@@ -1,6 +1,6 @@
 'use client';
 
-// Small CSV / Excel export dropdown shared by the report screens. Mirrors the
+// Small PDF / Excel export dropdown shared by the report screens. Mirrors the
 // DataTable toolbar's Export menu so the two surfaces feel consistent. The
 // parent owns row-building and calls `exportRows`; this is pure UI.
 
@@ -30,7 +30,7 @@ export function ExportMenu({
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
-        <DropdownMenuItem onClick={() => onExport('csv')}>CSV (.csv)</DropdownMenuItem>
+        <DropdownMenuItem onClick={() => onExport('pdf')}>PDF (.pdf)</DropdownMenuItem>
         <DropdownMenuItem onClick={() => onExport('xlsx')}>Excel (.xlsx)</DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

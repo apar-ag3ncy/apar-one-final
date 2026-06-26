@@ -1,16 +1,18 @@
 // Client-side export helpers for tabular data — ledgers, statements, reports.
 //
-// One implementation backs both CSV and XLSX via the `xlsx` lib that's
-// already a dependency (the DataTable exporters use it too). Callers build
-// plain row objects keyed by their column *label*; `headers` fixes the
-// column order and which keys are emitted.
+// One implementation backs both PDF and XLSX. XLSX uses the `xlsx` lib that's
+// already a dependency; PDF defers to `@react-pdf/renderer` via a dynamic
+// import (see `./table-pdf`) so that heavy lib never lands in a page bundle
+// unless someone actually exports a PDF. Callers build plain row objects keyed
+// by their column *label*; `headers` fixes the column order and which keys are
+// emitted.
 //
 // Amounts should be passed as rupee numbers (see `paiseToRupees`) so Excel
 // treats them as real numbers and can sum/format them.
 
 import * as XLSX from 'xlsx';
 
-export type ExportFormat = 'csv' | 'xlsx';
+export type ExportFormat = 'pdf' | 'xlsx';
 
 /** bigint paise → number rupees, for numeric spreadsheet columns. */
 export function paiseToRupees(paise: bigint): number {
@@ -30,13 +32,18 @@ function triggerDownload(blob: Blob, filename: string): void {
 }
 
 /**
- * Export an array of row objects as CSV or XLSX and trigger a download.
+ * Export an array of row objects as PDF or XLSX and trigger a download.
+ *
+ * Synchronous-looking by design: the PDF path kicks off its own async work
+ * (dynamic import + render) with self-contained error handling, so the ~12
+ * call sites can keep calling this without awaiting or threading promises.
  *
  * @param rows     one object per data row, keyed by column label
  * @param headers  column labels in display order (also the object keys)
  * @param filename base filename; the correct extension is appended if absent
- * @param format   'csv' | 'xlsx'
- * @param sheetName worksheet name for XLSX (Excel caps this at 31 chars)
+ * @param format   'pdf' | 'xlsx'
+ * @param sheetName worksheet name for XLSX (Excel caps this at 31 chars); also
+ *                  used as the PDF title
  */
 export function exportRows(
   rows: ReadonlyArray<Record<string, string | number>>,
@@ -45,16 +52,25 @@ export function exportRows(
   format: ExportFormat,
   sheetName = 'Sheet1',
 ): void {
+  if (format === 'pdf') {
+    // Code-split @react-pdf/renderer; render off the click. Self-contained
+    // error handling keeps the void signature (no floating promise upstream).
+    void (async () => {
+      try {
+        const { downloadRowsAsPdf } = await import('./table-pdf');
+        await downloadRowsAsPdf(rows, headers, filename, sheetName);
+      } catch (e) {
+        console.error('PDF export failed', e);
+        const { toast } = await import('sonner');
+        toast.error('Could not generate the PDF.');
+      }
+    })();
+    return;
+  }
+
   const sheet = XLSX.utils.json_to_sheet(rows as Record<string, unknown>[], {
     header: headers as string[],
   });
-
-  if (format === 'csv') {
-    const csv = XLSX.utils.sheet_to_csv(sheet);
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    triggerDownload(blob, filename.endsWith('.csv') ? filename : `${filename}.csv`);
-    return;
-  }
 
   const book = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(book, sheet, sheetName.slice(0, 31));

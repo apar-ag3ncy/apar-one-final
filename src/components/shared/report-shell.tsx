@@ -17,7 +17,7 @@ export type ReportShellProps = {
   showIncludeReversed?: boolean;
   /** Base path for URL updates. */
   basePath: string;
-  /** Optional exporter — renders an Export (CSV / Excel) menu when provided. */
+  /** Optional exporter — renders an Export (PDF / Excel) menu when provided. */
   onExport?: (format: ExportFormat) => void;
   children: React.ReactNode;
 };

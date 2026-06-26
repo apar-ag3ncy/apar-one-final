@@ -1,0 +1,136 @@
+'use client';
+
+// Client-side "rows → PDF table" backing the shared export helpers. Kept in
+// its own module so `@react-pdf/renderer` (heavy) is only pulled into a page's
+// bundle when the user actually exports a PDF — callers reach it through a
+// dynamic `import()` inside `exportRows` / the DataTable exporters, never a
+// static import.
+
+import { Document, Page, StyleSheet, Text, View, pdf } from '@react-pdf/renderer';
+import * as React from 'react';
+
+/** A cell value the table can render. Callers coerce richer types to these. */
+export type PdfCell = string | number;
+
+const styles = StyleSheet.create({
+  page: { paddingVertical: 28, paddingHorizontal: 26, fontSize: 8, color: '#1a1a1a' },
+  title: { fontSize: 13, marginBottom: 10, fontFamily: 'Helvetica-Bold' },
+  table: { borderTopWidth: 0.5, borderLeftWidth: 0.5, borderColor: '#c8c8c8' },
+  row: { flexDirection: 'row' },
+  headerRow: { backgroundColor: '#eef0f2' },
+  zebra: { backgroundColor: '#f7f8f9' },
+  cell: {
+    paddingVertical: 4,
+    paddingHorizontal: 5,
+    borderRightWidth: 0.5,
+    borderBottomWidth: 0.5,
+    borderColor: '#c8c8c8',
+  },
+  headerCell: { fontFamily: 'Helvetica-Bold' },
+  cellRight: { textAlign: 'right' },
+  footer: {
+    position: 'absolute',
+    bottom: 14,
+    left: 26,
+    right: 26,
+    fontSize: 7,
+    color: '#9a9a9a',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+});
+
+function fmtCell(v: PdfCell | null | undefined): string {
+  if (v === null || v === undefined) return '';
+  if (typeof v === 'number') {
+    if (!Number.isFinite(v)) return '';
+    return Number.isInteger(v)
+      ? v.toLocaleString('en-IN')
+      : v.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+  return String(v);
+}
+
+function TableDoc({
+  title,
+  headers,
+  rows,
+}: {
+  title?: string;
+  headers: readonly string[];
+  rows: ReadonlyArray<Record<string, PdfCell>>;
+}) {
+  // Wide tables breathe better on landscape A4.
+  const landscape = headers.length > 6;
+  const widthPct = `${100 / Math.max(1, headers.length)}%`;
+  const colStyle = { width: widthPct };
+
+  return (
+    <Document>
+      <Page size="A4" orientation={landscape ? 'landscape' : 'portrait'} style={styles.page}>
+        {title ? <Text style={styles.title}>{title}</Text> : null}
+        <View style={styles.table}>
+          <View style={[styles.row, styles.headerRow]} fixed>
+            {headers.map((h, i) => (
+              <Text key={i} style={[styles.cell, styles.headerCell, colStyle]}>
+                {h}
+              </Text>
+            ))}
+          </View>
+          {rows.map((r, ri) => (
+            <View
+              key={ri}
+              style={ri % 2 === 1 ? [styles.row, styles.zebra] : styles.row}
+              wrap={false}
+            >
+              {headers.map((h, ci) => {
+                const v = r[h];
+                const right = typeof v === 'number';
+                return (
+                  <Text
+                    key={ci}
+                    style={
+                      right ? [styles.cell, colStyle, styles.cellRight] : [styles.cell, colStyle]
+                    }
+                  >
+                    {fmtCell(v)}
+                  </Text>
+                );
+              })}
+            </View>
+          ))}
+        </View>
+        <View style={styles.footer} fixed>
+          <Text>{title ?? 'Export'}</Text>
+          <Text render={({ pageNumber, totalPages }) => `Page ${pageNumber} of ${totalPages}`} />
+        </View>
+      </Page>
+    </Document>
+  );
+}
+
+function triggerDownload(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
+/**
+ * Render `rows` as a paginated PDF table and trigger a download. `headers`
+ * fixes the column order and which keys are emitted (matching `exportRows`).
+ * Numeric cells are right-aligned and grouped with Indian digit separators.
+ */
+export async function downloadRowsAsPdf(
+  rows: ReadonlyArray<Record<string, PdfCell>>,
+  headers: readonly string[],
+  filename: string,
+  title?: string,
+): Promise<void> {
+  const blob = await pdf(<TableDoc title={title} headers={headers} rows={rows} />).toBlob();
+  triggerDownload(blob, filename.endsWith('.pdf') ? filename : `${filename}.pdf`);
+}

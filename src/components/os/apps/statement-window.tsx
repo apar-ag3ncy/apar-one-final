@@ -2,7 +2,7 @@
 
 // Statement of Account — native OS window. Pick a client or vendor + a date
 // range and render their chronological ledger statement (the shared
-// StatementOfAccount component, which carries running balance, CSV/Excel
+// StatementOfAccount component, which carries running balance, PDF/Excel
 // export, and click-to-open-transaction). Mirrors /reports/statement but
 // fully inside the OS instead of opening a dashboard route in a new tab.
 

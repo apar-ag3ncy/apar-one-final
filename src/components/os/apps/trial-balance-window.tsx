@@ -2,7 +2,7 @@
 
 // Trial Balance — native OS window. Same getTrialBalance server action the
 // dashboard /reports/trial-balance route uses, rendered in OS chrome with a
-// live as-of date filter, include-reversed toggle, and CSV/Excel export.
+// live as-of date filter, include-reversed toggle, and PDF/Excel export.
 
 import { useMemo, useState } from 'react';
 

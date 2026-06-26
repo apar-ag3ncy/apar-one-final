@@ -8,6 +8,7 @@ import { BillingSettingsPane } from './apps/billing-settings-pane';
 import { VaultPane } from './apps/vault-pane';
 import { ImportEmployeesDialog } from '@/components/employees/import-employees-dialog';
 import { InvoiceFormatEditor } from '@/components/settings/invoice-format-editor';
+import { exportRows, type ExportFormat } from '@/lib/client/export-rows';
 import {
   listClients as listDbClients,
   listEmployees as listDbEmployees,
@@ -27,11 +28,7 @@ import {
 } from './auth/session-store';
 import { formatINR, initials, parseRupeesToPaise } from './format';
 import { Icon, type IconName } from './icons';
-import type {
-  Client,
-  Project,
-  Vendor,
-} from './types';
+import type { Client, Project, Vendor } from './types';
 import type { VendorStore } from './auth/vendor-store';
 import {
   archiveProject,
@@ -1801,7 +1798,7 @@ export function EmployeesApp({
     if (next) setRows(next);
   }
 
-  function exportEmployees() {
+  function exportEmployees(format: ExportFormat) {
     const headers = [
       'Full Name',
       'Work Email',
@@ -1812,34 +1809,17 @@ export function EmployeesApp({
       'Joined',
       'Reports To',
     ];
-    const esc = (v: unknown) => {
-      const s = String(v ?? '');
-      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-    };
-    const body = visible.map((e) =>
-      [
-        e.fullName,
-        e.workEmail ?? '',
-        e.designation ?? '',
-        departmentLabel(e.department),
-        e.employmentType,
-        e.status,
-        e.joinedAt instanceof Date ? e.joinedAt.toISOString().slice(0, 10) : '',
-        e.managerName ?? '',
-      ]
-        .map(esc)
-        .join(','),
-    );
-    const csv = [headers.join(','), ...body].join('\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'employees.csv';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    const data: Record<string, string>[] = visible.map((e) => ({
+      'Full Name': e.fullName,
+      'Work Email': e.workEmail ?? '',
+      Designation: e.designation ?? '',
+      Department: departmentLabel(e.department),
+      'Employment Type': e.employmentType,
+      Status: e.status,
+      Joined: e.joinedAt instanceof Date ? e.joinedAt.toISOString().slice(0, 10) : '',
+      'Reports To': e.managerName ?? '',
+    }));
+    exportRows(data, headers, 'employees', format, 'Employees');
   }
 
   useEffect(() => {
@@ -1911,12 +1891,22 @@ export function EmployeesApp({
         <button
           className="btn"
           type="button"
-          onClick={exportEmployees}
+          onClick={() => exportEmployees('pdf')}
           disabled={visible.length === 0}
-          title="Export the current list to CSV"
+          title="Export the current list as a PDF file"
         >
           <Icon name="filetext" size={13} />
-          Export
+          Export PDF
+        </button>
+        <button
+          className="btn"
+          type="button"
+          onClick={() => exportEmployees('xlsx')}
+          disabled={visible.length === 0}
+          title="Export the current list as an Excel (.xlsx) file"
+        >
+          <Icon name="filetext" size={13} />
+          Export Excel
         </button>
         {canEdit ? <ImportEmployeesDialog onImported={refreshEmployeeList} /> : null}
         <button

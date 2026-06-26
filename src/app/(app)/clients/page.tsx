@@ -19,7 +19,7 @@ export default async function ClientsPage() {
     <>
       <PageHeader
         title="Clients"
-        description={`${data.length} client${data.length === 1 ? '' : 's'} on the books. Filter, sort, save a view, or export to CSV / Excel.`}
+        description={`${data.length} client${data.length === 1 ? '' : 's'} on the books. Filter, sort, save a view, or export to PDF / Excel.`}
         actions={
           <Button asChild size="sm">
             <Link href="/clients/new">New client</Link>
