@@ -13,9 +13,12 @@ import {
   invoices,
   organizations,
 } from '@/lib/db/schema';
+import QRCode from 'qrcode';
+
 import { AppError } from '@/lib/errors';
 import { createAdminClient } from '@/lib/supabase/server';
 import { stateCodeToGstCode, stateNameFromCode } from '@/lib/india/gst-states';
+import { getPrimaryCompanyBankAccount } from '@/lib/server/settings/company-data';
 
 import type { InvoicePdfData } from './invoice';
 
@@ -131,6 +134,33 @@ export async function loadInvoicePdfData(
 
   const themeOverrides = await resolveThemeOverrides(client, invoice.themeId);
 
+  // Payment instructions — the agency's primary bank account plus an optional
+  // pay-by-UPI QR encoding the exact invoice amount. Omitted entirely when no
+  // company bank account has been configured (Settings → Billing).
+  const bank = await getPrimaryCompanyBankAccount().catch(() => null);
+  let payment: InvoicePdfData['payment'] = null;
+  if (bank) {
+    const beneficiary = supplierOrg.legalName || supplierOrg.displayName;
+    let upiQrDataUri: string | null = null;
+    if (bank.upiId) {
+      const amount = (Number(invoice.capturedTotalPaise) / 100).toFixed(2);
+      const upiUri =
+        `upi://pay?pa=${encodeURIComponent(bank.upiId)}` +
+        `&pn=${encodeURIComponent(beneficiary)}` +
+        `&am=${amount}&cu=INR&tn=${encodeURIComponent(invoice.documentNumber)}`;
+      upiQrDataUri = await QRCode.toDataURL(upiUri, { margin: 1, width: 240 }).catch(() => null);
+    }
+    payment = {
+      beneficiaryName: beneficiary,
+      bankName: bank.bankName,
+      accountNumber: bank.accountNumber,
+      ifsc: bank.ifsc,
+      branchName: bank.branchName,
+      upiId: bank.upiId,
+      upiQrDataUri,
+    };
+  }
+
   return {
     supplier: {
       name: supplierOrg.displayName ?? supplierOrg.legalName,
@@ -184,6 +214,7 @@ export async function loadInvoicePdfData(
     capturedTaxSplit: splitBigint,
     capturedTaxTotalPaise: invoice.capturedTaxTotalPaise,
     capturedTotalPaise: invoice.capturedTotalPaise,
+    payment,
     paymentLink: invoice.razorpayPaymentLinkUrl
       ? { url: invoice.razorpayPaymentLinkUrl, qrPngBytes: null }
       : null,

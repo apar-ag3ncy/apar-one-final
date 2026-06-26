@@ -66,6 +66,20 @@ export type InvoicePdfData = {
   };
   capturedTaxTotalPaise: bigint;
   capturedTotalPaise: bigint;
+  /**
+   * The agency's bank / UPI payment instructions for this invoice. Null when no
+   * company bank account is configured (Settings → Billing). `upiQrDataUri` is a
+   * pre-rendered `data:image/png` QR encoding the UPI deep link + exact amount.
+   */
+  payment: {
+    beneficiaryName: string;
+    bankName: string;
+    accountNumber: string;
+    ifsc: string;
+    branchName: string | null;
+    upiId: string | null;
+    upiQrDataUri: string | null;
+  } | null;
   paymentLink: {
     url: string;
     qrPngBytes: Uint8Array | null;
@@ -206,6 +220,24 @@ const styles = StyleSheet.create({
 
   paymentBlock: { marginTop: 14, padding: 10, backgroundColor: '#f0f9ff', borderRadius: 4 },
 
+  /* Bank & UPI payment details */
+  payDetails: {
+    marginTop: 14,
+    padding: 10,
+    borderRadius: 4,
+    backgroundColor: '#f9fafb',
+    border: BORDER,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  payBankCol: { width: '64%' },
+  payQrCol: { width: '34%', alignItems: 'center', justifyContent: 'center' },
+  payLine: { flexDirection: 'row', marginBottom: 1.5 },
+  payLabel: { width: 70, color: '#6b7280' },
+  payVal: { flex: 1 },
+  qrImg: { width: 92, height: 92 },
+  qrCaption: { fontSize: 7.5, color: '#6b7280', marginTop: 3, textAlign: 'center' },
+
   footer: {
     position: 'absolute',
     bottom: 24,
@@ -249,6 +281,7 @@ export function InvoiceDocument({ data }: { data: InvoicePdfData }): React.JSX.E
         <LinesTable data={data} />
         <Text style={styles.amountWords}>{rupeesInWordsINR(data.capturedTotalPaise)}</Text>
         <TermsNotes data={data} />
+        {data.payment ? <PaymentDetails payment={data.payment} /> : null}
         {data.paymentLink ? <PaymentBlock link={data.paymentLink} /> : null}
         <Signatory data={data} />
         <Text
@@ -403,6 +436,42 @@ function PaymentBlock({
       <Text style={styles.blockHeading}>Pay online</Text>
       <Text>{link.url}</Text>
       {/* QR rendering (link.qrPngBytes) lands when Phase 4 wires Razorpay. */}
+    </View>
+  );
+}
+
+function PayLine({ label, value }: { label: string; value: string }): React.JSX.Element {
+  return (
+    <View style={styles.payLine}>
+      <Text style={styles.payLabel}>{label}</Text>
+      <Text style={styles.payVal}>{value}</Text>
+    </View>
+  );
+}
+
+function PaymentDetails({
+  payment,
+}: {
+  payment: NonNullable<InvoicePdfData['payment']>;
+}): React.JSX.Element {
+  return (
+    <View style={styles.payDetails} wrap={false}>
+      <View style={styles.payBankCol}>
+        <Text style={styles.blockHeading}>Payment details</Text>
+        <PayLine label="Beneficiary" value={payment.beneficiaryName} />
+        <PayLine label="Bank" value={payment.bankName} />
+        <PayLine label="A/c No." value={payment.accountNumber} />
+        <PayLine label="IFSC" value={payment.ifsc} />
+        {payment.branchName ? <PayLine label="Branch" value={payment.branchName} /> : null}
+        {payment.upiId ? <PayLine label="UPI ID" value={payment.upiId} /> : null}
+      </View>
+      {payment.upiQrDataUri ? (
+        <View style={styles.payQrCol}>
+          {/* eslint-disable-next-line jsx-a11y/alt-text */}
+          <Image src={payment.upiQrDataUri} style={styles.qrImg} />
+          <Text style={styles.qrCaption}>Scan to pay via UPI</Text>
+        </View>
+      ) : null}
     </View>
   );
 }

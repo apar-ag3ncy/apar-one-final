@@ -51,6 +51,7 @@ export type CompanyBankAccountRow = {
   ifsc: string;
   bankName: string;
   branchName: string | null;
+  upiId: string | null;
   isPrimary: boolean;
   sortOrder: number;
   notes: string | null;
@@ -66,6 +67,7 @@ export async function listCompanyBankAccounts(): Promise<CompanyBankAccountRow[]
       ifsc: companyBankAccounts.ifsc,
       bankName: companyBankAccounts.bankName,
       branchName: companyBankAccounts.branchName,
+      upiId: companyBankAccounts.upiId,
       isPrimary: companyBankAccounts.isPrimary,
       sortOrder: companyBankAccounts.sortOrder,
       notes: companyBankAccounts.notes,
@@ -80,6 +82,16 @@ export async function listCompanyBankAccounts(): Promise<CompanyBankAccountRow[]
       asc(companyBankAccounts.createdAt),
     );
   return rows.map((r) => ({ ...r, createdAt: r.createdAt.toISOString() }));
+}
+
+/**
+ * The bank account to print on invoices: the primary one, else the first.
+ * Returns null when the agency hasn't added any account yet (the invoice
+ * simply omits the payment block in that case).
+ */
+export async function getPrimaryCompanyBankAccount(): Promise<CompanyBankAccountRow | null> {
+  const rows = await listCompanyBankAccounts();
+  return rows.find((r) => r.isPrimary) ?? rows[0] ?? null;
 }
 
 export type CompanyDocumentCategory =

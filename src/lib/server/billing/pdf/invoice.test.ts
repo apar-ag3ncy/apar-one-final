@@ -38,6 +38,7 @@ function sample(overrides: Partial<InvoicePdfData> = {}): InvoicePdfData {
     },
     capturedTaxTotalPaise: 18_000_00n,
     capturedTotalPaise: 118_000_00n,
+    payment: null,
     paymentLink: null,
     terms: null,
     notes: null,
