@@ -3909,7 +3909,13 @@ export function EmployeeProfileEditor({
             {errors.confirmedOn ? <FieldErr msg={errors.confirmedOn} /> : null}
           </Field>
           {mode === 'edit' || form.status === 'notice' || form.status === 'separated' ? (
-            <Field label={form.status === 'notice' || form.status === 'separated' ? "Last working day" : "Separated on"}>
+            <Field
+              label={
+                form.status === 'notice' || form.status === 'separated'
+                  ? 'Last working day'
+                  : 'Separated on'
+              }
+            >
               <input
                 type="date"
                 value={form.separatedOn}
@@ -4622,6 +4628,7 @@ export function SettingsApp({
   currentUserRole,
   onSignOut,
   onDisplayNameChange,
+  initialSection,
 }: {
   settings: UserSettings;
   onSettingsChange: (patch: Partial<UserSettings>) => void;
@@ -4629,8 +4636,26 @@ export function SettingsApp({
   currentUserRole?: 'super_admin' | 'admin' | 'user';
   onSignOut?: () => void;
   onDisplayNameChange?: (fullName: string) => void;
+  /** Deep-link: open the window straight to this preferences section. */
+  initialSection?: string;
 }) {
-  const [section, setSection] = useState<SettingsSection['name']>('General');
+  const SECTION_NAMES: readonly SettingsSection['name'][] = [
+    'General',
+    'Company documents',
+    'Billing',
+    'Invoice format',
+    'Vault',
+    'Appearance',
+    'Account',
+    'Team',
+    'Notifications',
+    'Security',
+  ];
+  const [section, setSection] = useState<SettingsSection['name']>(
+    SECTION_NAMES.some((n) => n === initialSection)
+      ? (initialSection as SettingsSection['name'])
+      : 'General',
+  );
   // Apps a user can pick as their landing app (admin-only apps excluded).
   const landingApps = APPS.filter((a) => a.id !== 'admin_console');
   const sections: readonly SettingsSection[] = [

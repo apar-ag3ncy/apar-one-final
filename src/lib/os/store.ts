@@ -199,6 +199,15 @@ function openWindow(input: OpenWindowInput): string {
   if (!input.alwaysNew && !input.entityId) {
     const existing = state.windows.find((w) => w.app === input.app && !w.entityId);
     if (existing) {
+      // Reusing the window but deep-linking to a different sub-section (`tab`)
+      // — refresh the tab so a command-palette jump actually switches the view
+      // (e.g. "Invoice format" on an already-open Settings window).
+      if (input.tab != null && input.tab !== existing.tab) {
+        setState({
+          ...state,
+          windows: state.windows.map((w) => (w.id === existing.id ? { ...w, tab: input.tab } : w)),
+        });
+      }
       focusWindow(existing.id);
       return existing.id;
     }
