@@ -45,6 +45,7 @@ type FormState = {
   ifsc: string;
   bankName: string;
   branchName: string;
+  upiId: string;
   notes: string;
   isPrimary: boolean;
 };
@@ -55,6 +56,7 @@ const EMPTY: FormState = {
   ifsc: '',
   bankName: '',
   branchName: '',
+  upiId: '',
   notes: '',
   isPrimary: false,
 };
@@ -85,6 +87,7 @@ export function BillingSettingsClient({
       ifsc: acc.ifsc,
       bankName: acc.bankName,
       branchName: acc.branchName ?? '',
+      upiId: acc.upiId ?? '',
       notes: acc.notes ?? '',
       isPrimary: acc.isPrimary,
     });
@@ -102,6 +105,7 @@ export function BillingSettingsClient({
       ifsc: form.ifsc,
       bankName: form.bankName,
       branchName: form.branchName || null,
+      upiId: form.upiId || null,
       notes: form.notes || null,
       isPrimary: editingId ? undefined : form.isPrimary,
     };
@@ -289,6 +293,17 @@ export function BillingSettingsClient({
                 onChange={(e) => set('branchName', e.target.value)}
                 placeholder="Lower Parel, Mumbai"
               />
+            </Field>
+            <Field label="UPI ID" htmlFor="ba-upi" optional>
+              <Input
+                id="ba-upi"
+                value={form.upiId}
+                onChange={(e) => set('upiId', e.target.value)}
+                placeholder="apar@hdfcbank"
+              />
+              <p className="text-muted-foreground mt-1 text-xs">
+                Printed on the invoice with a scannable pay-by-UPI QR code.
+              </p>
             </Field>
             <Field label="Notes" htmlFor="ba-notes" optional>
               <Textarea

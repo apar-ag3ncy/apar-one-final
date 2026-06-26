@@ -58,6 +58,16 @@ const fixture: InvoicePdfData = {
   },
   capturedTaxTotalPaise: 18_000_00n,
   capturedTotalPaise: 118_000_00n,
+  payment: {
+    beneficiaryName: 'Apār LLP',
+    bankName: 'HDFC Bank',
+    accountNumber: '50200012345678',
+    ifsc: 'HDFC0000123',
+    branchName: 'Lower Parel, Mumbai',
+    upiId: 'apar@hdfcbank',
+    upiQrDataUri:
+      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+  },
   paymentLink: null,
   terms: 'Net 30',
   notes: 'Thank you for your business.',

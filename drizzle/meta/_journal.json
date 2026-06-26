@@ -302,6 +302,13 @@
       "when": 1780600007001,
       "tag": "0042_vault",
       "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1780600007002,
+      "tag": "0043_company_bank_upi",
+      "breakpoints": true
     }
   ]
 }
