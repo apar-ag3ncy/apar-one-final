@@ -45,7 +45,6 @@ export function BillingSettingsPane() {
 
   return (
     <div className="p-5">
-      <h2 className="mb-1 text-sm font-medium">Bank accounts</h2>
       <p className="text-muted-foreground mb-3 text-xs">
         Apar&apos;s own accounts. The primary account — and its UPI ID — print on every
         invoice&apos;s payment block. Edit how invoices look under Settings → Invoice format.

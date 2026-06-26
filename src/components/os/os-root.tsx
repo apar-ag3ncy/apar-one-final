@@ -354,7 +354,7 @@ function Desktop({ signOut }: { signOut: () => void }) {
       icon: 'book',
       label: 'Bank accounts',
       hint: 'Settings',
-      run: () => openApp('settings', { tab: 'Billing' }),
+      run: () => openApp('settings', { tab: 'Bank accounts' }),
     });
     if (can(user, 'clients', 'edit')) {
       list.push({
