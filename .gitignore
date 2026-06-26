@@ -53,6 +53,11 @@ exports/
 
 # Playwright e2e artifacts
 /test-results/
+
+# local DB-probe / scratch scripts (ad-hoc debugging; read .env.local, not app code)
+/scratch/
+/query.js
+/test-*.js
 /playwright-report/
 /blob-report/
 /playwright/.cache/
