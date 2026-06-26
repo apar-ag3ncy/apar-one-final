@@ -8,7 +8,7 @@
 //   - DataTable: Client / Revenue / Direct cost / Gross margin / Margin %
 //   - Click a client row → opens that client's window beside-focused
 //     with the Transactions tab pre-selected
-//   - CSV / Excel export
+//   - PDF / Excel export
 //
 // Money rendered through formatINR (CLAUDE rule #1).
 

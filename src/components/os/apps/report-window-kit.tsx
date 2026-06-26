@@ -99,7 +99,7 @@ export function DateField({
   );
 }
 
-/** OS-native CSV + Excel export buttons. */
+/** OS-native PDF + Excel export buttons. */
 export function OsExportButtons({
   onExport,
   disabled,
@@ -112,11 +112,11 @@ export function OsExportButtons({
       <button
         type="button"
         className="btn"
-        onClick={() => onExport('csv')}
+        onClick={() => onExport('pdf')}
         disabled={disabled}
-        title="Download this report as a CSV file"
+        title="Download this report as a PDF file"
       >
-        Export CSV
+        Export PDF
       </button>
       <button
         type="button"

@@ -26,7 +26,7 @@ export type StatementOfAccountProps = {
   /** Optional click handler — used to deep-link into the transaction window. */
   onSelectTransaction?: (txnId: string) => void;
   /**
-   * Base filename (no extension) for the CSV / Excel export. When set, an
+   * Base filename (no extension) for the PDF / Excel export. When set, an
    * Export control appears once the statement has rows. Omit to hide export.
    */
   exportName?: string;
@@ -134,10 +134,10 @@ export function StatementOfAccount({
                   type="button"
                   className="btn"
                   style={{ fontSize: 11, padding: '3px 8px' }}
-                  onClick={() => handleExport('csv')}
-                  title="Download these ledger entries as a CSV file"
+                  onClick={() => handleExport('pdf')}
+                  title="Download these ledger entries as a PDF file"
                 >
-                  Export CSV
+                  Export PDF
                 </button>
                 <button
                   type="button"

@@ -55,7 +55,7 @@ type ServerPaginationProps = {
 type DataTableProps<TData, TValue> = {
   columns: ColumnDef<TData, TValue>[];
   data: TData[];
-  /** Filename root used for CSV/Excel export. */
+  /** Filename root used for PDF/Excel export. */
   exportFilename?: string;
   /** Initial sort. URL state takes precedence if present. */
   initialSorting?: SortingState;

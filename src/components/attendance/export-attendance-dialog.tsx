@@ -195,7 +195,7 @@ export function ExportAttendanceDialog() {
   return (
     <Dialog open={open} onOpenChange={(v) => !busy && setOpen(v)}>
       <DialogTrigger asChild>
-        <button type="button" className="btn" title="Export attendance to CSV or Excel">
+        <button type="button" className="btn" title="Export attendance to PDF or Excel">
           Export
         </button>
       </DialogTrigger>
@@ -203,7 +203,7 @@ export function ExportAttendanceDialog() {
         <DialogHeader>
           <DialogTitle>Export attendance</DialogTitle>
           <DialogDescription>
-            Download attendance for a date range as CSV or Excel. Days without an override use the
+            Download attendance for a date range as PDF or Excel. Days without an override use the
             default (present on weekdays, weekly-off on Sundays).
           </DialogDescription>
         </DialogHeader>
@@ -328,8 +328,8 @@ export function ExportAttendanceDialog() {
           <Button variant="outline" onClick={() => setOpen(false)} disabled={busy}>
             Cancel
           </Button>
-          <Button variant="secondary" onClick={() => doExport('csv')} disabled={busy}>
-            {busy ? 'Exporting…' : 'Export CSV'}
+          <Button variant="secondary" onClick={() => doExport('pdf')} disabled={busy}>
+            {busy ? 'Exporting…' : 'Export PDF'}
           </Button>
           <Button onClick={() => doExport('xlsx')} disabled={busy}>
             {busy ? 'Exporting…' : 'Export Excel'}
