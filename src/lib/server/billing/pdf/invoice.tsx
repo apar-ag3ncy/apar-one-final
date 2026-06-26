@@ -393,9 +393,10 @@ export function InvoiceDocument({ data }: { data: InvoicePdfData }): React.JSX.E
           {
             fontFamily: theme.font,
             fontSize: m.fontSize,
-            paddingTop: m.pagePadTop,
-            paddingHorizontal: m.pagePadX,
-            paddingBottom: m.pagePadBottom,
+            paddingTop: m.padTop,
+            paddingLeft: m.padLeft,
+            paddingRight: m.padRight,
+            paddingBottom: m.padBottom,
           },
         ]}
       >
@@ -418,7 +419,10 @@ export function InvoiceDocument({ data }: { data: InvoicePdfData }): React.JSX.E
         <LinesTable data={data} dyn={dyn} />
         {layout.belowTable.map((id) => bodyBlock(id))}
         <Text
-          style={styles.footer}
+          style={[
+            styles.footer,
+            { left: m.padLeft, right: m.padRight, bottom: Math.max(8, m.padBottom - 18) },
+          ]}
           render={({ pageNumber, totalPages }) =>
             `${data.supplier.name} — ${title} ${data.documentNumber} — Page ${pageNumber} of ${totalPages} — ${theme.footerText}`
           }

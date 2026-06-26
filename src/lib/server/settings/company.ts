@@ -5,14 +5,19 @@ import { and, eq, isNull, ne } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { db } from '@/lib/db/client';
-import { companyBankAccounts, companyDocuments, organizations } from '@/lib/db/schema';
+import { companyBankAccounts, companyDocuments, documents, organizations } from '@/lib/db/schema';
 import { AppError } from '@/lib/errors';
 import { requireCapability } from '@/lib/rbac';
 import { logAudit } from '@/lib/audit';
 import { sniffMime } from '@/lib/storage';
 import { getActorContext } from '@/lib/server/actor';
+import { createAdminClient } from '@/lib/supabase/server';
+import { getDocumentSignedUrl } from '@/lib/server/entities/documents';
 import { GSTIN_RE, IFSC_RE, PAN_RE } from '@/lib/validators';
 import {
+  COMPANY_LOGO_CATEGORY,
+  ORG_ENTITY_TYPE,
+  getCompanyLogoDocument,
   getCompanyProfile,
   listCompanyBankAccounts,
   listCompanyDocuments,
@@ -94,6 +99,8 @@ export type CompanyPreview = {
   address: string;
   gstin: string | null;
   pan: string | null;
+  /** Signed URL of the company logo for the preview, or null. */
+  logoUrl: string | null;
 };
 
 /**
@@ -104,12 +111,124 @@ export async function getCompanyPreview(): Promise<CompanyPreview | null> {
   await getActorContext();
   const p = await getCompanyProfile();
   if (!p) return null;
+  let logoUrl: string | null = null;
+  try {
+    const doc = await getCompanyLogoDocument();
+    if (doc) logoUrl = (await getDocumentSignedUrl(doc.id)).url;
+  } catch {
+    /* best-effort — preview shows a placeholder when unavailable */
+  }
   return {
     name: p.displayName || p.legalName,
     address: p.registeredAddress ?? '',
     gstin: p.gstin,
     pan: p.pan,
+    logoUrl,
   };
+}
+
+const LOGO_BUCKET = 'internal-docs' as const;
+const MAX_LOGO_BYTES = 2 * 1024 * 1024; // 2 MB
+
+export type CompanyLogo = { hasLogo: boolean; url: string | null };
+
+/** The current company logo + a signed URL, for Settings + the preview. */
+export async function getCompanyLogo(): Promise<CompanyLogo> {
+  await getActorContext();
+  const doc = await getCompanyLogoDocument();
+  if (!doc) return { hasLogo: false, url: null };
+  let url: string | null = null;
+  try {
+    url = (await getDocumentSignedUrl(doc.id)).url;
+  } catch {
+    /* ignore */
+  }
+  return { hasLogo: true, url };
+}
+
+/**
+ * Upload the agency's logo (PNG/JPEG), stored as an `organization` document in
+ * Storage. Used on every invoice (unless a format overrides it). Replaces any
+ * previous logo (soft-deleted). Gated by `manage_company_profile`.
+ */
+export async function uploadCompanyLogo(formData: FormData): Promise<ActionResult> {
+  const ctx = await getActorContext();
+  requireCapability(ctx, 'manage_company_profile');
+  const profile = await getCompanyProfile();
+  if (!profile) return { ok: false, message: 'No organization record found.' };
+
+  const file = formData.get('file');
+  if (!(file instanceof File)) return { ok: false, message: 'Missing image file.' };
+  if (file.size === 0) return { ok: false, message: 'File is empty.' };
+  if (file.size > MAX_LOGO_BYTES) {
+    return { ok: false, message: `Logo exceeds ${Math.round(MAX_LOGO_BYTES / 1024 / 1024)} MB.` };
+  }
+
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let ext: 'png' | 'jpg';
+  let contentType: 'image/png' | 'image/jpeg';
+  if (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) {
+    ext = 'png';
+    contentType = 'image/png';
+  } else if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+    ext = 'jpg';
+    contentType = 'image/jpeg';
+  } else {
+    return { ok: false, message: 'Logo must be a PNG or JPEG image.' };
+  }
+
+  const admin = createAdminClient();
+  const storagePath = `${ORG_ENTITY_TYPE}/${profile.id}/logo-${Date.now()}.${ext}`;
+  const { error: upErr } = await admin.storage
+    .from(LOGO_BUCKET)
+    .upload(storagePath, bytes, { contentType, upsert: true });
+  if (upErr) return { ok: false, message: `Upload failed: ${upErr.message}` };
+
+  await db.transaction(async (tx) => {
+    await tx
+      .update(documents)
+      .set({ deletedAt: new Date(), updatedBy: ctx.userId })
+      .where(
+        and(
+          eq(documents.entityType, ORG_ENTITY_TYPE),
+          eq(documents.category, COMPANY_LOGO_CATEGORY),
+          isNull(documents.deletedAt),
+        ),
+      );
+    await tx.insert(documents).values({
+      entityType: ORG_ENTITY_TYPE,
+      entityId: profile.id,
+      bucket: LOGO_BUCKET,
+      storagePath,
+      visibility: 'internal',
+      category: COMPANY_LOGO_CATEGORY,
+      originalFilename: file.name || `logo.${ext}`,
+      mimeType: contentType,
+      sizeBytes: bytes.byteLength,
+      createdBy: ctx.userId,
+      updatedBy: ctx.userId,
+    });
+  });
+  revalidatePath('/settings/company');
+  return { ok: true };
+}
+
+/** Remove the company logo (soft-delete). Gated by `manage_company_profile`. */
+export async function removeCompanyLogo(): Promise<ActionResult> {
+  const ctx = await getActorContext();
+  requireCapability(ctx, 'manage_company_profile');
+  await db
+    .update(documents)
+    .set({ deletedAt: new Date(), updatedBy: ctx.userId })
+    .where(
+      and(
+        eq(documents.entityType, ORG_ENTITY_TYPE),
+        eq(documents.category, COMPANY_LOGO_CATEGORY),
+        isNull(documents.deletedAt),
+      ),
+    );
+  revalidatePath('/settings/company');
+  return { ok: true };
 }
 
 const MAX_DOC_BYTES = 25 * 1024 * 1024; // 25 MB — matches uploadDocument default

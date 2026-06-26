@@ -1,11 +1,12 @@
 'use client';
 
-import { useRef, useState, useTransition } from 'react';
+import { useEffect, useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   DownloadIcon,
   EyeIcon,
   FileTextIcon,
+  ImageIcon,
   PencilIcon,
   PlusIcon,
   Trash2Icon,
@@ -47,9 +48,13 @@ import {
 import { notify } from '@/lib/client/toast';
 import {
   deleteCompanyDocument,
+  getCompanyLogo,
+  removeCompanyLogo,
   updateCompanyDocumentMeta,
   updateCompanyProfile,
   uploadCompanyDocument,
+  uploadCompanyLogo,
+  type CompanyLogo,
 } from '@/lib/server/settings/company';
 import type {
   CompanyDocumentCategory,
@@ -113,8 +118,114 @@ export function CompanySettingsBody({
   return (
     <div className="space-y-6">
       <ProfileCard profile={profile} onChanged={onChanged} />
+      <CompanyLogoCard />
       <DocumentsCard documents={documents} onChanged={onChanged} />
     </div>
+  );
+}
+
+/** Company logo — used on every invoice (a format can override it). */
+function CompanyLogoCard() {
+  const [logo, setLogo] = useState<CompanyLogo | null>(null);
+  const [busy, setBusy] = useState(false);
+  const fileRef = useRef<HTMLInputElement | null>(null);
+
+  const load = () => {
+    getCompanyLogo()
+      .then(setLogo)
+      .catch(() => setLogo({ hasLogo: false, url: null }));
+  };
+  useEffect(() => {
+    load();
+  }, []);
+
+  async function onFile(file: File | null) {
+    if (!file) return;
+    setBusy(true);
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const res = await uploadCompanyLogo(fd);
+      if (res.ok) {
+        notify.success('Logo updated.');
+        load();
+      } else {
+        notify.error(res.message);
+      }
+    } finally {
+      setBusy(false);
+      if (fileRef.current) fileRef.current.value = '';
+    }
+  }
+
+  async function onRemove() {
+    setBusy(true);
+    try {
+      const res = await removeCompanyLogo();
+      if (res.ok) {
+        notify.success('Logo removed.');
+        setLogo({ hasLogo: false, url: null });
+      } else {
+        notify.error(res.message);
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">Logo</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <p className="text-muted-foreground mb-3 text-xs">
+          Your company logo prints on every invoice (an invoice format can override it). PNG or
+          JPEG, up to 2 MB.
+        </p>
+        <div className="flex flex-wrap items-center gap-4">
+          <div className="bg-muted/40 flex h-16 w-32 items-center justify-center overflow-hidden rounded-md border">
+            {logo?.url ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={logo.url} alt="Company logo" className="max-h-14 max-w-28 object-contain" />
+            ) : (
+              <span className="text-muted-foreground text-xs">No logo</span>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <input
+              ref={fileRef}
+              type="file"
+              accept="image/png,image/jpeg"
+              className="hidden"
+              onChange={(e) => void onFile(e.target.files?.[0] ?? null)}
+              disabled={busy}
+            />
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => fileRef.current?.click()}
+              disabled={busy}
+            >
+              <ImageIcon className="mr-1.5 size-4" aria-hidden />
+              {busy ? 'Saving…' : logo?.hasLogo ? 'Replace' : 'Upload logo'}
+            </Button>
+            {logo?.hasLogo ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                onClick={() => void onRemove()}
+                disabled={busy}
+              >
+                Remove
+              </Button>
+            ) : null}
+          </div>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 

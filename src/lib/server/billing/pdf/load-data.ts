@@ -20,6 +20,7 @@ import { createAdminClient } from '@/lib/supabase/server';
 import { stateCodeToGstCode, stateNameFromCode } from '@/lib/india/gst-states';
 import {
   getCompanyBankAccountById,
+  getCompanyLogoDocument,
   getPrimaryCompanyBankAccount,
   type CompanyBankAccountRow,
 } from '@/lib/server/settings/company-data';
@@ -148,6 +149,21 @@ export async function loadInvoicePdfData(
 
   const { overrides: themeOverrides, layout, style } = await resolveTheme(client, invoice.themeId);
 
+  // Company logo: the org-level logo (Settings → Company) prints on every
+  // invoice unless the selected format uploaded its own. Best-effort.
+  let companyLogoUri: string | null = null;
+  try {
+    const orgLogo = await getCompanyLogoDocument();
+    if (orgLogo) companyLogoUri = await loadDocumentDataUri(client, orgLogo.id);
+  } catch {
+    /* logo is decorative — never block rendering */
+  }
+  const resolvedOverrides: InvoicePdfData['themeOverrides'] = themeOverrides
+    ? { ...themeOverrides, logoDataUri: themeOverrides.logoDataUri ?? companyLogoUri }
+    : companyLogoUri
+      ? { logoDataUri: companyLogoUri }
+      : null;
+
   // Payment instructions — the bank account the invoice pinned (else the
   // agency's primary) plus an optional pay-by-UPI QR encoding the exact invoice
   // amount. Omitted entirely when no company bank account exists (Settings →
@@ -241,7 +257,7 @@ export async function loadInvoicePdfData(
       : null,
     terms: invoice.terms,
     notes: invoice.notes,
-    themeOverrides,
+    themeOverrides: resolvedOverrides,
     layout,
     style,
   };

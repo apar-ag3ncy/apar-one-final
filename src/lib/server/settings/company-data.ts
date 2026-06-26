@@ -3,7 +3,7 @@ import 'server-only';
 import { and, asc, desc, eq, isNull } from 'drizzle-orm';
 
 import { db } from '@/lib/db/client';
-import { companyBankAccounts, companyDocuments, organizations } from '@/lib/db/schema';
+import { companyBankAccounts, companyDocuments, documents, organizations } from '@/lib/db/schema';
 
 /**
  * Pure read helpers for Settings → Company details / Billing. Kept OUT of the
@@ -25,6 +25,27 @@ export type CompanyProfile = {
   registeredAddress: string | null;
   secondaryAddress: string | null;
 };
+
+/** Stable entityType for the agency's own (org-level) documents in `documents`. */
+export const ORG_ENTITY_TYPE = 'organization' as const;
+export const COMPANY_LOGO_CATEGORY = 'company_logo' as const;
+
+/** The current (non-deleted) company logo `documents` row, or null. */
+export async function getCompanyLogoDocument(): Promise<typeof documents.$inferSelect | null> {
+  const [doc] = await db
+    .select()
+    .from(documents)
+    .where(
+      and(
+        eq(documents.entityType, ORG_ENTITY_TYPE),
+        eq(documents.category, COMPANY_LOGO_CATEGORY),
+        isNull(documents.deletedAt),
+      ),
+    )
+    .orderBy(desc(documents.createdAt))
+    .limit(1);
+  return doc ?? null;
+}
 
 export async function getCompanyProfile(): Promise<CompanyProfile | null> {
   const [row] = await db
