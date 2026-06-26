@@ -89,6 +89,29 @@ export async function listCompanyBankAccountOptions(): Promise<CompanyBankAccoun
   });
 }
 
+export type CompanyPreview = {
+  name: string;
+  address: string;
+  gstin: string | null;
+  pan: string | null;
+};
+
+/**
+ * The agency's own header details for the invoice-format editor's live preview,
+ * so it shows the real company instead of placeholder text. Authenticated read.
+ */
+export async function getCompanyPreview(): Promise<CompanyPreview | null> {
+  await getActorContext();
+  const p = await getCompanyProfile();
+  if (!p) return null;
+  return {
+    name: p.displayName || p.legalName,
+    address: p.registeredAddress ?? '',
+    gstin: p.gstin,
+    pan: p.pan,
+  };
+}
+
 const MAX_DOC_BYTES = 25 * 1024 * 1024; // 25 MB — matches uploadDocument default
 const TAN_RE = /^[A-Z]{4}[0-9]{5}[A-Z]$/;
 const COMPANY_PATH = '/settings/company';
