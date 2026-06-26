@@ -94,6 +94,16 @@ export async function getPrimaryCompanyBankAccount(): Promise<CompanyBankAccount
   return rows.find((r) => r.isPrimary) ?? rows[0] ?? null;
 }
 
+/**
+ * A specific (non-deleted) bank account by id — used when an invoice pins which
+ * account to print. Returns null if it's missing/retired so the caller can fall
+ * back to the primary account.
+ */
+export async function getCompanyBankAccountById(id: string): Promise<CompanyBankAccountRow | null> {
+  const rows = await listCompanyBankAccounts();
+  return rows.find((r) => r.id === id) ?? null;
+}
+
 export type CompanyDocumentCategory =
   | 'gst'
   | 'tan'

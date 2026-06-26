@@ -18,7 +18,21 @@ import QRCode from 'qrcode';
 import { AppError } from '@/lib/errors';
 import { createAdminClient } from '@/lib/supabase/server';
 import { stateCodeToGstCode, stateNameFromCode } from '@/lib/india/gst-states';
-import { getPrimaryCompanyBankAccount } from '@/lib/server/settings/company-data';
+import {
+  getCompanyBankAccountById,
+  getPrimaryCompanyBankAccount,
+  type CompanyBankAccountRow,
+} from '@/lib/server/settings/company-data';
+import {
+  DEFAULT_INVOICE_LAYOUT,
+  sanitizeInvoiceLayout,
+  type InvoiceLayout,
+} from '@/lib/billing/invoice-layout';
+import {
+  DEFAULT_INVOICE_STYLE,
+  sanitizeInvoiceStyle,
+  type InvoiceStyle,
+} from '@/lib/billing/invoice-style';
 
 import type { InvoicePdfData } from './invoice';
 
@@ -132,12 +146,19 @@ export async function loadInvoicePdfData(
     stateCodeToGstCode(recipientAddress?.stateCode) ??
     (recipientGstin && recipientGstin.length >= 2 ? recipientGstin.slice(0, 2) : null);
 
-  const themeOverrides = await resolveThemeOverrides(client, invoice.themeId);
+  const { overrides: themeOverrides, layout, style } = await resolveTheme(client, invoice.themeId);
 
-  // Payment instructions — the agency's primary bank account plus an optional
-  // pay-by-UPI QR encoding the exact invoice amount. Omitted entirely when no
-  // company bank account has been configured (Settings → Billing).
-  const bank = await getPrimaryCompanyBankAccount().catch(() => null);
+  // Payment instructions — the bank account the invoice pinned (else the
+  // agency's primary) plus an optional pay-by-UPI QR encoding the exact invoice
+  // amount. Omitted entirely when no company bank account exists (Settings →
+  // Billing). A pinned-but-retired account falls back to the primary.
+  let bank: CompanyBankAccountRow | null = null;
+  try {
+    bank = invoice.bankAccountId ? await getCompanyBankAccountById(invoice.bankAccountId) : null;
+    if (!bank) bank = await getPrimaryCompanyBankAccount();
+  } catch {
+    bank = null;
+  }
   let payment: InvoicePdfData['payment'] = null;
   if (bank) {
     const beneficiary = supplierOrg.legalName || supplierOrg.displayName;
@@ -221,25 +242,33 @@ export async function loadInvoicePdfData(
     terms: invoice.terms,
     notes: invoice.notes,
     themeOverrides,
+    layout,
+    style,
   };
 }
 
 /**
- * Resolve the brand-token overlay for the PDF: the invoice's selected theme
- * (when still present) or the global default. Returns null when no theme
- * exists at all (renderer falls back to neutral template defaults). The logo,
- * if any, is fetched from Storage and inlined as a data-URI — best-effort, so
- * a missing object never blocks rendering.
+ * Resolve the brand-token overlay AND the block layout for the PDF: the
+ * invoice's selected theme (when still present) or the global default.
+ * `overrides` is null when no theme exists at all (renderer falls back to
+ * neutral template defaults); `layout` always has a value (the classic default
+ * layout when there's no theme). The logo, if any, is fetched from Storage and
+ * inlined as a data-URI — best-effort, so a missing object never blocks
+ * rendering.
  */
-async function resolveThemeOverrides(
+async function resolveTheme(
   client: DbClient,
   themeId: string | null,
-): Promise<InvoicePdfData['themeOverrides']> {
+): Promise<{
+  overrides: InvoicePdfData['themeOverrides'];
+  layout: InvoiceLayout;
+  style: InvoiceStyle;
+}> {
   // Theming is purely cosmetic: a missing/empty themes table, an unmigrated
   // DB, or a fetch error must NEVER block invoice generation. Any failure here
-  // degrades to `null`, and the renderer falls back to neutral built-in
-  // defaults (Helvetica + slate). So generating an invoice has no dependency
-  // on themes or any uploaded source whatsoever.
+  // degrades to neutral defaults (overrides=null, classic layout), and the
+  // renderer falls back to neutral built-in defaults (Helvetica + slate). So
+  // generating an invoice has no dependency on themes or any uploaded source.
   try {
     let theme: typeof invoiceThemes.$inferSelect | undefined;
     if (themeId) {
@@ -256,24 +285,34 @@ async function resolveThemeOverrides(
         .where(and(eq(invoiceThemes.isDefault, true), isNull(invoiceThemes.deletedAt)))
         .limit(1);
     }
-    if (!theme) return null;
+    if (!theme)
+      return { overrides: null, layout: DEFAULT_INVOICE_LAYOUT, style: DEFAULT_INVOICE_STYLE };
 
     let logoDataUri: string | null = null;
     if (theme.logoDocumentId) {
       logoDataUri = await loadDocumentDataUri(client, theme.logoDocumentId);
     }
 
+    const tokens = (theme.tokens && typeof theme.tokens === 'object' ? theme.tokens : {}) as Record<
+      string,
+      unknown
+    >;
+
     return {
-      primaryColor: theme.primaryColor,
-      secondaryColor: theme.secondaryColor,
-      accentColor: theme.accentColor,
-      fontFamily: theme.fontFamily,
-      headerText: theme.headerText,
-      footerText: theme.footerText,
-      logoDataUri,
+      overrides: {
+        primaryColor: theme.primaryColor,
+        secondaryColor: theme.secondaryColor,
+        accentColor: theme.accentColor,
+        fontFamily: theme.fontFamily,
+        headerText: theme.headerText,
+        footerText: theme.footerText,
+        logoDataUri,
+      },
+      layout: sanitizeInvoiceLayout(tokens.layout),
+      style: sanitizeInvoiceStyle(tokens.style),
     };
   } catch {
-    return null;
+    return { overrides: null, layout: DEFAULT_INVOICE_LAYOUT, style: DEFAULT_INVOICE_STYLE };
   }
 }
 

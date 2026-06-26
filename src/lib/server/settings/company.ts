@@ -67,6 +67,28 @@ export async function listBankAccountsForSettings(): Promise<CompanyBankAccountR
   return listCompanyBankAccounts();
 }
 
+export type CompanyBankAccountOption = { id: string; label: string; isPrimary: boolean };
+
+/**
+ * Minimal bank-account options for the invoice composer's "which account to
+ * print" picker. Authenticated read only (no `manage_bank_accounts`) — invoice
+ * creators need to choose an account, and the chosen account's full details
+ * already print on the invoice anyway. The account number is masked to the last
+ * 4 in the label.
+ */
+export async function listCompanyBankAccountOptions(): Promise<CompanyBankAccountOption[]> {
+  await getActorContext(); // authenticated actors only
+  const rows = await listCompanyBankAccounts(); // primary first
+  return rows.map((r) => {
+    const last4 = r.accountNumber.slice(-4);
+    return {
+      id: r.id,
+      label: `${r.title} — ${r.bankName} ••${last4}`,
+      isPrimary: r.isPrimary,
+    };
+  });
+}
+
 const MAX_DOC_BYTES = 25 * 1024 * 1024; // 25 MB — matches uploadDocument default
 const TAN_RE = /^[A-Z]{4}[0-9]{5}[A-Z]$/;
 const COMPANY_PATH = '/settings/company';

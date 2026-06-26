@@ -8,10 +8,10 @@ import { listBankAccountsForSettings } from '@/lib/server/settings/company';
 import type { CompanyBankAccountRow } from '@/lib/server/settings/company-data';
 
 /**
- * Settings → Billing for the OS. Same surfaces as the dashboard
- * /settings/billing page: the agency's bank accounts (with the UPI field
- * that drives the invoice payment block) plus the dynamic invoice-format
- * editor. Data is fetched client-side via the read action; `onChanged`
+ * Settings → Billing for the OS: the agency's bank accounts (with the UPI
+ * field that drives the invoice payment block). The dynamic invoice-format
+ * editor lives in its own Settings → Invoice format section (SettingsApp),
+ * not here. Data is fetched client-side via the read action; `onChanged`
  * refetches instead of router.refresh().
  */
 export function BillingSettingsPane() {
@@ -47,8 +47,8 @@ export function BillingSettingsPane() {
     <div className="p-5">
       <h2 className="mb-1 text-sm font-medium">Bank accounts</h2>
       <p className="text-muted-foreground mb-3 text-xs">
-        Apar&apos;s own accounts. The primary account — and its UPI ID — print on every invoice&apos;s
-        payment block. Edit how invoices look under Settings → Invoice format.
+        Apar&apos;s own accounts. The primary account — and its UPI ID — print on every
+        invoice&apos;s payment block. Edit how invoices look under Settings → Invoice format.
       </p>
       <BillingSettingsClient accounts={accounts} onChanged={load} />
     </div>

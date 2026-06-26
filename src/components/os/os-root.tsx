@@ -341,6 +341,21 @@ function Desktop({ signOut }: { signOut: () => void }) {
       hint: 'Theme',
       run: () => setTheme((t) => (t === 'dark' ? 'light' : 'dark')),
     });
+    // Deep-links straight into Settings sub-sections, so the invoice format
+    // editor and bank accounts are reachable from ⌘K — not just by digging
+    // through the Settings sidebar.
+    list.push({
+      icon: 'filetext',
+      label: 'Invoice format',
+      hint: 'Settings',
+      run: () => openApp('settings', { tab: 'Invoice format' }),
+    });
+    list.push({
+      icon: 'book',
+      label: 'Bank accounts',
+      hint: 'Settings',
+      run: () => openApp('settings', { tab: 'Billing' }),
+    });
     if (can(user, 'clients', 'edit')) {
       list.push({
         icon: 'plus',
@@ -732,12 +747,16 @@ function Desktop({ signOut }: { signOut: () => void }) {
             case 'settings':
               return (
                 <SettingsApp
+                  // Re-key by tab so a deep-link command (e.g. "Invoice format")
+                  // re-seeds the section even when reusing an open Settings window.
+                  key={w.tab ?? 'general'}
                   settings={settings}
                   onSettingsChange={setSettings}
                   onResetSettings={resetSettings}
                   currentUserRole={user.role}
                   onSignOut={signOut}
                   onDisplayNameChange={setDisplayName}
+                  initialSection={w.tab}
                 />
               );
             case 'admin_console':

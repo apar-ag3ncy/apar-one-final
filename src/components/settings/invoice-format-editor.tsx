@@ -1,8 +1,8 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { PlusIcon, PencilIcon, StarIcon, Trash2Icon } from 'lucide-react';
+import { ImageIcon, PlusIcon, PencilIcon, StarIcon, Trash2Icon } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -30,9 +30,14 @@ import {
   setDefaultTheme,
   deleteInvoiceTheme,
   listInvoiceThemes,
+  uploadThemeLogo,
+  removeThemeLogo,
   type InvoiceThemeSummary,
 } from '@/lib/server/billing/invoice-themes';
 import { INVOICE_FONTS } from '@/lib/billing/invoice-fonts';
+import { InvoiceLayoutEditor } from '@/components/settings/invoice-layout-editor';
+import { DEFAULT_INVOICE_LAYOUT, type InvoiceLayout } from '@/lib/billing/invoice-layout';
+import { DEFAULT_INVOICE_STYLE, type InvoiceStyle } from '@/lib/billing/invoice-style';
 
 type Form = {
   name: string;
@@ -42,6 +47,8 @@ type Form = {
   accentColor: string;
   fontFamily: string;
   makeDefault: boolean;
+  layout: InvoiceLayout;
+  style: InvoiceStyle;
 };
 
 const EMPTY: Form = {
@@ -52,7 +59,16 @@ const EMPTY: Form = {
   accentColor: '#F3F4F6',
   fontFamily: 'Helvetica',
   makeDefault: false,
+  layout: DEFAULT_INVOICE_LAYOUT,
+  style: DEFAULT_INVOICE_STYLE,
 };
+
+const FONT_SIZE_OPTIONS = [
+  { label: 'Small', value: 0.9 },
+  { label: 'Normal', value: 1 },
+  { label: 'Large', value: 1.15 },
+  { label: 'Extra large', value: 1.25 },
+] as const;
 
 /**
  * Dynamic invoice-format editor. Lists the invoice formats (themes), lets the
@@ -64,8 +80,11 @@ export function InvoiceFormatEditor() {
   const [themes, setThemes] = useState<InvoiceThemeSummary[] | null>(null);
   const [open, setOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingTheme, setEditingTheme] = useState<InvoiceThemeSummary | null>(null);
   const [form, setForm] = useState<Form>(EMPTY);
   const [busy, setBusy] = useState(false);
+  const [logoBusy, setLogoBusy] = useState(false);
+  const logoInputRef = useRef<HTMLInputElement | null>(null);
 
   const reload = useCallback(() => {
     listInvoiceThemes()
@@ -81,14 +100,19 @@ export function InvoiceFormatEditor() {
   function set<K extends keyof Form>(key: K, value: Form[K]) {
     setForm((f) => ({ ...f, [key]: value }));
   }
+  function setStyle<K extends keyof InvoiceStyle>(key: K, value: InvoiceStyle[K]) {
+    setForm((f) => ({ ...f, style: { ...f.style, [key]: value } }));
+  }
 
   function openCreate() {
     setEditingId(null);
+    setEditingTheme(null);
     setForm(EMPTY);
     setOpen(true);
   }
   function openEdit(t: InvoiceThemeSummary) {
     setEditingId(t.id);
+    setEditingTheme(t);
     setForm({
       name: t.name,
       headerText: t.headerText ?? 'TAX INVOICE',
@@ -97,8 +121,44 @@ export function InvoiceFormatEditor() {
       accentColor: t.accentColor ?? '#F3F4F6',
       fontFamily: t.fontFamily ?? 'Helvetica',
       makeDefault: t.isDefault,
+      layout: t.layout,
+      style: t.style,
     });
     setOpen(true);
+  }
+
+  async function onLogoFile(file: File | null) {
+    if (!file || !editingId) return;
+    setLogoBusy(true);
+    try {
+      const fd = new FormData();
+      fd.append('themeId', editingId);
+      fd.append('file', file);
+      const updated = await uploadThemeLogo(fd);
+      setEditingTheme(updated);
+      toast.success('Logo uploaded.');
+      reload();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not upload the logo.');
+    } finally {
+      setLogoBusy(false);
+      if (logoInputRef.current) logoInputRef.current.value = '';
+    }
+  }
+
+  async function onRemoveLogo() {
+    if (!editingId) return;
+    setLogoBusy(true);
+    try {
+      const updated = await removeThemeLogo(editingId);
+      setEditingTheme(updated);
+      toast.success('Logo removed.');
+      reload();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not remove the logo.');
+    } finally {
+      setLogoBusy(false);
+    }
   }
 
   async function save() {
@@ -116,6 +176,8 @@ export function InvoiceFormatEditor() {
         accentColor: form.accentColor || null,
         fontFamily: form.fontFamily || null,
         makeDefault: form.makeDefault,
+        layout: form.layout,
+        style: form.style,
       };
       if (editingId) await updateInvoiceTheme(editingId, payload);
       else await createInvoiceTheme(payload);
@@ -229,104 +291,293 @@ export function InvoiceFormatEditor() {
       </div>
 
       <Dialog open={open} onOpenChange={(v) => !busy && setOpen(v)}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="flex max-h-[90vh] flex-col sm:max-w-3xl">
           <DialogHeader>
             <DialogTitle>{editingId ? 'Edit invoice format' : 'New invoice format'}</DialogTitle>
             <DialogDescription>
-              These tokens overlay the GST invoice template — the layout and tax columns stay
-              compliant.
+              Brand tokens overlay the GST invoice template; drag blocks to arrange the page. The
+              line-items &amp; tax table stay fixed and compliant.
             </DialogDescription>
           </DialogHeader>
-          <div className="grid gap-3">
-            <div className="grid gap-1.5">
-              <Label htmlFor="fmt-name">Format name</Label>
-              <Input
-                id="fmt-name"
-                value={form.name}
-                onChange={(e) => set('name', e.target.value)}
-                placeholder="e.g. Apar — Default"
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-3">
+          <div className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
+            <div className="grid gap-3">
               <div className="grid gap-1.5">
-                <Label htmlFor="fmt-header">Header title</Label>
+                <Label htmlFor="fmt-name">Format name</Label>
                 <Input
-                  id="fmt-header"
-                  value={form.headerText}
-                  onChange={(e) => set('headerText', e.target.value)}
-                  placeholder="TAX INVOICE"
+                  id="fmt-name"
+                  value={form.name}
+                  onChange={(e) => set('name', e.target.value)}
+                  placeholder="e.g. Apar — Default"
                 />
               </div>
-              <div className="grid gap-1.5">
-                <Label htmlFor="fmt-font">Font</Label>
-                <Select value={form.fontFamily} onValueChange={(v) => set('fontFamily', v)}>
-                  <SelectTrigger id="fmt-font">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {INVOICE_FONTS.map((f) => (
-                      <SelectItem key={f} value={f}>
-                        {f}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="grid gap-1.5">
-                <Label htmlFor="fmt-primary">Brand colour</Label>
-                <div className="flex items-center gap-2">
-                  <input
-                    id="fmt-primary"
-                    type="color"
-                    value={form.primaryColor}
-                    onChange={(e) => set('primaryColor', e.target.value)}
-                    className="h-9 w-12 cursor-pointer rounded border"
-                  />
+              <div className="grid grid-cols-2 gap-3">
+                <div className="grid gap-1.5">
+                  <Label htmlFor="fmt-header">Header title</Label>
                   <Input
-                    value={form.primaryColor}
-                    onChange={(e) => set('primaryColor', e.target.value)}
-                    className="font-mono"
+                    id="fmt-header"
+                    value={form.headerText}
+                    onChange={(e) => set('headerText', e.target.value)}
+                    placeholder="TAX INVOICE"
                   />
+                </div>
+                <div className="grid gap-1.5">
+                  <Label htmlFor="fmt-font">Font</Label>
+                  <Select value={form.fontFamily} onValueChange={(v) => set('fontFamily', v)}>
+                    <SelectTrigger id="fmt-font">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {INVOICE_FONTS.map((f) => (
+                        <SelectItem key={f} value={f}>
+                          {f}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="grid gap-1.5">
+                  <Label htmlFor="fmt-primary">Brand colour</Label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      id="fmt-primary"
+                      type="color"
+                      value={form.primaryColor}
+                      onChange={(e) => set('primaryColor', e.target.value)}
+                      className="h-9 w-12 cursor-pointer rounded border"
+                    />
+                    <Input
+                      value={form.primaryColor}
+                      onChange={(e) => set('primaryColor', e.target.value)}
+                      className="font-mono"
+                    />
+                  </div>
+                </div>
+                <div className="grid gap-1.5">
+                  <Label htmlFor="fmt-accent">Accent colour</Label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      id="fmt-accent"
+                      type="color"
+                      value={form.accentColor}
+                      onChange={(e) => set('accentColor', e.target.value)}
+                      className="h-9 w-12 cursor-pointer rounded border"
+                    />
+                    <Input
+                      value={form.accentColor}
+                      onChange={(e) => set('accentColor', e.target.value)}
+                      className="font-mono"
+                    />
+                  </div>
                 </div>
               </div>
               <div className="grid gap-1.5">
-                <Label htmlFor="fmt-accent">Accent colour</Label>
-                <div className="flex items-center gap-2">
-                  <input
-                    id="fmt-accent"
-                    type="color"
-                    value={form.accentColor}
-                    onChange={(e) => set('accentColor', e.target.value)}
-                    className="h-9 w-12 cursor-pointer rounded border"
-                  />
-                  <Input
-                    value={form.accentColor}
-                    onChange={(e) => set('accentColor', e.target.value)}
-                    className="font-mono"
-                  />
+                <Label htmlFor="fmt-footer">Footer text</Label>
+                <Textarea
+                  id="fmt-footer"
+                  rows={2}
+                  value={form.footerText}
+                  onChange={(e) => set('footerText', e.target.value)}
+                  placeholder="Computer-generated; no signature required."
+                />
+              </div>
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={form.makeDefault}
+                  onChange={(e) => set('makeDefault', e.target.checked)}
+                />
+                Use this format by default for new invoices
+              </label>
+            </div>
+
+            {/* Style — size, density, logo footprint and a few polish toggles. */}
+            <div className="grid gap-2">
+              <Label>Style</Label>
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                <div className="grid gap-1.5">
+                  <Label
+                    htmlFor="fmt-fontsize"
+                    className="text-muted-foreground text-xs font-normal"
+                  >
+                    Font size
+                  </Label>
+                  <Select
+                    value={String(form.style.fontScale)}
+                    onValueChange={(v) => setStyle('fontScale', Number(v))}
+                  >
+                    <SelectTrigger id="fmt-fontsize">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {FONT_SIZE_OPTIONS.map((o) => (
+                        <SelectItem key={o.label} value={String(o.value)}>
+                          {o.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="grid gap-1.5">
+                  <Label
+                    htmlFor="fmt-density"
+                    className="text-muted-foreground text-xs font-normal"
+                  >
+                    Density
+                  </Label>
+                  <Select
+                    value={form.style.density}
+                    onValueChange={(v) => setStyle('density', v as InvoiceStyle['density'])}
+                  >
+                    <SelectTrigger id="fmt-density">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="compact">Compact</SelectItem>
+                      <SelectItem value="normal">Normal</SelectItem>
+                      <SelectItem value="relaxed">Relaxed</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="grid gap-1.5">
+                  <Label
+                    htmlFor="fmt-logosize"
+                    className="text-muted-foreground text-xs font-normal"
+                  >
+                    Logo size
+                  </Label>
+                  <Select
+                    value={form.style.logoSize}
+                    onValueChange={(v) => setStyle('logoSize', v as InvoiceStyle['logoSize'])}
+                  >
+                    <SelectTrigger id="fmt-logosize">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="sm">Small</SelectItem>
+                      <SelectItem value="md">Medium</SelectItem>
+                      <SelectItem value="lg">Large</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="grid gap-1.5">
+                  <Label
+                    htmlFor="fmt-logoalign"
+                    className="text-muted-foreground text-xs font-normal"
+                  >
+                    Logo align
+                  </Label>
+                  <Select
+                    value={form.style.logoAlign}
+                    onValueChange={(v) => setStyle('logoAlign', v as InvoiceStyle['logoAlign'])}
+                  >
+                    <SelectTrigger id="fmt-logoalign">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="left">Left</SelectItem>
+                      <SelectItem value="center">Center</SelectItem>
+                      <SelectItem value="right">Right</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
               </div>
+              <div className="flex flex-wrap gap-x-4 gap-y-1.5 pt-0.5">
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={form.style.accentHeaderBand}
+                    onChange={(e) => setStyle('accentHeaderBand', e.target.checked)}
+                  />
+                  Accent title band
+                </label>
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={form.style.emphasizeTotal}
+                    onChange={(e) => setStyle('emphasizeTotal', e.target.checked)}
+                  />
+                  Emphasise grand total
+                </label>
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={form.style.colorHeadings}
+                    onChange={(e) => setStyle('colorHeadings', e.target.checked)}
+                  />
+                  Colour section headings
+                </label>
+              </div>
             </div>
+
+            {/* Logo — uploadable once the format exists (we need its id to attach). */}
             <div className="grid gap-1.5">
-              <Label htmlFor="fmt-footer">Footer text</Label>
-              <Textarea
-                id="fmt-footer"
-                rows={2}
-                value={form.footerText}
-                onChange={(e) => set('footerText', e.target.value)}
-                placeholder="Computer-generated; no signature required."
+              <Label>Logo</Label>
+              {editingId ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  <input
+                    ref={logoInputRef}
+                    type="file"
+                    accept="image/png,image/jpeg"
+                    className="hidden"
+                    onChange={(e) => void onLogoFile(e.target.files?.[0] ?? null)}
+                    disabled={logoBusy}
+                  />
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => logoInputRef.current?.click()}
+                    disabled={logoBusy}
+                  >
+                    <ImageIcon className="mr-1.5 size-4" aria-hidden />
+                    {logoBusy
+                      ? 'Uploading…'
+                      : editingTheme?.hasLogo
+                        ? 'Replace logo'
+                        : 'Upload logo'}
+                  </Button>
+                  {editingTheme?.hasLogo ? (
+                    <>
+                      <span className="text-muted-foreground text-xs">A logo is set.</span>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => void onRemoveLogo()}
+                        disabled={logoBusy}
+                      >
+                        Remove
+                      </Button>
+                    </>
+                  ) : (
+                    <span className="text-muted-foreground text-xs">
+                      PNG or JPEG. Falls back to the default mark when unset.
+                    </span>
+                  )}
+                </div>
+              ) : (
+                <p className="text-muted-foreground text-xs">
+                  Create the format first, then reopen it to upload a logo.
+                </p>
+              )}
+            </div>
+
+            {/* Drag-and-drop layout board + live preview. */}
+            <div className="grid gap-1.5">
+              <Label>Layout</Label>
+              <InvoiceLayoutEditor
+                key={editingId ?? 'new'}
+                defaultValue={form.layout}
+                onChange={(layout) => set('layout', layout)}
+                primaryColor={form.primaryColor}
+                accentColor={form.accentColor}
+                fontFamily={form.fontFamily}
+                headerText={form.headerText}
+                style={form.style}
               />
             </div>
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                checked={form.makeDefault}
-                onChange={(e) => set('makeDefault', e.target.checked)}
-              />
-              Use this format by default for new invoices
-            </label>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setOpen(false)} disabled={busy}>

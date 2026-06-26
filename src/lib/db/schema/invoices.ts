@@ -14,6 +14,7 @@ import {
 
 import { auditColumns, timestamps } from './_shared';
 import { clients } from './clients';
+import { companyBankAccounts } from './company_bank_accounts';
 import { documents } from './documents';
 import { entityAddresses } from './entity_addresses';
 import { invoiceThemes } from './invoice_themes';
@@ -98,6 +99,13 @@ export const invoices = pgTable(
     // invoice is still a draft; the immutability trigger blocks edits after.
     themeId: uuid().references(() => invoiceThemes.id, { onDelete: 'set null' }),
 
+    // Which company bank account prints in the payment block. Nullable —
+    // resolved to the primary account at render time when unset. Set while the
+    // invoice is a draft; the immutability trigger (0044) freezes it after send.
+    // ON DELETE SET NULL: an account can be retired without orphaning past
+    // invoices, whose stored PDFs already snapshot the account details.
+    bankAccountId: uuid().references(() => companyBankAccounts.id, { onDelete: 'set null' }),
+
     idempotencyKey: text().notNull(),
     sentAt: timestamp({ withTimezone: true }),
     viewedAt: timestamp({ withTimezone: true }),
@@ -119,6 +127,7 @@ export const invoices = pgTable(
     index().on(t.clientId, t.documentDate.desc()),
     index().on(t.projectId),
     index().on(t.billToAddressId),
+    index().on(t.bankAccountId),
     index().on(t.state),
     index().on(t.dueDate),
     index().on(t.sentAt),

@@ -97,6 +97,9 @@ const CreateInvoiceInputSchema = z.object({
   notes: z.string().trim().max(4000).nullish(),
   /** Selected invoice theme (visual skin for the generated PDF). */
   themeId: z.string().uuid().nullish(),
+  /** Which company bank account prints in the payment block. Null → the
+   *  renderer falls back to the primary account. */
+  bankAccountId: z.string().uuid().nullish(),
   /** Caller-supplied idempotency key. Same key returns the same invoice id. */
   idempotencyKey: z.string().trim().min(8).max(200),
   lines: z.array(InvoiceLineInputSchema).min(1, 'Invoice must have at least one line.'),
@@ -356,6 +359,7 @@ async function insertDraftInvoice(
       terms: v.terms ?? null,
       notes: v.notes ?? null,
       themeId: v.themeId ?? null,
+      bankAccountId: v.bankAccountId ?? null,
       idempotencyKey: v.idempotencyKey,
       validationFlags: validationFlagsToStore as unknown as object[],
       createdBy: userId,
@@ -492,6 +496,7 @@ export async function updateDraftInvoice(
     if (v.terms !== undefined) patch.terms = v.terms ?? null;
     if (v.notes !== undefined) patch.notes = v.notes ?? null;
     if (v.themeId !== undefined) patch.themeId = v.themeId ?? null;
+    if (v.bankAccountId !== undefined) patch.bankAccountId = v.bankAccountId ?? null;
 
     // A newly-set project / bill-to address must belong to THIS client.
     const effectiveClientId = patch.clientId ?? current.clientId;

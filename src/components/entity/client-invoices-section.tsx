@@ -44,6 +44,10 @@ import {
   uploadDocxTheme,
   type InvoiceThemeSummary,
 } from '@/lib/server/billing/invoice-themes';
+import {
+  listCompanyBankAccountOptions,
+  type CompanyBankAccountOption,
+} from '@/lib/server/settings/company';
 import { getDocumentSignedUrl } from '@/lib/server/entities/documents';
 
 type InvoiceRow = Awaited<ReturnType<typeof listInvoices>>['rows'][number];
@@ -76,6 +80,7 @@ export function ClientInvoicesSection({ clientId, clientName }: ClientInvoicesSe
 
   const [rows, setRows] = useState<readonly InvoiceRow[] | null>(null);
   const [themes, setThemes] = useState<InvoiceThemeSummary[]>([]);
+  const [bankAccounts, setBankAccounts] = useState<CompanyBankAccountOption[]>([]);
   const [readiness, setReadiness] = useState<ClientBillingReadiness | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -110,12 +115,14 @@ export function ClientInvoicesSection({ clientId, clientName }: ClientInvoicesSe
       listInvoices({ clientId }),
       listInvoiceThemes().catch(() => []),
       getClientBillingReadiness(clientId).catch(() => null),
+      listCompanyBankAccountOptions().catch(() => []),
     ])
-      .then(([inv, ths, rdy]) => {
+      .then(([inv, ths, rdy, banks]) => {
         if (cancelled) return;
         setRows(inv.rows);
         setThemes(ths);
         setReadiness(rdy);
+        setBankAccounts(banks);
         setError(null);
       })
       .catch((e: unknown) => {
@@ -284,6 +291,7 @@ export function ClientInvoicesSection({ clientId, clientName }: ClientInvoicesSe
           clientStateCode={readiness?.stateCode ?? null}
           themes={themes}
           defaultThemeId={defaultThemeId}
+          bankAccounts={bankAccounts}
           existingInvoiceId={editingId}
           onFinalized={() => {
             void reloadInvoices();
