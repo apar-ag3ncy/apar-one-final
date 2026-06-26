@@ -6,7 +6,7 @@ import { EmptyState } from '@/components/shared/empty-state';
 import { PageHeader } from '@/components/shared/page-header';
 
 export const metadata: Metadata = {
-  title: 'Ledger · Apār Dashboard',
+  title: 'Ledger · Apar Dashboard',
 };
 
 export default function LedgerPage() {

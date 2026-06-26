@@ -11,7 +11,7 @@ import {
 import { Card, CardContent } from '@/components/ui/card';
 import { ProfileHeader } from '@/components/entity/profile-header';
 
-export const metadata: Metadata = { title: 'Payroll · Apār Dashboard' };
+export const metadata: Metadata = { title: 'Payroll · Apar Dashboard' };
 
 const TILES = [
   {

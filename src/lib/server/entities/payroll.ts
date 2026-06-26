@@ -10,7 +10,7 @@ import { requireCapability } from '@/lib/rbac';
 import { getActorContext } from '@/lib/server/actor';
 
 /**
- * Payroll capture surfaces — SPEC-AMENDMENT-001 §9. Apār never computes
+ * Payroll capture surfaces — SPEC-AMENDMENT-001 §9. Apar never computes
  * payroll tax (no GST/TDS math on rates); these endpoints take amounts
  * AS ENTERED and persist them. Ledger orchestration (post a salary run
  * → fan into transactions) is deliberately NOT in this file — that lives

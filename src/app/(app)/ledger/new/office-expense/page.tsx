@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import { ProfileHeader } from '@/components/entity/profile-header';
 import { OfficeExpenseForm } from './office-expense-form';
 
-export const metadata: Metadata = { title: 'Office expense · Apār Dashboard' };
+export const metadata: Metadata = { title: 'Office expense · Apar Dashboard' };
 
 export default function OfficeExpensePage() {
   return (

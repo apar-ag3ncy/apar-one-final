@@ -5,7 +5,7 @@ import { totalsRowsFor, type InvoicePdfData } from './invoice';
 function sample(overrides: Partial<InvoicePdfData> = {}): InvoicePdfData {
   return {
     supplier: {
-      name: 'Apār LLP',
+      name: 'Apar LLP',
       address: 'Mumbai, MH',
       gstin: '27ABCDE1234F1Z5',
       pan: 'ABCDE1234F',

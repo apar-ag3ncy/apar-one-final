@@ -31,8 +31,8 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const project = await getProject(id);
   return {
     title: project
-      ? `${project.code} · ${project.name} · Apār Dashboard`
-      : 'Project · Apār Dashboard',
+      ? `${project.code} · ${project.name} · Apar Dashboard`
+      : 'Project · Apar Dashboard',
   };
 }
 

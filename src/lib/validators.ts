@@ -18,7 +18,7 @@ export const AADHAAR_MASKED_RE = /^X{8}[0-9]{4}$/; // 'XXXXXXXX1234'
 export const PAN_MASKED_RE = /^X{5}[0-9]{4}X$/; // 'XXXXX1234X'
 
 /**
- * TDS sections that Apār captures. The brief lists 192/194C/194J/194I
+ * TDS sections that Apar captures. The brief lists 192/194C/194J/194I
  * (building + plant)/194H/194Q as the v1 seed; 194O is included per
  * CLAUDE rule #23 (e-commerce).
  *

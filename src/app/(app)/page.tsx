@@ -9,7 +9,7 @@ import { EmptyState } from '@/components/shared/empty-state';
 import { PageHeader } from '@/components/shared/page-header';
 
 export const metadata: Metadata = {
-  title: 'Dashboard · Apār Dashboard',
+  title: 'Dashboard · Apar Dashboard',
 };
 
 async function getKpis() {

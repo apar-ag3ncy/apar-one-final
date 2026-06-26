@@ -1,4 +1,4 @@
-// AUTO-GENERATED brand asset — Apār 'mark' logo (public/brand/apar-mark.png,
+// AUTO-GENERATED brand asset — Apar 'mark' logo (public/brand/apar-mark.png,
 // 1080x1080) inlined as a base64 PNG data URI so it embeds in server-rendered
 // PDFs (@react-pdf/renderer <Image>) without filesystem/URL access on
 // serverless. Regenerate by base64-encoding public/brand/apar-mark.png.

@@ -3,9 +3,9 @@ import { OsRoot } from '@/components/os/os-root';
 import './os.css';
 
 export const metadata: Metadata = {
-  title: 'Apār One · Desktop Demo',
+  title: 'Apar One · Desktop Demo',
   description:
-    'Demo-grade desktop OS shell for the Apār dashboard — sample data only, no real backend.',
+    'Demo-grade desktop OS shell for the Apar dashboard — sample data only, no real backend.',
 };
 
 export default function OsPage() {

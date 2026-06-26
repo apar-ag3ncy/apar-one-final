@@ -3,7 +3,7 @@ import { ProfileHeader } from '@/components/entity/profile-header';
 import { ClientWizard } from './client-wizard';
 
 export const metadata: Metadata = {
-  title: 'New client · Apār Dashboard',
+  title: 'New client · Apar Dashboard',
 };
 
 export default function NewClientPage() {

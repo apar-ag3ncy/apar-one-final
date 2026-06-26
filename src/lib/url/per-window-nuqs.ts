@@ -1,6 +1,6 @@
 'use client';
 
-// Per-window URL state for the Apār One OS.
+// Per-window URL state for the Apar One OS.
 //
 // Spec: SESSION-C-OS-BROWNFIELD §Phase 2.3 + FRONTEND-OS-AUDIT §6 (P2-3).
 // URL shape:

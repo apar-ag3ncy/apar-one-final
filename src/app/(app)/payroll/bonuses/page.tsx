@@ -4,7 +4,7 @@ import { ProfileHeader } from '@/components/entity/profile-header';
 import { BonusForm } from './bonus-form';
 import { listEmployees } from '@/lib/server-stub/entity-actions';
 
-export const metadata: Metadata = { title: 'Bonuses · Apār Dashboard' };
+export const metadata: Metadata = { title: 'Bonuses · Apar Dashboard' };
 
 export default async function BonusesPage() {
   const employees = await listEmployees();

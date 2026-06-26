@@ -12,7 +12,7 @@ import { StatusBadge, type StatusTone } from '@/components/shared/status-badge';
 import { formatINR } from '@/components/shared/format-inr';
 import { ReimbursementSubmitForm } from './reimbursement-submit-form';
 
-export const metadata: Metadata = { title: 'My reimbursements · Apār self-service' };
+export const metadata: Metadata = { title: 'My reimbursements · Apar self-service' };
 
 const HISTORY = [
   {

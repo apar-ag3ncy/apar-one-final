@@ -1,5 +1,5 @@
 /*
- * Apār One — scoped styles for the /os desktop demo.
+ * Apar One — scoped styles for the /os desktop demo.
  * Every selector is rooted at `.os-root` so this file cannot bleed into the
  * main dashboard pages. Tokens here are deliberately scoped too — they shadow
  * any global ones for the duration of the demo.
@@ -8,7 +8,7 @@
 .os-root {
   /* Brand — `--accent` is set per-user on `.os-root` (Settings ▸ Appearance).
      The deep/soft shades derive from it so changing the accent recolours the
-     whole OS, not just the base swatch. Falls back to Apār Orange. */
+     whole OS, not just the base swatch. Falls back to Apar Orange. */
   --apar-red: var(--accent, #e63a1f);
   --apar-red-deep: color-mix(in oklab, var(--apar-red) 80%, black);
   --apar-red-soft: color-mix(in oklab, var(--apar-red) 14%, white);

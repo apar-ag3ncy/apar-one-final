@@ -13,7 +13,7 @@ import { Button } from '@/components/ui/button';
 import { StatusBadge } from '@/components/shared/status-badge';
 import { formatINR } from '@/components/shared/format-inr';
 
-export const metadata: Metadata = { title: 'Apār self-service · Home' };
+export const metadata: Metadata = { title: 'Apar self-service · Home' };
 
 // TODO(backend): replace with the logged-in employee + their KPIs.
 const ME = {

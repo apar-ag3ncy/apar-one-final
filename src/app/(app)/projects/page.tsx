@@ -5,7 +5,7 @@ import { listProjects } from '@/lib/server-stub/entity-actions';
 import { PageHeader } from '@/components/shared/page-header';
 
 export const metadata: Metadata = {
-  title: 'Projects · Apār Dashboard',
+  title: 'Projects · Apar Dashboard',
 };
 
 export default async function ProjectsPage() {

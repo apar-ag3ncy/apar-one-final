@@ -5,7 +5,7 @@ import { AddressList, type Address } from '@/components/entity/address-list';
 import { BankAccountList, type BankAccount } from '@/components/entity/bank-account-list';
 import { TaxIdentifierList, type TaxIdentifier } from '@/components/entity/tax-identifier-list';
 
-export const metadata: Metadata = { title: 'My profile · Apār self-service' };
+export const metadata: Metadata = { title: 'My profile · Apar self-service' };
 
 // TODO(backend): swap for getMyProfile() once A ships.
 const CONTACTS: readonly Contact[] = [

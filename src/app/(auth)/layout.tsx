@@ -5,7 +5,7 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
         <div className="w-full max-w-sm">{children}</div>
       </main>
       <footer className="text-muted-foreground border-t px-6 py-4 text-center text-xs">
-        Apār LLP · Mumbai
+        Apar LLP · Mumbai
       </footer>
     </div>
   );

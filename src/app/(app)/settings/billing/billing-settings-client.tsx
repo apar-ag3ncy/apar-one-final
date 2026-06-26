@@ -164,7 +164,7 @@ export function BillingSettingsClient({
       <div className="mb-4 flex items-center justify-between gap-3">
         <p className="text-muted-foreground text-sm">
           {accounts.length === 0
-            ? 'No bank accounts yet. Add the accounts Apār invoices payments into.'
+            ? 'No bank accounts yet. Add the accounts Apar invoices payments into.'
             : `${accounts.length} account${accounts.length === 1 ? '' : 's'} · the primary account is offered first on invoices.`}
         </p>
         <Button size="sm" onClick={openCreate} disabled={pending}>
@@ -254,7 +254,7 @@ export function BillingSettingsClient({
           <DialogHeader>
             <DialogTitle>{editingId ? 'Edit bank account' : 'Add bank account'}</DialogTitle>
             <DialogDescription>
-              These are Apār&apos;s own accounts. The full number is stored so it can be copied onto
+              These are Apar&apos;s own accounts. The full number is stored so it can be copied onto
               invoices.
             </DialogDescription>
           </DialogHeader>

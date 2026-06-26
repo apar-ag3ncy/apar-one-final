@@ -3,7 +3,7 @@ import { ProfileHeader } from '@/components/entity/profile-header';
 import { getValidationRules } from '@/lib/server-stub/ledger-actions';
 import { ValidationRulesClient } from './validation-rules-client';
 
-export const metadata: Metadata = { title: 'Validation rules · Apār Dashboard' };
+export const metadata: Metadata = { title: 'Validation rules · Apar Dashboard' };
 
 export default async function ValidationRulesPage() {
   const rules = await getValidationRules();

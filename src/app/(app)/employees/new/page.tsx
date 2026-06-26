@@ -3,7 +3,7 @@ import { ProfileHeader } from '@/components/entity/profile-header';
 import { EmployeeWizard } from './employee-wizard';
 
 export const metadata: Metadata = {
-  title: 'New employee · Apār Dashboard',
+  title: 'New employee · Apar Dashboard',
 };
 
 export default function NewEmployeePage() {

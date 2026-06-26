@@ -18,13 +18,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <aside className="bg-card sticky top-0 hidden h-screen w-60 shrink-0 flex-col border-r md:flex">
         <div className="flex h-14 items-center border-b px-4">
           <Link href="/" className="text-base font-semibold tracking-tight">
-            Apār Dashboard
+            Apar Dashboard
           </Link>
         </div>
         <div className="flex-1 overflow-y-auto px-3 py-4">
           <SidebarNav />
         </div>
-        <div className="text-muted-foreground border-t px-4 py-3 text-xs">Apār LLP · Mumbai</div>
+        <div className="text-muted-foreground border-t px-4 py-3 text-xs">Apar LLP · Mumbai</div>
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">

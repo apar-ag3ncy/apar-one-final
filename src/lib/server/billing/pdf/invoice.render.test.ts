@@ -13,7 +13,7 @@ import { type InvoicePdfData, renderInvoicePdf } from './invoice';
 
 const fixture: InvoicePdfData = {
   supplier: {
-    name: 'Apār LLP',
+    name: 'Apar LLP',
     address: 'Mumbai, MH 400013',
     gstin: '27ABCDE1234F1Z5',
     pan: 'ABCDE1234F',
@@ -59,7 +59,7 @@ const fixture: InvoicePdfData = {
   capturedTaxTotalPaise: 18_000_00n,
   capturedTotalPaise: 118_000_00n,
   payment: {
-    beneficiaryName: 'Apār LLP',
+    beneficiaryName: 'Apar LLP',
     bankName: 'HDFC Bank',
     accountNumber: '50200012345678',
     ifsc: 'HDFC0000123',

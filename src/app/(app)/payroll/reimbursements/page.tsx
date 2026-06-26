@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import { ProfileHeader } from '@/components/entity/profile-header';
 import { ReimbursementsClient } from './reimbursements-client';
 
-export const metadata: Metadata = { title: 'Reimbursement queue · Apār Dashboard' };
+export const metadata: Metadata = { title: 'Reimbursement queue · Apar Dashboard' };
 
 // TODO(backend): swap for getReimbursementQueue() once A ships.
 const ROWS = [

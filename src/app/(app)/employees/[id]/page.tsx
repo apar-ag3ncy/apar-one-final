@@ -28,7 +28,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { id } = await params;
   const employee = await getEmployee(id);
   return {
-    title: employee ? `${employee.fullName} · Apār Dashboard` : 'Employee · Apār Dashboard',
+    title: employee ? `${employee.fullName} · Apar Dashboard` : 'Employee · Apar Dashboard',
   };
 }
 

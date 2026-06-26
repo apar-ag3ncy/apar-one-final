@@ -4,7 +4,7 @@ import { EmptyState } from '@/components/shared/empty-state';
 import { PageHeader } from '@/components/shared/page-header';
 
 export const metadata: Metadata = {
-  title: 'Documents · Apār Dashboard',
+  title: 'Documents · Apar Dashboard',
 };
 
 export default function DocumentsPage() {

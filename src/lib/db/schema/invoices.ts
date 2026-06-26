@@ -21,7 +21,7 @@ import { projects } from './projects';
 import { transactions } from './transactions';
 
 /**
- * Invoice headers (Apār → client). One row per invoice. Lines live in
+ * Invoice headers (Apar → client). One row per invoice. Lines live in
  * `invoice_lines`. Captured-not-computed (CLAUDE rule #1, #2):
  *
  *   - `subtotalPaise`, `capturedTaxTotalPaise`, `capturedTotalPaise`

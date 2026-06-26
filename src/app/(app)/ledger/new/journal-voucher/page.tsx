@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import { ProfileHeader } from '@/components/entity/profile-header';
 import { JournalVoucherForm } from './journal-voucher-form';
 
-export const metadata: Metadata = { title: 'Journal voucher · Apār Dashboard' };
+export const metadata: Metadata = { title: 'Journal voucher · Apar Dashboard' };
 
 export default function JournalVoucherPage() {
   return (

@@ -3,7 +3,7 @@ import { ProfileHeader } from '@/components/entity/profile-header';
 import { ExpenseOnBehalfForm } from './expense-on-behalf-form';
 import { listClients, listVendors, listProjects } from '@/lib/server-stub/entity-actions';
 
-export const metadata: Metadata = { title: 'Expense on behalf · Apār Dashboard' };
+export const metadata: Metadata = { title: 'Expense on behalf · Apar Dashboard' };
 
 export default async function ExpenseOnBehalfPage() {
   const [clients, vendors, projects] = await Promise.all([
@@ -15,7 +15,7 @@ export default async function ExpenseOnBehalfPage() {
     <>
       <ProfileHeader
         title="Expense on behalf"
-        subtitle="Outflows Apār pays on a client's behalf that get reimbursed (printing, travel, sub-vendor invoices). Surfaces in client P&L direct cost AND in the Expenses-on-behalf tab on that client's profile."
+        subtitle="Outflows Apar pays on a client's behalf that get reimbursed (printing, travel, sub-vendor invoices). Surfaces in client P&L direct cost AND in the Expenses-on-behalf tab on that client's profile."
         back={{ href: '/ledger', label: 'Ledger' }}
       />
       <ExpenseOnBehalfForm

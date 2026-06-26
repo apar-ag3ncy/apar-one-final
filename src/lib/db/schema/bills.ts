@@ -22,11 +22,11 @@ import { transactions } from './transactions';
 import { vendors } from './vendors';
 
 /**
- * Vendor bills (vendor → Apār). Headers; lines live in `bill_lines`.
+ * Vendor bills (vendor → Apar). Headers; lines live in `bill_lines`.
  *
  * Attribution (LEDGER-SPEC §0.6 + §3.4): every bill MUST carry one of
  *   - `client`  → on-behalf-of-client, `onBehalfOfClientId` required
- *   - `opex`    → Apār internal cost, `opexAccountCode` required
+ *   - `opex`    → Apar internal cost, `opexAccountCode` required
  *   - `asset`   → capitalisable (≥ ₹5k by convention), posts to 1510
  *
  * The existing posting template at

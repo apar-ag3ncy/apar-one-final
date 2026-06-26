@@ -3,7 +3,7 @@ import { ProfileHeader } from '@/components/entity/profile-header';
 import { Card, CardContent } from '@/components/ui/card';
 import { ReportShell } from '@/components/shared/report-shell';
 
-export const metadata: Metadata = { title: 'Cash flow · Apār Dashboard' };
+export const metadata: Metadata = { title: 'Cash flow · Apar Dashboard' };
 
 type Props = { searchParams: Promise<{ asOf?: string }> };
 

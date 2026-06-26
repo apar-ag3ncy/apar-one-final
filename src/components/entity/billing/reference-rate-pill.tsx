@@ -112,7 +112,7 @@ export function ReferenceRatePill({
           </dl>
           {mismatch ? (
             <p className="rounded-md bg-amber-50 px-2 py-1.5 text-xs text-amber-900 dark:bg-amber-900/30 dark:text-amber-200">
-              You captured {formatBps(capturedBps!)} — different from the reference. Apār will save
+              You captured {formatBps(capturedBps!)} — different from the reference. Apar will save
               your captured value; the reference is shown for awareness only.
             </p>
           ) : null}

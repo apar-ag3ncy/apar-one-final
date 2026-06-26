@@ -3,7 +3,7 @@ import { ProfileHeader } from '@/components/entity/profile-header';
 import { getAgingReport } from '@/lib/server-stub/ledger-actions';
 import { AgingClient } from '../_aging/aging-client';
 
-export const metadata: Metadata = { title: 'AP aging · Apār Dashboard' };
+export const metadata: Metadata = { title: 'AP aging · Apar Dashboard' };
 
 type Props = { searchParams: Promise<{ asOf?: string }> };
 
@@ -15,7 +15,7 @@ export default async function ApAgingPage({ searchParams }: Props) {
     <>
       <ProfileHeader
         title="AP aging"
-        subtitle="Open payables bucketed by days. Tracks when Apār is overdue on a vendor bill."
+        subtitle="Open payables bucketed by days. Tracks when Apar is overdue on a vendor bill."
         back={{ href: '/reports', label: 'All reports' }}
       />
       <AgingClient side="payable" rows={rows} asOfDate={asOfDate} basePath="/reports/ap-aging" />

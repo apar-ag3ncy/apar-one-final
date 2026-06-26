@@ -3,7 +3,7 @@ import { ProfileHeader } from '@/components/entity/profile-header';
 import { PaymentMadeForm } from './payment-made-form';
 import { listVendors, listEmployees } from '@/lib/server-stub/entity-actions';
 
-export const metadata: Metadata = { title: 'Payment made · Apār Dashboard' };
+export const metadata: Metadata = { title: 'Payment made · Apar Dashboard' };
 
 export default async function PaymentMadePage() {
   const [vendors, employees] = await Promise.all([listVendors(), listEmployees()]);

@@ -5,8 +5,8 @@ import { Toaster } from '@/components/ui/sonner';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'Apār Dashboard',
-  description: 'Internal operations dashboard for Apār LLP.',
+  title: 'Apar Dashboard',
+  description: 'Internal operations dashboard for Apar LLP.',
 };
 
 export default function RootLayout({

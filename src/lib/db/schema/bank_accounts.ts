@@ -5,7 +5,7 @@ import { accounts, subledgerKindEnum } from './accounts';
 import { bankAccountTypeEnum } from './entity_bank_accounts';
 
 /**
- * Agency bank accounts (Apār LLP's own). LEDGER-SPEC §1.4.
+ * Agency bank accounts (Apar LLP's own). LEDGER-SPEC §1.4.
  *
  * **Distinct from `entity_bank_accounts`**, which holds clients' / vendors' /
  * employees' bank accounts. This table holds the bank accounts the

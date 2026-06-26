@@ -35,7 +35,7 @@ import { loadBillingSettings } from './numbering';
  *       before posting)
  *     - voidBill which reverses the ledger txn (issued only)
  *
- *   Numbering: bills use the VENDOR's invoice number (not Apār's
+ *   Numbering: bills use the VENDOR's invoice number (not Apar's
  *   sequence). Unique-per-vendor enforced by
  *   bills_vendor_document_number_unique.
  */

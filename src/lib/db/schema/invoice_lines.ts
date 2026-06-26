@@ -5,7 +5,7 @@ import { invoices } from './invoices';
 import { serviceItems } from './service_items';
 
 /**
- * Invoice line items. Quantity is `integer` — Apār invoices in whole
+ * Invoice line items. Quantity is `integer` — Apar invoices in whole
  * units (hours, days, deliverables, retainers). If fractional qty ever
  * comes up, ADD a new column rather than switching `qty` to numeric:
  * `numeric` is banned by `npm run db:check` because it would let money

@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import { ProfileHeader } from '@/components/entity/profile-header';
 import { LeavesClient } from './leaves-client';
 
-export const metadata: Metadata = { title: 'Leave approvals · Apār Dashboard' };
+export const metadata: Metadata = { title: 'Leave approvals · Apar Dashboard' };
 
 // TODO(backend): swap for getLeaveQueue() once A ships.
 const ROWS = [

@@ -20,7 +20,7 @@ import { invoices } from './invoices';
 import { transactions } from './transactions';
 
 /**
- * Credit notes (Apār → client). Always linked to an `originalInvoiceId`
+ * Credit notes (Apar → client). Always linked to an `originalInvoiceId`
  * (mandatory, FK ON DELETE RESTRICT). Credit notes are the ONLY way to
  * "edit" a posted invoice — direct edits are blocked by
  * `tg_block_edit_sent_invoices`.

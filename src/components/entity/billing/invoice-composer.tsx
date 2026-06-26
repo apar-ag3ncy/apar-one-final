@@ -115,7 +115,7 @@ export type InvoiceComposerDialogProps = {
   onOpenChange: (open: boolean) => void;
   clientId: string;
   clientName: string;
-  /** Apār's own 2-digit state code; place-of-supply matching it ⇒ CGST+SGST. */
+  /** Apar's own 2-digit state code; place-of-supply matching it ⇒ CGST+SGST. */
   supplierStateCode?: string;
   /** The client's GST state code (derived from their GSTIN/address). Place of
    *  supply pre-fills to this — the recipient's state. */

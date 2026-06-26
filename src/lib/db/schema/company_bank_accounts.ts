@@ -3,7 +3,7 @@ import { boolean, integer, pgTable, text } from 'drizzle-orm/pg-core';
 import { auditColumns, timestamps } from './_shared';
 
 /**
- * Apār's own bank accounts — the accounts the agency invoices payments into
+ * Apar's own bank accounts — the accounts the agency invoices payments into
  * and pays vendors/salary from. Managed from Settings → Billing.
  *
  * Deliberately NOT the `entity_bank_accounts` vault table: those mask the

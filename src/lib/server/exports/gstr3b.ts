@@ -95,7 +95,7 @@ function monthRange(period: string): { from: string; to: string; retPeriod: stri
 }
 
 async function getOrgGstin(): Promise<string> {
-  // We don't have a single canonical org table in Apār — the agency's
+  // We don't have a single canonical org table in Apar — the agency's
   // own GSTIN is captured on the partner-org row. For this v1 export
   // we trust the caller to supply or fall back to a placeholder; the
   // CA review pass replaces this with a real lookup.

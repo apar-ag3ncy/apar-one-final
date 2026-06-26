@@ -3,7 +3,7 @@ import { ProfileHeader } from '@/components/entity/profile-header';
 import { getAgingReport } from '@/lib/server-stub/ledger-actions';
 import { AgingClient } from '../_aging/aging-client';
 
-export const metadata: Metadata = { title: 'AR aging · Apār Dashboard' };
+export const metadata: Metadata = { title: 'AR aging · Apar Dashboard' };
 
 type Props = { searchParams: Promise<{ asOf?: string }> };
 

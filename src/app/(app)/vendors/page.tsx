@@ -6,7 +6,7 @@ import { listVendors } from '@/lib/server-stub/entity-actions';
 import { PageHeader } from '@/components/shared/page-header';
 
 export const metadata: Metadata = {
-  title: 'Vendors · Apār Dashboard',
+  title: 'Vendors · Apar Dashboard',
 };
 
 export default async function VendorsPage() {

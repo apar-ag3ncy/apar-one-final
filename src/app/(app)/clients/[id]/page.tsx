@@ -36,7 +36,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { id } = await params;
   const client = await getClient(id);
   return {
-    title: client ? `${client.name} · Apār Dashboard` : 'Client · Apār Dashboard',
+    title: client ? `${client.name} · Apar Dashboard` : 'Client · Apar Dashboard',
   };
 }
 

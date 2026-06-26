@@ -1,5 +1,5 @@
 /**
- * Money in Apār One.
+ * Money in Apar One.
  *
  * **CLAUDE.md rule #1**: money is `bigint` paise in the DB, `Paise = bigint`
  * in code, formatted with `Intl.NumberFormat('en-IN', { currency: 'INR' })`.

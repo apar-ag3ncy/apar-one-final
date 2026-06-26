@@ -12,7 +12,7 @@ import { ProfileHeader } from '@/components/entity/profile-header';
 import { ReportShell } from '@/components/shared/report-shell';
 import { getTrialBalance } from '@/lib/server-stub/ledger-actions';
 
-export const metadata: Metadata = { title: 'Profit & Loss · Apār Dashboard' };
+export const metadata: Metadata = { title: 'Profit & Loss · Apar Dashboard' };
 
 type Props = { searchParams: Promise<{ asOf?: string; includeReversed?: string }> };
 

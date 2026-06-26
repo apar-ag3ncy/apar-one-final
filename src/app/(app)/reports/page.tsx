@@ -15,7 +15,7 @@ import {
 import { PageHeader } from '@/components/shared/page-header';
 
 export const metadata: Metadata = {
-  title: 'Reports · Apār Dashboard',
+  title: 'Reports · Apar Dashboard',
 };
 
 type Report = { slug: string; title: string; description: string; icon: LucideIcon };

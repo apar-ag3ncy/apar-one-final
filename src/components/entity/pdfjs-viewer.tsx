@@ -10,7 +10,7 @@ import { cn } from '@/lib/utils';
  * Inline PDF.js viewer per SPEC-AMENDMENT-001 §10.1. Renders one page at
  * a time onto a `<canvas>` so we don't fight with iframe sandboxing or
  * browser-native quirks across the contracts / invoices / payslips
- * Apār touches.
+ * Apar touches.
  *
  * The pdfjs-dist worker is loaded from a same-version CDN — we don't
  * want to ship a worker file in the public/ tree (rebuild every dep

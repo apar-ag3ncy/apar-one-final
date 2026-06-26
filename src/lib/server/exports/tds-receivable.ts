@@ -11,7 +11,7 @@ import { getActorContext } from '@/lib/server/actor';
 /**
  * TDS receivable register. Phase 8.3.
  *
- * Lists every receipt where the customer deducted TDS from Apār's
+ * Lists every receipt where the customer deducted TDS from Apar's
  * payment. The aggregate per section is what we claim as a credit
  * against income tax liability when filing the ITR.
  *

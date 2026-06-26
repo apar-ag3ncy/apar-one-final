@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import { ProfileHeader } from '@/components/entity/profile-header';
 import { InterBankTransferForm } from './inter-bank-transfer-form';
 
-export const metadata: Metadata = { title: 'Inter-bank transfer · Apār Dashboard' };
+export const metadata: Metadata = { title: 'Inter-bank transfer · Apar Dashboard' };
 
 export default function InterBankTransferPage() {
   return (

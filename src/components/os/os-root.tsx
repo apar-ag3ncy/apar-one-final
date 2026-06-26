@@ -105,12 +105,12 @@ export function OsRoot() {
           <div className="inner">
             <img
               src="/brand/apar-white.svg"
-              alt="Apār"
+              alt="Apar"
               className="mobile-fallback-logo"
               draggable={false}
             />
             <p>
-              Apār One is a desktop workspace. Please open this on a screen at least 1024px wide for
+              Apar One is a desktop workspace. Please open this on a screen at least 1024px wide for
               the full experience.
             </p>
           </div>
@@ -775,7 +775,7 @@ function Desktop({ signOut }: { signOut: () => void }) {
             Welcome to{' '}
             <img
               src="/brand/apar-white.svg"
-              alt="Apār"
+              alt="Apar"
               className="welcome-hint-wordmark"
               draggable={false}
             />{' '}

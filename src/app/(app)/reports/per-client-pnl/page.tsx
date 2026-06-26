@@ -4,7 +4,7 @@ import { getPerClientPnL } from '@/lib/server-stub/ledger-actions';
 import { PerClientPnLTable } from './per-client-pnl-table';
 
 export const metadata: Metadata = {
-  title: 'Per-client P&L · Apār Dashboard',
+  title: 'Per-client P&L · Apar Dashboard',
 };
 
 type Props = {

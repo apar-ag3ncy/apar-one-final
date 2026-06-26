@@ -24,7 +24,7 @@ import { getActorContext } from '@/lib/server/actor';
  *   - B2B section (Table 4) — supplies to registered recipients (GSTIN
  *     present)
  *   - B2CS section (Table 12) — small B2C supplies (no GSTIN, value
- *     ≤ ₹2.5L; large B2C goes to Table 5 — not used by Apār since
+ *     ≤ ₹2.5L; large B2C goes to Table 5 — not used by Apar since
  *     services to unregistered consumers are rare)
  *   - HSN summary (Table 12 — confusing CBIC numbering; this is
  *     the HSN/SAC summary section, distinct from B2CS Table 12)

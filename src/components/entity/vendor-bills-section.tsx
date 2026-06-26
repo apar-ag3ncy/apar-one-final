@@ -99,7 +99,7 @@ export function ClientExpensesOnBehalfSection({
             <EmptyState
               icon={HandshakeIcon}
               title="No expenses-on-behalf yet"
-              description={`Click "Record expense" when Apār has paid a vendor for ${clientName}. The same record will appear under the vendor's Bills tab.`}
+              description={`Click "Record expense" when Apar has paid a vendor for ${clientName}. The same record will appear under the vendor's Bills tab.`}
             />
           ) : (
             <BillsList

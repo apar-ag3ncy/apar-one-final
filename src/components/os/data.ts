@@ -1,4 +1,4 @@
-// Fake data for Apār One demo. Mirrors data.jsx from the design bundle.
+// Fake data for Apar One demo. Mirrors data.jsx from the design bundle.
 
 import type { AppDef, Client, Employee, InboxDoc, Project, Vendor } from './types';
 

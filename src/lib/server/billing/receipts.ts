@@ -278,7 +278,7 @@ async function assemblePaymentReceiptData(
 ): Promise<PaymentReceiptPdfData> {
   const [org] = await db.select().from(organizations).limit(1);
   if (!org) {
-    throw new AppError('internal', "organizations table empty; seed Apār's organization row.");
+    throw new AppError('internal', "organizations table empty; seed Apar's organization row.");
   }
   const [client] = await db.select().from(clients).where(eq(clients.id, v.clientId)).limit(1);
   if (!client) throw new AppError('not_found', `client ${v.clientId} not found`);

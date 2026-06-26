@@ -15,7 +15,7 @@ import {
 import { ProfileHeader } from '@/components/entity/profile-header';
 import { Card, CardContent } from '@/components/ui/card';
 
-export const metadata: Metadata = { title: 'Settings · Apār Dashboard' };
+export const metadata: Metadata = { title: 'Settings · Apar Dashboard' };
 
 type SettingsLink = {
   href: string;
@@ -34,7 +34,7 @@ const SECTIONS: readonly SettingsLink[] = [
   {
     href: '/settings/billing',
     title: 'Billing · Bank accounts',
-    description: 'Apār’s own bank accounts, with a primary and secondary.',
+    description: 'Apar’s own bank accounts, with a primary and secondary.',
     icon: LandmarkIcon,
   },
   {
@@ -80,7 +80,7 @@ export default function SettingsIndexPage() {
     <>
       <ProfileHeader
         title="Settings"
-        subtitle="Configure Apār’s company profile, billing, and workspace rules."
+        subtitle="Configure Apar’s company profile, billing, and workspace rules."
         back={{ href: '/', label: 'Back to dashboard' }}
       />
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">

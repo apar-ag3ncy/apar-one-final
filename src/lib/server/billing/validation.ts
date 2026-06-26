@@ -111,7 +111,7 @@ function runInvoiceRule(rule: Rule, draft: InvoiceDraftSnapshot): ValidationFlag
     }
 
     case 'hsn_digit_count_vs_turnover': {
-      // Apār is <₹5 Cr turnover for v1 → 4-digit minimum. (Upgrade to
+      // Apar is <₹5 Cr turnover for v1 → 4-digit minimum. (Upgrade to
       // read live turnover from materialized view in Phase 7.)
       const minDigits = Number(rule.config.min_digits_under_threshold ?? 4);
       const offenders = draft.lines
