@@ -30,9 +30,9 @@ import {
   setDefaultTheme,
   deleteInvoiceTheme,
   listInvoiceThemes,
-  INVOICE_FONTS,
   type InvoiceThemeSummary,
 } from '@/lib/server/billing/invoice-themes';
+import { INVOICE_FONTS } from '@/lib/billing/invoice-fonts';
 
 type Form = {
   name: string;
