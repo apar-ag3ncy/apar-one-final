@@ -1,0 +1,341 @@
+'use client';
+
+// Export attendance for a date range (day / week / month / year / custom),
+// optionally scoped to selected employees. Produces a long-format sheet —
+// one row per (employee, date) with the *effective* status (the implicit
+// default filled in for any day without a stored override), so it round-trips
+// through the import dialog. Rendered from the OS Attendance app header.
+
+import { useEffect, useMemo, useState } from 'react';
+import { toast } from 'sonner';
+
+import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { defaultStatusForDate } from '@/lib/attendance-defaults';
+import { exportRows, type ExportFormat } from '@/lib/client/export-rows';
+import {
+  getAttendanceForExport,
+  listAttendanceEmployees,
+  type AttendanceEmployeeOption,
+  type AttendanceStatus,
+} from '@/lib/server/entities/attendance';
+
+import { STATUS_EXPORT_LABEL, eachIsoDate, weekdayShort } from './attendance-io';
+
+type Preset = 'today' | 'week' | 'month' | 'year' | 'custom';
+
+const PRESETS: { key: Preset; label: string }[] = [
+  { key: 'today', label: 'Day' },
+  { key: 'week', label: 'Week' },
+  { key: 'month', label: 'Month' },
+  { key: 'year', label: 'Year' },
+  { key: 'custom', label: 'Custom' },
+];
+
+// Guard against an accidental decade-long range freezing the browser while it
+// expands every (employee, date) cell.
+const MAX_DAYS = 1500;
+
+function pad2(n: number): string {
+  return n < 10 ? `0${n}` : String(n);
+}
+
+function isoLocal(d: Date): string {
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+}
+
+function presetRange(preset: Exclude<Preset, 'custom'>): { from: string; to: string } {
+  const now = new Date();
+  if (preset === 'today') {
+    const t = isoLocal(now);
+    return { from: t, to: t };
+  }
+  if (preset === 'week') {
+    const dow = (now.getDay() + 6) % 7; // 0 = Monday
+    const mon = new Date(now);
+    mon.setDate(now.getDate() - dow);
+    const sun = new Date(mon);
+    sun.setDate(mon.getDate() + 6);
+    return { from: isoLocal(mon), to: isoLocal(sun) };
+  }
+  if (preset === 'month') {
+    const first = new Date(now.getFullYear(), now.getMonth(), 1);
+    const last = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    return { from: isoLocal(first), to: isoLocal(last) };
+  }
+  return { from: `${now.getFullYear()}-01-01`, to: `${now.getFullYear()}-12-31` };
+}
+
+export function ExportAttendanceDialog() {
+  const [open, setOpen] = useState(false);
+  const [employees, setEmployees] = useState<readonly AttendanceEmployeeOption[] | null>(null);
+  const [preset, setPreset] = useState<Preset>('month');
+  const initial = presetRange('month');
+  const [from, setFrom] = useState(initial.from);
+  const [to, setTo] = useState(initial.to);
+  const [limitToSelected, setLimitToSelected] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [empSearch, setEmpSearch] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!open || employees !== null) return;
+    listAttendanceEmployees()
+      .then(setEmployees)
+      .catch((e) => toast.error(e instanceof Error ? e.message : 'Could not load employees'));
+  }, [open, employees]);
+
+  function applyPreset(p: Preset) {
+    setPreset(p);
+    if (p !== 'custom') {
+      const r = presetRange(p);
+      setFrom(r.from);
+      setTo(r.to);
+    }
+  }
+
+  const dayCount = useMemo(() => eachIsoDate(from, to).length, [from, to]);
+  const filteredEmployees = useMemo(() => {
+    const list = employees ?? [];
+    const q = empSearch.trim().toLowerCase();
+    if (!q) return list;
+    return list.filter((e) =>
+      [e.fullName, e.employeeCode, e.designation, e.department].some((v) =>
+        (v ?? '').toLowerCase().includes(q),
+      ),
+    );
+  }, [employees, empSearch]);
+
+  const targetCount = limitToSelected ? selected.size : (employees?.length ?? 0);
+
+  function toggle(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  async function doExport(format: ExportFormat) {
+    if (from > to) {
+      toast.error('The start date must be on or before the end date.');
+      return;
+    }
+    if (dayCount === 0) {
+      toast.error('Pick a valid date range.');
+      return;
+    }
+    if (dayCount > MAX_DAYS) {
+      toast.error(`That range is ${dayCount} days — keep it under ${MAX_DAYS}.`);
+      return;
+    }
+    if (limitToSelected && selected.size === 0) {
+      toast.error('Pick at least one employee, or switch to all employees.');
+      return;
+    }
+    setBusy(true);
+    try {
+      const employeeIds = limitToSelected ? Array.from(selected) : undefined;
+      const { employees: emps, records } = await getAttendanceForExport({
+        fromDate: from,
+        toDate: to,
+        employeeIds,
+      });
+      if (emps.length === 0) {
+        toast.error('No employees to export.');
+        return;
+      }
+      const byCell = new Map<string, { status: AttendanceStatus; notes: string | null }>();
+      for (const r of records) byCell.set(`${r.employeeId}|${r.date}`, r);
+
+      const dates = eachIsoDate(from, to);
+      const headers = ['Employee Code', 'Employee', 'Date', 'Day', 'Status', 'Notes'];
+      const rows: Record<string, string>[] = [];
+      for (const e of emps) {
+        for (const date of dates) {
+          const rec = byCell.get(`${e.id}|${date}`);
+          const status: AttendanceStatus = rec?.status ?? defaultStatusForDate(date);
+          rows.push({
+            'Employee Code': e.employeeCode,
+            Employee: e.fullName,
+            Date: date,
+            Day: weekdayShort(date),
+            Status: STATUS_EXPORT_LABEL[status],
+            Notes: rec?.notes ?? '',
+          });
+        }
+      }
+
+      exportRows(rows, headers, `attendance-${from}_to_${to}`, format, 'Attendance');
+      toast.success(
+        `Exported ${rows.length} row${rows.length === 1 ? '' : 's'} (${emps.length} employee${
+          emps.length === 1 ? '' : 's'
+        } × ${dates.length} day${dates.length === 1 ? '' : 's'}).`,
+      );
+      setOpen(false);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Export failed.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => !busy && setOpen(v)}>
+      <DialogTrigger asChild>
+        <button type="button" className="btn" title="Export attendance to CSV or Excel">
+          Export
+        </button>
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-[520px]">
+        <DialogHeader>
+          <DialogTitle>Export attendance</DialogTitle>
+          <DialogDescription>
+            Download attendance for a date range as CSV or Excel. Days without an override use the
+            default (present on weekdays, weekly-off on Sundays).
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="grid gap-4 py-2">
+          {/* Range */}
+          <div className="grid gap-2">
+            <Label>Range</Label>
+            <div className="flex flex-wrap gap-1.5">
+              {PRESETS.map((p) => (
+                <Button
+                  key={p.key}
+                  type="button"
+                  size="sm"
+                  variant={preset === p.key ? 'default' : 'outline'}
+                  onClick={() => applyPreset(p.key)}
+                >
+                  {p.label}
+                </Button>
+              ))}
+            </div>
+            <div className="flex items-center gap-2">
+              <Input
+                type="date"
+                value={from}
+                onChange={(e) => {
+                  setFrom(e.target.value);
+                  setPreset('custom');
+                }}
+                aria-label="From date"
+                className="h-8"
+              />
+              <span className="text-muted-foreground text-sm">to</span>
+              <Input
+                type="date"
+                value={to}
+                onChange={(e) => {
+                  setTo(e.target.value);
+                  setPreset('custom');
+                }}
+                aria-label="To date"
+                className="h-8"
+              />
+            </div>
+            <p className="text-muted-foreground text-xs">
+              {dayCount > 0
+                ? `${dayCount} day${dayCount === 1 ? '' : 's'} · ${targetCount} employee${
+                    targetCount === 1 ? '' : 's'
+                  }`
+                : 'Pick a valid range.'}
+            </p>
+          </div>
+
+          {/* Employees */}
+          <div className="grid gap-2">
+            <Label className="font-normal">
+              <Checkbox
+                checked={limitToSelected}
+                onCheckedChange={(v) => setLimitToSelected(v === true)}
+              />
+              Limit to selected employees
+            </Label>
+
+            {limitToSelected && (
+              <div className="rounded-md border">
+                <div className="flex items-center gap-2 border-b p-2">
+                  <Input
+                    value={empSearch}
+                    onChange={(e) => setEmpSearch(e.target.value)}
+                    placeholder="Search name, code, department…"
+                    className="h-7"
+                    aria-label="Search employees"
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setSelected(new Set(filteredEmployees.map((e) => e.id)))}
+                    disabled={!employees}
+                  >
+                    All
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setSelected(new Set())}
+                    disabled={selected.size === 0}
+                  >
+                    Clear
+                  </Button>
+                </div>
+                <div className="max-h-44 overflow-auto p-1">
+                  {employees === null ? (
+                    <p className="text-muted-foreground p-2 text-sm">Loading…</p>
+                  ) : filteredEmployees.length === 0 ? (
+                    <p className="text-muted-foreground p-2 text-sm">No matching employees.</p>
+                  ) : (
+                    filteredEmployees.map((e) => (
+                      <label
+                        key={e.id}
+                        className="hover:bg-muted/50 flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-sm"
+                      >
+                        <Checkbox
+                          checked={selected.has(e.id)}
+                          onCheckedChange={() => toggle(e.id)}
+                        />
+                        <span className="flex-1 truncate">
+                          {e.fullName}
+                          <span className="text-muted-foreground"> · {e.employeeCode}</span>
+                        </span>
+                      </label>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setOpen(false)} disabled={busy}>
+            Cancel
+          </Button>
+          <Button variant="secondary" onClick={() => doExport('csv')} disabled={busy}>
+            {busy ? 'Exporting…' : 'Export CSV'}
+          </Button>
+          <Button onClick={() => doExport('xlsx')} disabled={busy}>
+            {busy ? 'Exporting…' : 'Export Excel'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
