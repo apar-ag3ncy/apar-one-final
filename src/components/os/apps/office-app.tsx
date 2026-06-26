@@ -24,6 +24,10 @@ import {
   type OfficeExpenseStatus,
   type OfficeExpenseSummary,
 } from '@/lib/server/entities/office-expenses';
+import {
+  getSalaryPaymentsSummary,
+  type SalaryPaymentsSummary,
+} from '@/lib/server/entities/payroll';
 import { formatINR, paiseToDecimalRupees, parseRupeesToPaise } from '../format';
 import { Icon } from '../icons';
 
@@ -99,6 +103,7 @@ export function OfficeApp({
 }) {
   const [rows, setRows] = useState<readonly OfficeExpenseRow[] | null>(null);
   const [summary, setSummary] = useState<OfficeExpenseSummary | null>(null);
+  const [salary, setSalary] = useState<SalaryPaymentsSummary | null>(null);
   const [employees, setEmployees] = useState<readonly EmployeeOption[]>([]);
   const [vendorOptions, setVendorOptions] = useState<readonly VendorOption[]>([]);
   const [search, setSearch] = useState('');
@@ -111,9 +116,14 @@ export function OfficeApp({
 
   async function reload() {
     try {
-      const [list, sum] = await Promise.all([listOfficeExpenses({}), getOfficeExpenseSummary()]);
+      const [list, sum, sal] = await Promise.all([
+        listOfficeExpenses({}),
+        getOfficeExpenseSummary(),
+        getSalaryPaymentsSummary(),
+      ]);
       setRows(list);
       setSummary(sum);
+      setSalary(sal);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Could not load office expenses');
     }
@@ -121,11 +131,12 @@ export function OfficeApp({
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([listOfficeExpenses({}), getOfficeExpenseSummary()])
-      .then(([list, sum]) => {
+    Promise.all([listOfficeExpenses({}), getOfficeExpenseSummary(), getSalaryPaymentsSummary()])
+      .then(([list, sum, sal]) => {
         if (cancelled) return;
         setRows(list);
         setSummary(sum);
+        setSalary(sal);
       })
       .catch((e) => {
         if (!cancelled) {
@@ -280,7 +291,7 @@ export function OfficeApp({
       <div
         style={{
           display: 'grid',
-          gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
+          gridTemplateColumns: 'repeat(5, minmax(0, 1fr))',
           gap: 12,
           padding: '14px 20px 4px',
         }}
@@ -294,6 +305,15 @@ export function OfficeApp({
           label="YTD (FY)"
           value={summary ? formatINR(summary.ytdTotalPaise) : '—'}
           trend="From 01 Apr"
+        />
+        <KpiCard
+          label="Salaries paid"
+          value={salary ? formatINR(salary.totalPaise) : '—'}
+          trend={
+            salary
+              ? `${salary.count} payment${salary.count === 1 ? '' : 's'} · deducted from office`
+              : ' '
+          }
         />
         <KpiCard
           label="Reimbursements pending"

@@ -109,6 +109,33 @@ export const salaryLines = pgTable(
 
 export type SalaryLine = typeof salaryLines.$inferSelect;
 
+/**
+ * Salary payments — individual disbursements actually paid out to an employee
+ * (amount + date). Captured, not computed. This is a lightweight tracker
+ * surfaced in the employee Compensation tab; the cumulative total is shown in
+ * the Office app and deducted from the Office Ledger's net cash position. It is
+ * deliberately NOT posted to the double-entry ledger (product decision) — the
+ * `salary_runs` / `salary_lines` path remains the route for that, once the
+ * disbursement posting template ships.
+ */
+export const salaryPayments = pgTable(
+  'salary_payments',
+  {
+    ...sharedTimestamps(),
+    ...auditColumns(),
+    employeeId: uuid()
+      .notNull()
+      .references(() => employees.id, { onDelete: 'restrict' }),
+    paidOn: date().notNull(),
+    amountPaise: bigint({ mode: 'bigint' }).notNull(),
+    notes: text(),
+  },
+  (t) => [index().on(t.employeeId, t.paidOn.desc()), index().on(t.paidOn)],
+);
+
+export type SalaryPayment = typeof salaryPayments.$inferSelect;
+export type NewSalaryPayment = typeof salaryPayments.$inferInsert;
+
 export const bonusKindEnum = pgEnum('bonus_kind', [
   'bonus',
   'perk_cash',

@@ -4,7 +4,13 @@ import { and, desc, eq, isNull, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { db } from '@/lib/db/client';
-import { bonusesAndPerks, leaves, reimbursements, salaryStructures } from '@/lib/db/schema';
+import {
+  bonusesAndPerks,
+  leaves,
+  reimbursements,
+  salaryPayments,
+  salaryStructures,
+} from '@/lib/db/schema';
 import { AppError } from '@/lib/errors';
 import { requireCapability } from '@/lib/rbac';
 import { getActorContext } from '@/lib/server/actor';
@@ -483,4 +489,117 @@ export async function createSalaryStructure(
   });
 
   return { id: newId };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Salary payments (disbursements actually given out)                          */
+/* -------------------------------------------------------------------------- */
+
+export type SalaryPaymentRow = {
+  id: string;
+  paidOn: string;
+  amountPaise: bigint;
+  notes: string | null;
+};
+
+const RecordSalaryPaymentSchema = z.object({
+  employeeId: z.string().uuid(),
+  paidOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'paid_on must be YYYY-MM-DD'),
+  amountPaise: PaiseBigInt.refine((v) => v > 0n, 'amount must be greater than 0'),
+  notes: z.string().max(2000).nullable().optional(),
+});
+
+export type RecordSalaryPaymentInput = z.input<typeof RecordSalaryPaymentSchema>;
+
+/**
+ * Record a salary disbursement (amount + date) actually paid to an employee.
+ * Captured, not computed. Standalone tracker — does not post to the ledger;
+ * the cumulative total is surfaced in the Office app / Office Ledger.
+ */
+export async function recordSalaryPayment(
+  input: RecordSalaryPaymentInput,
+): Promise<{ id: string }> {
+  const ctx = await getActorContext();
+  requireCapability(ctx, 'manage_salary_structures');
+  const parsed = RecordSalaryPaymentSchema.parse(input);
+
+  const [row] = await db
+    .insert(salaryPayments)
+    .values({
+      employeeId: parsed.employeeId,
+      paidOn: parsed.paidOn,
+      amountPaise: parsed.amountPaise,
+      notes: parsed.notes ?? null,
+      createdBy: ctx.userId,
+      updatedBy: ctx.userId,
+    })
+    .returning({ id: salaryPayments.id });
+  if (!row) throw new AppError('internal', 'salary_payments insert returned no row');
+  return { id: row.id };
+}
+
+export async function listEmployeeSalaryPayments(
+  employeeId: string,
+): Promise<readonly SalaryPaymentRow[]> {
+  const ctx = await getActorContext();
+  requireCapability(ctx, 'view_salary');
+  const rows = await db
+    .select({
+      id: salaryPayments.id,
+      paidOn: salaryPayments.paidOn,
+      amountPaise: salaryPayments.amountPaise,
+      notes: salaryPayments.notes,
+    })
+    .from(salaryPayments)
+    .where(and(eq(salaryPayments.employeeId, employeeId), isNull(salaryPayments.deletedAt)))
+    .orderBy(desc(salaryPayments.paidOn))
+    .limit(100);
+  return rows;
+}
+
+export async function deleteSalaryPayment(id: string): Promise<void> {
+  const ctx = await getActorContext();
+  requireCapability(ctx, 'manage_salary_structures');
+  await db
+    .update(salaryPayments)
+    .set({ deletedAt: new Date(), updatedBy: ctx.userId })
+    .where(and(eq(salaryPayments.id, id), isNull(salaryPayments.deletedAt)));
+}
+
+export type SalaryPaymentsSummary = {
+  /** Sum of all (non-deleted) salary payments in range — the office deduction. */
+  totalPaise: bigint;
+  count: number;
+  latestPaidOn: string | null;
+};
+
+/**
+ * Cumulative salary disbursed across all employees, optionally within a date
+ * range (paid_on). Backs the Office app KPI and the Office Ledger's
+ * net-of-salaries figure. Aggregate only — not gated by `view_salary`, mirroring
+ * the office cash/expense summaries.
+ */
+export async function getSalaryPaymentsSummary(args?: {
+  from?: string;
+  to?: string;
+}): Promise<SalaryPaymentsSummary> {
+  await getActorContext();
+  const conds = [isNull(salaryPayments.deletedAt)];
+  if (args?.from) conds.push(sql`${salaryPayments.paidOn} >= ${args.from}`);
+  if (args?.to) conds.push(sql`${salaryPayments.paidOn} <= ${args.to}`);
+
+  const [row] = await db
+    .select({
+      total: sql<string>`coalesce(sum(${salaryPayments.amountPaise}), 0)::text`,
+      count: sql<string>`count(*)::text`,
+      latest: sql<string | null>`max(${salaryPayments.paidOn})::text`,
+    })
+    .from(salaryPayments)
+    .where(and(...conds));
+
+  return {
+    totalPaise: row ? BigInt(row.total) : 0n,
+    count: row ? Number(row.count) : 0,
+    latestPaidOn: row?.latest ?? null,
+  };
 }

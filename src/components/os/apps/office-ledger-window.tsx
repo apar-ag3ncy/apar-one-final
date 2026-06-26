@@ -13,6 +13,8 @@ import { useEffect, useMemo, useState } from 'react';
 
 import { StatementOfAccount } from '@/components/entity/statement-of-account';
 import { getOfficeStatement, type Statement } from '@/lib/server/ledger/statements';
+import { getSalaryPaymentsSummary } from '@/lib/server/entities/payroll';
+import { formatINR } from '@/lib/money';
 import { osActions } from '@/lib/os/store';
 
 function currentFyDefaults(): { fromDate: string; toDate: string } {
@@ -40,6 +42,7 @@ export function OfficeLedgerWindow({
   const [fromDate, setFromDate] = useState<string>(defaults.fromDate);
   const [toDate, setToDate] = useState<string>(defaults.toDate);
   const [statement, setStatement] = useState<Statement | null>(null);
+  const [salaryPaise, setSalaryPaise] = useState<bigint | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -47,11 +50,19 @@ export function OfficeLedgerWindow({
     queueMicrotask(() => {
       if (cancelled) return;
       setStatement(null);
+      setSalaryPaise(null);
       setError(null);
     });
-    getOfficeStatement({ from: fromDate, to: toDate })
-      .then((s) => {
-        if (!cancelled) setStatement(s);
+    // Salaries are a standalone tracker (not ledger postings), so we deduct
+    // them here over the same date range to show the net cash position.
+    Promise.all([
+      getOfficeStatement({ from: fromDate, to: toDate }),
+      getSalaryPaymentsSummary({ from: fromDate, to: toDate }),
+    ])
+      .then(([s, sal]) => {
+        if (cancelled) return;
+        setStatement(s);
+        setSalaryPaise(sal.totalPaise);
       })
       .catch((e: unknown) => {
         if (!cancelled) {
@@ -87,6 +98,29 @@ export function OfficeLedgerWindow({
         <DateField label="To" value={toDate} onChange={setToDate} />
       </header>
 
+      {error ? null : statement ? (
+        <div
+          style={{
+            display: 'flex',
+            gap: 24,
+            flexWrap: 'wrap',
+            alignItems: 'baseline',
+            padding: '10px 14px',
+            border: '1px solid var(--border)',
+            borderRadius: 10,
+            background: 'var(--content-2)',
+          }}
+        >
+          <NetStat label="Cash + bank (range)" value={formatINR(statement.closingBalancePaise)} />
+          <NetStat label="Less: salaries paid" value={`− ${formatINR(salaryPaise ?? 0n)}`} />
+          <NetStat
+            label="Net of salaries"
+            value={formatINR(statement.closingBalancePaise - (salaryPaise ?? 0n))}
+            strong
+          />
+        </div>
+      ) : null}
+
       {error ? (
         <p style={{ color: 'var(--text-error, #c33)', fontSize: 13 }}>{error}</p>
       ) : (
@@ -106,6 +140,34 @@ export function OfficeLedgerWindow({
           }
         />
       )}
+    </div>
+  );
+}
+
+function NetStat({ label, value, strong }: { label: string; value: string; strong?: boolean }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+      <span
+        style={{
+          fontSize: 10,
+          color: 'var(--text-muted)',
+          textTransform: 'uppercase',
+          letterSpacing: '0.05em',
+          fontWeight: 600,
+        }}
+      >
+        {label}
+      </span>
+      <span
+        className="font-display"
+        style={{
+          fontSize: strong ? 20 : 16,
+          fontVariantNumeric: 'tabular-nums',
+          color: strong ? 'var(--text)' : undefined,
+        }}
+      >
+        {value}
+      </span>
     </div>
   );
 }
