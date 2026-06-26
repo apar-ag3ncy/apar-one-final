@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import { DocumentList, type EntityDocument } from '@/components/entity/document-list';
 
-export const metadata: Metadata = { title: 'My documents · Apār self-service' };
+export const metadata: Metadata = { title: 'My documents · Apar self-service' };
 
 // TODO(backend): replace with A.getMyDocuments() — restricted to the logged-in
 // employee's own documents (offer letter, signed contract, KYC self-uploads).

@@ -19,7 +19,7 @@ import { entityDocuments } from './entity_documents';
 import { projects } from './projects';
 
 /**
- * Quotes / estimates (Apār → client). Mirrors `invoices` structurally
+ * Quotes / estimates (Apar → client). Mirrors `invoices` structurally
  * but with its own state machine and an acceptance-doc link. Converts
  * to one or more invoices via `estimate_invoice_links`.
  *

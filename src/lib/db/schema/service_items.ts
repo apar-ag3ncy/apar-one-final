@@ -18,7 +18,7 @@ import { auditColumns, timestamps } from './_shared';
  * field — the catalog drives suggestions, never authoritative captured
  * values (CLAUDE rule #2).
  *
- * Apār is a pure-services agency so all entries are SAC, not HSN.
+ * Apar is a pure-services agency so all entries are SAC, not HSN.
  * Common SACs worth seeding eventually: 998361 (advertising services),
  * 998391 (specialty design — branding / graphic), 998311 (management
  * consulting), 998363 (purchase/sale of advertising space), 998399

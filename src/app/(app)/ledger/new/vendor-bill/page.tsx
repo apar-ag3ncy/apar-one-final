@@ -4,7 +4,7 @@ import { VendorBillForm } from './vendor-bill-form';
 import { listClients, listVendors, listProjects } from '@/lib/server-stub/entity-actions';
 
 export const metadata: Metadata = {
-  title: 'New vendor bill · Apār Dashboard',
+  title: 'New vendor bill · Apar Dashboard',
 };
 
 export default async function NewVendorBillPage() {

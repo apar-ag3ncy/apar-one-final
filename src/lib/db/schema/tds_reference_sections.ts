@@ -4,7 +4,7 @@ import { auditColumns, timestamps } from './_shared';
 
 /**
  * Reference rates / thresholds per TDS section, FY-bounded. **Used
- * for warnings only** — CLAUDE rule #2: Apār never auto-computes TDS.
+ * for warnings only** — CLAUDE rule #2: Apar never auto-computes TDS.
  * The validation rule `tds_threshold_crossed` (warn) checks
  * cumulative payments per vendor per FY against `thresholdFyPaise`
  * and warns when crossed without TDS deducted.

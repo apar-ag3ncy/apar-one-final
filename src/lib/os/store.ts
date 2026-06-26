@@ -1,6 +1,6 @@
 'use client';
 
-// Window-manager store for the Apār One OS shell.
+// Window-manager store for the Apar One OS shell.
 //
 // Spec source: SESSION-C-OS-BROWNFIELD §Phase 2 + FRONTEND-OS-AUDIT §6 (P2-1/2/3).
 // The shape mirrors Zustand's contract intentionally — when the dep lands

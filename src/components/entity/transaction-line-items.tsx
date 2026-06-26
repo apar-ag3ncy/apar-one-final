@@ -170,7 +170,7 @@ export function TransactionLineItems({
         {showGst ? <Recap label="GST (captured)" value={formatINR(totalGst)} /> : null}
         <Recap label="Captured total" value={formatINR(subtotal + totalGst)} strong />
         <p className="text-muted-foreground mt-1 text-xs">
-          Numbers are captured from the document — never computed by Apār. The server flags a
+          Numbers are captured from the document — never computed by Apar. The server flags a
           mismatch if Σ(lines) + GST + TDS doesn&apos;t equal the document&apos;s stated total.
         </p>
       </div>

@@ -460,7 +460,7 @@ export function VendorBillForm({
           }}
         >
           <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0, lineHeight: 1.5 }}>
-            §0.6: every vendor bill carries an explicit attribution. Apār never multiplies a tax
+            §0.6: every vendor bill carries an explicit attribution. Apar never multiplies a tax
             rate by a base — enter the amounts as printed on the vendor&apos;s invoice.
           </p>
 

@@ -18,7 +18,7 @@ export type InvoiceFormProps = {
    * Tax fields stay user-entered — captured-not-computed.
    */
   referenceRatesBySac: Record<string, ReferenceRate | null>;
-  /** Apār's own state (Maharashtra) for the auto-derived place-of-supply hint. */
+  /** Apar's own state (Maharashtra) for the auto-derived place-of-supply hint. */
   supplierStateCode: string;
   /**
    * Single submit callback; both "Save Draft" and "Save and Send" call this

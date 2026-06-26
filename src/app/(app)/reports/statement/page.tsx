@@ -4,7 +4,7 @@ import { getStatementOfAccount } from '@/lib/server-stub/ledger-actions';
 import { listClients, listVendors } from '@/lib/server-stub/entity-actions';
 import { StatementClient } from './statement-client';
 
-export const metadata: Metadata = { title: 'Statement of account · Apār Dashboard' };
+export const metadata: Metadata = { title: 'Statement of account · Apar Dashboard' };
 
 type Props = {
   searchParams: Promise<{

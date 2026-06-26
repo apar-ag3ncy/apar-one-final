@@ -1,4 +1,4 @@
-// AUTO-GENERATED brand asset — Apār 'mark' wordmark in brand orange (#ee3a24)
+// AUTO-GENERATED brand asset — Apar 'mark' wordmark in brand orange (#ee3a24)
 // on a TRANSPARENT background (public/brand/apar-orange-mark.png, 1400x757),
 // inlined as a base64 PNG data URI so it embeds in server-rendered PDFs
 // (@react-pdf/renderer <Image>, which can't read SVG or the filesystem on

@@ -3,7 +3,7 @@ import { ProfileHeader } from '@/components/entity/profile-header';
 import { getTrialBalance } from '@/lib/server-stub/ledger-actions';
 import { TrialBalanceClient } from './trial-balance-client';
 
-export const metadata: Metadata = { title: 'Trial balance · Apār Dashboard' };
+export const metadata: Metadata = { title: 'Trial balance · Apar Dashboard' };
 
 type Props = { searchParams: Promise<{ asOf?: string; includeReversed?: string }> };
 

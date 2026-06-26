@@ -4,7 +4,6 @@ import { useCallback, useEffect, useState } from 'react';
 
 import { Skeleton } from '@/components/ui/skeleton';
 import { BillingSettingsClient } from '@/app/(app)/settings/billing/billing-settings-client';
-import { InvoiceFormatEditor } from '@/components/settings/invoice-format-editor';
 import { listBankAccountsForSettings } from '@/lib/server/settings/company';
 import type { CompanyBankAccountRow } from '@/lib/server/settings/company-data';
 
@@ -45,18 +44,13 @@ export function BillingSettingsPane() {
   }
 
   return (
-    <div className="flex flex-col gap-6 p-5">
-      <div>
-        <h2 className="mb-1 text-sm font-medium">Bank accounts</h2>
-        <p className="text-muted-foreground mb-3 text-xs">
-          Apār&apos;s own accounts. The primary account — and its UPI ID — print on every invoice&apos;s
-          payment block.
-        </p>
-        <BillingSettingsClient accounts={accounts} onChanged={load} />
-      </div>
-      <div className="border-t pt-5">
-        <InvoiceFormatEditor />
-      </div>
+    <div className="p-5">
+      <h2 className="mb-1 text-sm font-medium">Bank accounts</h2>
+      <p className="text-muted-foreground mb-3 text-xs">
+        Apar&apos;s own accounts. The primary account — and its UPI ID — print on every invoice&apos;s
+        payment block. Edit how invoices look under Settings → Invoice format.
+      </p>
+      <BillingSettingsClient accounts={accounts} onChanged={load} />
     </div>
   );
 }

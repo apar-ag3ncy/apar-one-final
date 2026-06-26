@@ -6,7 +6,7 @@ import * as React from 'react';
 import { formatINR } from '@/lib/money';
 
 /**
- * GST Rule 50 — Receipt Voucher PDF. Issued when Apār receives an
+ * GST Rule 50 — Receipt Voucher PDF. Issued when Apar receives an
  * advance from a customer against future supply of services.
  *
  * Rule 50 statutory fields:

@@ -3,7 +3,7 @@ import type { Metadata } from 'next';
 import { ProfileHeader } from '@/components/entity/profile-header';
 import { VaultBody } from '@/components/settings/vault';
 
-export const metadata: Metadata = { title: 'Vault · Settings · Apār Dashboard' };
+export const metadata: Metadata = { title: 'Vault · Settings · Apar Dashboard' };
 
 export default function VaultSettingsPage() {
   return (

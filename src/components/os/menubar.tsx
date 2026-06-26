@@ -116,7 +116,7 @@ export function MenuBar({
       { label: 'Bring All to Front' },
     ],
     Help: [
-      { label: 'Apār One Guide' },
+      { label: 'Apar One Guide' },
       { label: 'Keyboard Shortcuts', shortcut: '⌘/' },
       { label: "What's New" },
     ],
@@ -124,12 +124,12 @@ export function MenuBar({
 
   return (
     <div className="menubar">
-      <div className="wordmark" aria-label="Apār">
+      <div className="wordmark" aria-label="Apar">
         {/* Both wordmark variants are shipped; os.css toggles them on
             `.os-root[data-theme='dark']`. */}
         <img
           src="/brand/apar-orange.svg"
-          alt="Apār"
+          alt="Apar"
           className="wordmark-img wordmark-img--light"
           draggable={false}
         />

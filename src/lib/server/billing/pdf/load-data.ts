@@ -27,7 +27,7 @@ import type { InvoicePdfData } from './invoice';
  *
  * Pulls:
  *   - the invoice header + lines (`invoices`, `invoice_lines`)
- *   - the supplier (Apār) from the singleton `organizations` row
+ *   - the supplier (Apar) from the singleton `organizations` row
  *   - the recipient client from `clients` + their primary
  *     `entity_addresses` row + GSTIN from `entity_tax_identifiers`
  *
@@ -51,7 +51,7 @@ export async function loadInvoicePdfData(
   if (!supplierOrg) {
     throw new AppError(
       'internal',
-      "organizations table empty; seed Apār's organization row before rendering invoices.",
+      "organizations table empty; seed Apar's organization row before rendering invoices.",
     );
   }
 

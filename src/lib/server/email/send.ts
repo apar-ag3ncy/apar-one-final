@@ -16,7 +16,7 @@ import nodemailer, { type Transporter } from 'nodemailer';
  *                         the account; Workspace admins must allow App
  *                         Passwords. Generate at:
  *                         https://myaccount.google.com/apppasswords
- *   EMAIL_FROM_NAME     — optional display name, e.g. "Apār One". The address
+ *   EMAIL_FROM_NAME     — optional display name, e.g. "Apar One". The address
  *                         is always GMAIL_USER (Gmail rewrites mismatched From).
  *
  * Returns a discriminated result so callers can log/report failures without

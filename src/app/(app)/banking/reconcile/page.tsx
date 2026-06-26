@@ -4,7 +4,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { ArrowRightIcon, LandmarkIcon } from 'lucide-react';
 import { ProfileHeader } from '@/components/entity/profile-header';
 
-export const metadata: Metadata = { title: 'Bank reconciliation · Apār Dashboard' };
+export const metadata: Metadata = { title: 'Bank reconciliation · Apar Dashboard' };
 
 // TODO(backend): swap to a server query returning agency bank accounts.
 const BANKS = [

@@ -566,7 +566,7 @@ function NewSalaryForm({
         />
       </Field>
       <p style={{ margin: 0, fontSize: 11, color: 'var(--text-muted)' }}>
-        Captured exactly as per the offer / revision letter — Apār never derives these from a CTC
+        Captured exactly as per the offer / revision letter — Apar never derives these from a CTC
         formula. Any open prior version is closed on {formatDay(effectiveFrom)}.
       </p>
       <div style={{ display: 'flex', gap: 8 }}>

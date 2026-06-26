@@ -10,7 +10,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 
-export const metadata: Metadata = { title: 'Tax reference rates · Apār Dashboard' };
+export const metadata: Metadata = { title: 'Tax reference rates · Apar Dashboard' };
 
 // TODO(backend): swap for getTaxReferenceRates() once A ships.
 const RATES = [
@@ -35,7 +35,7 @@ export default function TaxRatesPage() {
     <>
       <ProfileHeader
         title="Tax reference rates"
-        subtitle="Captured rates used to label fields and verify document totals. Apār never computes tax — these are reference values only."
+        subtitle="Captured rates used to label fields and verify document totals. Apar never computes tax — these are reference values only."
         back={{ href: '/', label: 'Back to dashboard' }}
       />
       <Card>

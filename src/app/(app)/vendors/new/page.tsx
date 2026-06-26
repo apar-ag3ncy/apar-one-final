@@ -3,7 +3,7 @@ import { ProfileHeader } from '@/components/entity/profile-header';
 import { VendorWizard } from './vendor-wizard';
 
 export const metadata: Metadata = {
-  title: 'New vendor · Apār Dashboard',
+  title: 'New vendor · Apar Dashboard',
 };
 
 export default function NewVendorPage() {

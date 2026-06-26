@@ -6,7 +6,7 @@ import { settings } from '@/lib/db/schema/settings';
 import { getPeriods } from '@/lib/server-stub/ledger-actions';
 import { PeriodsClient } from './periods-client';
 
-export const metadata: Metadata = { title: 'Periods · Apār Dashboard' };
+export const metadata: Metadata = { title: 'Periods · Apar Dashboard' };
 
 export default async function PeriodsPage() {
   const [periodsList, enforcementRow] = await Promise.all([

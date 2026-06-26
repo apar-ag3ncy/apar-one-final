@@ -24,7 +24,7 @@ export function MobileSidebar() {
       </SheetTrigger>
       <SheetContent side="left" className="w-72 p-0">
         <SheetHeader className="border-b px-4 py-4">
-          <SheetTitle className="text-base font-semibold">Apār Dashboard</SheetTitle>
+          <SheetTitle className="text-base font-semibold">Apar Dashboard</SheetTitle>
           <SheetDescription className="sr-only">Primary navigation</SheetDescription>
         </SheetHeader>
         <div className="px-3 py-4">

@@ -50,7 +50,7 @@ export const projects = pgTable(
     name: text().notNull(),
     code: text(), // optional short code: 'LODHA-DIWALI-26'
     status: projectStatusEnum().notNull().default('pitch'),
-    /** Captured SOW amount in paise. Apār doesn't compute — entered as-is. */
+    /** Captured SOW amount in paise. Apar doesn't compute — entered as-is. */
     feePaise: bigint({ mode: 'bigint' }).notNull().default(0n),
     startedOn: date(),
     targetEndOn: date(),

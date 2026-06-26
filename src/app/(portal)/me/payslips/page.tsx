@@ -12,7 +12,7 @@ import {
 } from '@/components/ui/table';
 import { formatINR } from '@/components/shared/format-inr';
 
-export const metadata: Metadata = { title: 'My payslips · Apār self-service' };
+export const metadata: Metadata = { title: 'My payslips · Apar self-service' };
 
 const PAYSLIPS = [
   { month: 'April 2026', netPaise: 48_000_00n, postedAt: '2026-04-30' },

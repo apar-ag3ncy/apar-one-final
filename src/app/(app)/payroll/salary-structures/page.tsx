@@ -3,7 +3,7 @@ import { ProfileHeader } from '@/components/entity/profile-header';
 import { SalaryStructuresClient } from './salary-structures-client';
 import { listEmployees } from '@/lib/server-stub/entity-actions';
 
-export const metadata: Metadata = { title: 'Salary structures · Apār Dashboard' };
+export const metadata: Metadata = { title: 'Salary structures · Apar Dashboard' };
 
 export default async function SalaryStructuresPage() {
   const employees = await listEmployees();

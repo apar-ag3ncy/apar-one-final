@@ -237,7 +237,7 @@ export function ImportEmployeesDialog({ onImported }: { onImported?: () => void 
     dataSheet['!cols'] = header.map((h) => ({ wch: Math.max(14, h.length + 2) }));
 
     const instructions = [
-      ['Apār — Employee Import Template'],
+      ['Apar — Employee Import Template'],
       [''],
       ['Fill the "Employees" sheet — one row per employee. Delete the two example rows before uploading.'],
       [''],

@@ -4,7 +4,7 @@ import { renderRefundVoucherPdf, type RefundVoucherPdfData } from './refund-vouc
 
 const fixture: RefundVoucherPdfData = {
   supplier: {
-    name: 'Apār LLP',
+    name: 'Apar LLP',
     address: 'Mumbai, MH 400013',
     gstin: '27ABCDE1234F1Z5',
     pan: 'ABCDE1234F',

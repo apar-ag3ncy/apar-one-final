@@ -3,14 +3,14 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { LoginForm } from './login-form';
 
 export const metadata: Metadata = {
-  title: 'Sign in · Apār Dashboard',
+  title: 'Sign in · Apar Dashboard',
 };
 
 export default function LoginPage() {
   return (
     <Card>
       <CardHeader className="space-y-1.5 text-center">
-        <CardTitle className="text-2xl">Apār Dashboard</CardTitle>
+        <CardTitle className="text-2xl">Apar Dashboard</CardTitle>
         <CardDescription>
           Sign in to continue. We&apos;ll email you a one-time link.
         </CardDescription>

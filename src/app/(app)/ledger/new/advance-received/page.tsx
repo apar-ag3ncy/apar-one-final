@@ -3,7 +3,7 @@ import { ProfileHeader } from '@/components/entity/profile-header';
 import { AdvanceReceivedForm } from './advance-received-form';
 import { listClients } from '@/lib/server-stub/entity-actions';
 
-export const metadata: Metadata = { title: 'Advance received · Apār Dashboard' };
+export const metadata: Metadata = { title: 'Advance received · Apar Dashboard' };
 
 export default async function AdvanceReceivedPage() {
   const clients = await listClients();

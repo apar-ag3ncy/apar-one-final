@@ -8,7 +8,7 @@ import { hasCapability } from '@/lib/rbac';
 import { PageHeader } from '@/components/shared/page-header';
 
 export const metadata: Metadata = {
-  title: 'Clients · Apār Dashboard',
+  title: 'Clients · Apar Dashboard',
 };
 
 export default async function ClientsPage() {

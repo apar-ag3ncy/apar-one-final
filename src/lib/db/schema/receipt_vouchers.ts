@@ -15,7 +15,7 @@ import { clients } from './clients';
 import { documents } from './documents';
 
 /**
- * GST Rule 50 — Receipt Voucher. A statutory document Apār must issue
+ * GST Rule 50 — Receipt Voucher. A statutory document Apar must issue
  * the moment we receive an advance against future services. Carries:
  *
  *   - voucher_number  unique-per-fy

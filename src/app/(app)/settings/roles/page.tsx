@@ -8,7 +8,7 @@ import { loadRoleCapabilityGrants } from '@/lib/server/settings/role-capabilitie
 import { RolesClient } from './roles-client';
 
 export const metadata: Metadata = {
-  title: 'Roles & capabilities · Apār Dashboard',
+  title: 'Roles & capabilities · Apar Dashboard',
 };
 
 export default async function RolesPage() {

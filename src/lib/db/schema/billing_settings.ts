@@ -31,7 +31,7 @@ export const billingSettings = pgTable(
     ...auditColumns(),
     singleton: boolean().notNull().default(true),
 
-    // Default place of supply (Apār's home state — Maharashtra '27').
+    // Default place of supply (Apar's home state — Maharashtra '27').
     companyDefaultPlaceOfSupply: char({ length: 2 }).notNull().default('27'),
 
     // Numbering — used by the next-document-number RPC (Phase 2).

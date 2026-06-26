@@ -50,7 +50,7 @@ export const taxRateKindEnum = pgEnum('tax_rate_kind', ['gst', 'tds', 'other']);
  * Reference rates table. LEDGER-SPEC §1.6.
  *
  * Drives the validation rules' "captured rate vs reference rate"
- * comparison. **Apār does NOT compute amounts from these rates.**
+ * comparison. **Apar does NOT compute amounts from these rates.**
  * (CLAUDE rule #2, LEDGER-SPEC §0.7.) Reference rates only generate
  * warnings.
  *

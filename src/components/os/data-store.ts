@@ -1,6 +1,6 @@
 'use client';
 
-// Shared business-data store for the Apār One demo.
+// Shared business-data store for the Apar One demo.
 //
 // Single source of truth across all signed-in users — clients/vendors/projects
 // etc. belong to "the agency", not to a particular operator. localStorage key

@@ -244,7 +244,7 @@ export function InvoiceFormatEditor() {
                 id="fmt-name"
                 value={form.name}
                 onChange={(e) => set('name', e.target.value)}
-                placeholder="e.g. Apār — Default"
+                placeholder="e.g. Apar — Default"
               />
             </div>
             <div className="grid grid-cols-2 gap-3">

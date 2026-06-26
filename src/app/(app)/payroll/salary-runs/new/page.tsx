@@ -3,7 +3,7 @@ import { ProfileHeader } from '@/components/entity/profile-header';
 import { SalaryRunWizardClient } from './salary-run-wizard-client';
 import { listEmployees } from '@/lib/server-stub/entity-actions';
 
-export const metadata: Metadata = { title: 'New salary run · Apār Dashboard' };
+export const metadata: Metadata = { title: 'New salary run · Apar Dashboard' };
 
 export default async function NewSalaryRunPage() {
   const employees = await listEmployees();

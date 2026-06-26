@@ -13,7 +13,7 @@ type Props = { params: Promise<{ id: string }> };
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { id } = await params;
   const vendor = await getVendor(id);
-  return { title: vendor ? `${vendor.name} · Apār Dashboard` : 'Vendor · Apār Dashboard' };
+  return { title: vendor ? `${vendor.name} · Apar Dashboard` : 'Vendor · Apar Dashboard' };
 }
 
 export default async function VendorDetailPage({ params }: Props) {

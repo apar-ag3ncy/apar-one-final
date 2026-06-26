@@ -3,7 +3,7 @@ import { ProfileHeader } from '@/components/entity/profile-header';
 import { ReconcileClient } from './reconcile-client';
 import { getReconciliationCandidates } from '@/lib/server-stub/ledger-actions';
 
-export const metadata: Metadata = { title: 'Reconcile · Apār Dashboard' };
+export const metadata: Metadata = { title: 'Reconcile · Apar Dashboard' };
 
 type Props = { params: Promise<{ bankId: string }> };
 

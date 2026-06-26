@@ -5,7 +5,7 @@
  * Idempotent: re-runnable, all inserts gated with WHERE NOT EXISTS.
  *
  * Seeds:
- *   - 1 organization (Apār LLP)
+ *   - 1 organization (Apar LLP)
  *   - 3 clients (Lodha, Studio Marigold, Bloom Realty)
  *   - 2 vendors (Studio Lakhotia, Lotus Printers)
  *   - 4 employees (APAR-001..004)
@@ -58,12 +58,12 @@ async function ensureOrganization(): Promise<void> {
   await sql`
     INSERT INTO organizations (legal_name, display_name, gstin, pan, registered_address)
     SELECT
-      'Apār LLP',
-      'Apār',
+      'Apar LLP',
+      'Apar',
       '27ABCDE1234F1Z5',
       'ABCDE1234F',
       'Mumbai, Maharashtra'
-    WHERE NOT EXISTS (SELECT 1 FROM organizations WHERE legal_name = 'Apār LLP');
+    WHERE NOT EXISTS (SELECT 1 FROM organizations WHERE legal_name = 'Apar LLP');
   `;
 }
 

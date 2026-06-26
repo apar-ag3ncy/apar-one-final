@@ -14,7 +14,7 @@ import { StatusBadge } from '@/components/shared/status-badge';
 import { formatINR } from '@/components/shared/format-inr';
 import { ProfileHeader } from '@/components/entity/profile-header';
 
-export const metadata: Metadata = { title: 'Salary runs · Apār Dashboard' };
+export const metadata: Metadata = { title: 'Salary runs · Apar Dashboard' };
 
 // TODO(backend): swap for getSalaryRuns() once A ships.
 const RUNS = [

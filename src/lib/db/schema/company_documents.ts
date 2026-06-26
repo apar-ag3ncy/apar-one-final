@@ -22,7 +22,7 @@ export const companyDocumentCategoryEnum = pgEnum('company_document_category', [
 ]);
 
 /**
- * Apār's own documents (certificates, deeds, rent agreements, …). The file
+ * Apar's own documents (certificates, deeds, rent agreements, …). The file
  * bytes live inline in Postgres (`data` bytea) because the app runs against
  * vanilla local Postgres with no Supabase Storage; these are agency-owned,
  * non-KYC documents meant to be downloaded/viewed, so inline storage is the

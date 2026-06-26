@@ -1,6 +1,6 @@
 'use client';
 
-// Auth store for the Apār One demo.
+// Auth store for the Apar One demo.
 //
 // Demo-grade only. Backed by localStorage with plaintext credentials and no
 // session token — fine for showing the RBAC shape, **catastrophic** for prod.
@@ -23,7 +23,7 @@ const SUPER_ADMIN_KEY = 'apar-os:super-admin';
 const SUPER_ADMIN_ID = 'super-admin';
 const SUPER_ADMIN_DEFAULTS = {
   username: 'apar',
-  fullName: 'Apār Admin',
+  fullName: 'Apar Admin',
   password: 'apar2026',
   tone: '#E63A1F',
 };

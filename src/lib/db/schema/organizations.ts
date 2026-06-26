@@ -3,7 +3,7 @@ import { pgTable, text } from 'drizzle-orm/pg-core';
 import { auditColumns, timestamps } from './_shared';
 
 /**
- * Apār LLP itself. Seeded with one row by `npm run db:seed` (Phase 1 task).
+ * Apar LLP itself. Seeded with one row by `npm run db:seed` (Phase 1 task).
  * Captured (not computed): GSTIN / PAN / TAN / Udyam are stored as entered,
  * never derived. Editable from Settings → Company details.
  *

@@ -315,7 +315,7 @@ function Header({
         {data.supplier.contactEmail ? <Text>{data.supplier.contactEmail}</Text> : null}
       </View>
       <View style={styles.metaBlock}>
-        {/* The brand mark — the orange Apār wordmark on a transparent background,
+        {/* The brand mark — the orange Apar wordmark on a transparent background,
             or the theme's own uploaded logo. */}
         {/* react-pdf's <Image> is a PDF primitive, not an HTML <img> — no `alt`. */}
         {/* eslint-disable-next-line jsx-a11y/alt-text */}

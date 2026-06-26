@@ -16,7 +16,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { ProfileHeader } from '@/components/entity/profile-header';
 import { cn } from '@/lib/utils';
 
-export const metadata: Metadata = { title: 'New transaction · Apār Dashboard' };
+export const metadata: Metadata = { title: 'New transaction · Apar Dashboard' };
 
 type Tile = {
   href: string;
@@ -60,7 +60,7 @@ const TILES: readonly Tile[] = [
   {
     href: '/ledger/new/expense-on-behalf',
     title: 'Expense on behalf',
-    description: 'Spend Apār covers for a client. Bills back separately.',
+    description: 'Spend Apar covers for a client. Bills back separately.',
     icon: ClipboardCheckIcon,
   },
   {

@@ -174,7 +174,7 @@ export function LockScreen() {
         )}
       </form>
 
-      <div className="lock-screen__footer">Apār One · Demo build · Not for production sign-in</div>
+      <div className="lock-screen__footer">Apar One · Demo build · Not for production sign-in</div>
     </div>
   );
 }

@@ -1,4 +1,4 @@
-// Domain types for the Apār One desktop demo.
+// Domain types for the Apar One desktop demo.
 // Demo-grade — the production dashboard has its own typed models elsewhere.
 //
 // Money is `bigint` paise per CLAUDE.md rule #1 + LEDGER-SPEC §8.1. Inputs

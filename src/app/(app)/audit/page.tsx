@@ -5,7 +5,7 @@ import { AuditDiffRow } from '@/components/audit/audit-diff-row';
 import { listActivityLog, listAuditLog } from '@/lib/server/audit/queries';
 import { AuditFilters } from './_filters';
 
-export const metadata: Metadata = { title: 'Audit · Apār Dashboard' };
+export const metadata: Metadata = { title: 'Audit · Apar Dashboard' };
 
 type SearchParams = {
   entityType?: string;

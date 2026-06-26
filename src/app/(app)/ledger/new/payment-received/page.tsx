@@ -3,7 +3,7 @@ import { ProfileHeader } from '@/components/entity/profile-header';
 import { PaymentReceivedForm } from './payment-received-form';
 import { listClients } from '@/lib/server-stub/entity-actions';
 
-export const metadata: Metadata = { title: 'Payment received · Apār Dashboard' };
+export const metadata: Metadata = { title: 'Payment received · Apar Dashboard' };
 
 export default async function PaymentReceivedPage() {
   const clients = await listClients();

@@ -8,6 +8,7 @@ import { CompanySettingsPane } from './apps/company-settings-pane';
 import { BillingSettingsPane } from './apps/billing-settings-pane';
 import { VaultPane } from './apps/vault-pane';
 import { ImportEmployeesDialog } from '@/components/employees/import-employees-dialog';
+import { InvoiceFormatEditor } from '@/components/settings/invoice-format-editor';
 import { EntityRef } from '@/components/entity/entity-ref';
 import {
   listClients as listDbClients,
@@ -1598,7 +1599,7 @@ export function VendorDetail({
             <EmptyState
               icon="filetext"
               title="No invoices yet"
-              subtitle="Capture amounts directly from the vendor's bill — Apār never computes tax."
+              subtitle="Capture amounts directly from the vendor's bill — Apar never computes tax."
               actionLabel="New Invoice"
               onAction={canEdit ? () => setShowInvoice(true) : undefined}
             />
@@ -3064,7 +3065,7 @@ function ProjectFormModal({
             )}
           </select>
         </Field>
-        <Field label="Fee (₹)" hint="Captured from the SOW. Apār doesn't compute totals.">
+        <Field label="Fee (₹)" hint="Captured from the SOW. Apar doesn't compute totals.">
           <input
             type="text"
             inputMode="numeric"
@@ -4604,6 +4605,7 @@ type SettingsSection = {
     | 'General'
     | 'Company documents'
     | 'Billing'
+    | 'Invoice format'
     | 'Vault'
     | 'Appearance'
     | 'Account'
@@ -4635,6 +4637,7 @@ export function SettingsApp({
     { name: 'General', icon: 'settings' },
     { name: 'Company documents', icon: 'building' },
     { name: 'Billing', icon: 'book' },
+    { name: 'Invoice format', icon: 'filetext' },
     { name: 'Vault', icon: 'shield' },
     { name: 'Appearance', icon: 'palette' },
     { name: 'Account', icon: 'user' },
@@ -4754,7 +4757,7 @@ export function SettingsApp({
             <div className="settings-row">
               <div>
                 <div className="label">Desktop Wallpaper</div>
-                <div className="desc">Apār Charcoal Gradient · Default</div>
+                <div className="desc">Apar Charcoal Gradient · Default</div>
               </div>
               <button className="btn" type="button" disabled title="More wallpapers — coming soon.">
                 Change…
@@ -4812,6 +4815,10 @@ export function SettingsApp({
           <CompanySettingsPane />
         ) : section === 'Billing' ? (
           <BillingSettingsPane />
+        ) : section === 'Invoice format' ? (
+          <div style={{ padding: 20 }}>
+            <InvoiceFormatEditor />
+          </div>
         ) : section === 'Vault' ? (
           <VaultPane />
         ) : section === 'Account' ? (

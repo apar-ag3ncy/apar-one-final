@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { LeaveApplyForm } from './leave-apply-form';
 import { LeaveHistory } from './leave-history';
 
-export const metadata: Metadata = { title: 'My leaves · Apār self-service' };
+export const metadata: Metadata = { title: 'My leaves · Apar self-service' };
 
 const BALANCES = [
   { kind: 'Casual', balance: 6, used: 4 },

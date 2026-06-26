@@ -3,7 +3,7 @@ import { ProfileHeader } from '@/components/entity/profile-header';
 import { FormsClient } from './forms-client';
 
 export const metadata: Metadata = {
-  title: 'Form Builder · Apār Dashboard',
+  title: 'Form Builder · Apar Dashboard',
 };
 
 export default function FormsPage() {

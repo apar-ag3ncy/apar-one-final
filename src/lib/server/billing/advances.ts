@@ -312,7 +312,7 @@ export async function assembleVoucherPdfData(
   if (!supplierOrg) {
     throw new AppError(
       'internal',
-      "organizations table empty; seed Apār's organization row before rendering vouchers.",
+      "organizations table empty; seed Apar's organization row before rendering vouchers.",
     );
   }
 

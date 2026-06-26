@@ -63,10 +63,10 @@ export async function buildActivityDigest({
 
   const count = lines.length;
   const windowLabel = sinceHours === 24 ? 'last 24 hours' : `last ${sinceHours} hours`;
-  const subject = `Apār One — activity digest (${count} event${count === 1 ? '' : 's'}, ${windowLabel})`;
+  const subject = `Apar One — activity digest (${count} event${count === 1 ? '' : 's'}, ${windowLabel})`;
 
   const text = [
-    `Apār One — activity digest`,
+    `Apar One — activity digest`,
     `Window: ${windowLabel}`,
     `Events: ${count}`,
     '',
@@ -90,7 +90,7 @@ export async function buildActivityDigest({
 
   const html =
     `<div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#1a1411;">` +
-    `<h2 style="margin:0 0 4px;">Apār One — activity digest</h2>` +
+    `<h2 style="margin:0 0 4px;">Apar One — activity digest</h2>` +
     `<p style="margin:0 0 12px;color:#6b5f58;font-size:13px;">${escapeHtml(windowLabel)} · ${count} event${count === 1 ? '' : 's'}</p>` +
     `<table style="border-collapse:collapse;width:100%;">${rowsHtml}</table>` +
     `</div>`;

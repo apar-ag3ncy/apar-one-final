@@ -3,7 +3,7 @@ import { ProfileHeader } from '@/components/entity/profile-header';
 import { ClientInvoiceForm } from './client-invoice-form';
 import { listClients, listProjects } from '@/lib/server-stub/entity-actions';
 
-export const metadata: Metadata = { title: 'New client invoice · Apār Dashboard' };
+export const metadata: Metadata = { title: 'New client invoice · Apar Dashboard' };
 
 export default async function NewClientInvoicePage() {
   const [clients, projects] = await Promise.all([listClients(), listProjects()]);

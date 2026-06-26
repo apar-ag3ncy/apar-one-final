@@ -1,4 +1,4 @@
-// Auth + RBAC types for the Apār One demo.
+// Auth + RBAC types for the Apar One demo.
 //
 // Demo-grade: no real password hashing, no JWT, no server. Production will
 // route through Supabase Auth + Postgres RLS — see CLAUDE.md. The shape here

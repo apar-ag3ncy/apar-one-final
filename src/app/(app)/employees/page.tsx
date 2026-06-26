@@ -9,7 +9,7 @@ import { hasCapability } from '@/lib/rbac';
 import { PageHeader } from '@/components/shared/page-header';
 
 export const metadata: Metadata = {
-  title: 'Employees · Apār Dashboard',
+  title: 'Employees · Apar Dashboard',
 };
 
 export default async function EmployeesPage() {
