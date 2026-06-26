@@ -119,6 +119,15 @@ describe('renderInvoicePdf', () => {
         accentHeaderBand: true,
         emphasizeTotal: true,
         colorHeadings: true,
+        columns: { srNo: true, hsn: true, qtyRate: true, taxPct: true },
+        colors: {
+          tableHeaderBg: '#0B5E3B',
+          tableHeaderText: '#FFFFFF',
+          totalBg: '#0B5E3B',
+          totalText: '#FFFFFF',
+          heading: '#0B5E3B',
+          title: '#0B5E3B',
+        },
       },
       layout: {
         version: 1,

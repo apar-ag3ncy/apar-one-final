@@ -36,6 +36,8 @@ import {
 } from '@/lib/server/billing/invoice-themes';
 import { INVOICE_FONTS } from '@/lib/billing/invoice-fonts';
 import { InvoiceLayoutEditor } from '@/components/settings/invoice-layout-editor';
+import { getCompanyPreview, type CompanyPreview } from '@/lib/server/settings/company';
+import type { InvoiceColumns, InvoiceColors } from '@/lib/billing/invoice-style';
 import { DEFAULT_INVOICE_LAYOUT, type InvoiceLayout } from '@/lib/billing/invoice-layout';
 import { DEFAULT_INVOICE_STYLE, type InvoiceStyle } from '@/lib/billing/invoice-style';
 
@@ -70,6 +72,41 @@ const FONT_SIZE_OPTIONS = [
   { label: 'Extra large', value: 1.25 },
 ] as const;
 
+/** An optional colour swatch with an "Auto" (derive from brand/accent) state. */
+function ColorField({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: string | null;
+  onChange: (v: string | null) => void;
+}) {
+  const isSet = value != null;
+  return (
+    <div className="grid gap-1">
+      <span className="text-muted-foreground text-xs">{label}</span>
+      <div className="flex items-center gap-1.5">
+        <input
+          type="color"
+          value={value ?? '#3366CC'}
+          onChange={(e) => onChange(e.target.value.toUpperCase())}
+          className="h-8 w-9 shrink-0 cursor-pointer rounded border"
+          aria-label={label}
+        />
+        <button
+          type="button"
+          onClick={() => onChange(null)}
+          title="Use the automatic colour"
+          className={`rounded border px-1.5 py-0.5 text-[11px] ${isSet ? 'text-muted-foreground' : 'bg-muted text-foreground'}`}
+        >
+          Auto
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /**
  * Dynamic invoice-format editor. Lists the invoice formats (themes), lets the
  * user create a custom one or edit a non-builtin one — name, the header
@@ -85,6 +122,13 @@ export function InvoiceFormatEditor() {
   const [busy, setBusy] = useState(false);
   const [logoBusy, setLogoBusy] = useState(false);
   const logoInputRef = useRef<HTMLInputElement | null>(null);
+  // Real company header details for the preview (editable, preview-only).
+  const [company, setCompany] = useState<CompanyPreview>({
+    name: '',
+    address: '',
+    gstin: null,
+    pan: null,
+  });
 
   const reload = useCallback(() => {
     listInvoiceThemes()
@@ -96,12 +140,30 @@ export function InvoiceFormatEditor() {
   useEffect(() => {
     reload();
   }, [reload]);
+  useEffect(() => {
+    getCompanyPreview()
+      .then((c) => {
+        if (c) setCompany(c);
+      })
+      .catch(() => {
+        /* preview falls back to a sample name */
+      });
+  }, []);
 
   function set<K extends keyof Form>(key: K, value: Form[K]) {
     setForm((f) => ({ ...f, [key]: value }));
   }
   function setStyle<K extends keyof InvoiceStyle>(key: K, value: InvoiceStyle[K]) {
     setForm((f) => ({ ...f, style: { ...f.style, [key]: value } }));
+  }
+  function setColumn<K extends keyof InvoiceColumns>(key: K, value: InvoiceColumns[K]) {
+    setForm((f) => ({
+      ...f,
+      style: { ...f.style, columns: { ...f.style.columns, [key]: value } },
+    }));
+  }
+  function setColor<K extends keyof InvoiceColors>(key: K, value: InvoiceColors[K]) {
+    setForm((f) => ({ ...f, style: { ...f.style, colors: { ...f.style.colors, [key]: value } } }));
   }
 
   function openCreate() {
@@ -291,7 +353,7 @@ export function InvoiceFormatEditor() {
       </div>
 
       <Dialog open={open} onOpenChange={(v) => !busy && setOpen(v)}>
-        <DialogContent className="flex max-h-[90vh] flex-col sm:max-w-3xl">
+        <DialogContent className="flex max-h-[90vh] flex-col sm:max-w-5xl">
           <DialogHeader>
             <DialogTitle>{editingId ? 'Edit invoice format' : 'New invoice format'}</DialogTitle>
             <DialogDescription>
@@ -511,6 +573,122 @@ export function InvoiceFormatEditor() {
               </div>
             </div>
 
+            {/* Table columns */}
+            <div className="grid gap-2">
+              <Label>Table columns</Label>
+              <p className="text-muted-foreground text-xs">
+                Choose which line-item columns appear. Description and Amount always show.
+              </p>
+              <div className="flex flex-wrap gap-x-4 gap-y-1.5">
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={form.style.columns.srNo}
+                    onChange={(e) => setColumn('srNo', e.target.checked)}
+                  />
+                  Sr. No.
+                </label>
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={form.style.columns.hsn}
+                    onChange={(e) => setColumn('hsn', e.target.checked)}
+                  />
+                  HSN/SAC
+                </label>
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={form.style.columns.qtyRate}
+                    onChange={(e) => setColumn('qtyRate', e.target.checked)}
+                  />
+                  Quantity &amp; Rate
+                </label>
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={form.style.columns.taxPct}
+                    onChange={(e) => setColumn('taxPct', e.target.checked)}
+                  />
+                  Tax % per line
+                </label>
+              </div>
+            </div>
+
+            {/* Element colours */}
+            <div className="grid gap-2">
+              <Label>Element colours</Label>
+              <p className="text-muted-foreground text-xs">
+                Leave on “Auto” to derive from your brand &amp; accent colours.
+              </p>
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                <ColorField
+                  label="Table header"
+                  value={form.style.colors.tableHeaderBg}
+                  onChange={(v) => setColor('tableHeaderBg', v)}
+                />
+                <ColorField
+                  label="Grand-total row"
+                  value={form.style.colors.totalBg}
+                  onChange={(v) => setColor('totalBg', v)}
+                />
+                <ColorField
+                  label="Section headings"
+                  value={form.style.colors.heading}
+                  onChange={(v) => setColor('heading', v)}
+                />
+                <ColorField
+                  label="Document title"
+                  value={form.style.colors.title}
+                  onChange={(v) => setColor('title', v)}
+                />
+              </div>
+            </div>
+
+            {/* Preview details — editable sample header, preview-only. */}
+            <div className="grid gap-2">
+              <Label>Preview details</Label>
+              <p className="text-muted-foreground text-xs">
+                Sample header shown in the preview. Defaults to your real company; your actual
+                invoices always use Settings → Company.
+              </p>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="grid gap-1.5">
+                  <Label
+                    htmlFor="prev-company"
+                    className="text-muted-foreground text-xs font-normal"
+                  >
+                    Company name
+                  </Label>
+                  <Input
+                    id="prev-company"
+                    value={company.name}
+                    onChange={(e) => setCompany((c) => ({ ...c, name: e.target.value }))}
+                  />
+                </div>
+                <div className="grid gap-1.5">
+                  <Label htmlFor="prev-gstin" className="text-muted-foreground text-xs font-normal">
+                    GSTIN
+                  </Label>
+                  <Input
+                    id="prev-gstin"
+                    value={company.gstin ?? ''}
+                    onChange={(e) => setCompany((c) => ({ ...c, gstin: e.target.value || null }))}
+                  />
+                </div>
+                <div className="grid gap-1.5 sm:col-span-2">
+                  <Label htmlFor="prev-addr" className="text-muted-foreground text-xs font-normal">
+                    Address
+                  </Label>
+                  <Input
+                    id="prev-addr"
+                    value={company.address}
+                    onChange={(e) => setCompany((c) => ({ ...c, address: e.target.value }))}
+                  />
+                </div>
+              </div>
+            </div>
+
             {/* Logo — uploadable once the format exists (we need its id to attach). */}
             <div className="grid gap-1.5">
               <Label>Logo</Label>
@@ -576,6 +754,7 @@ export function InvoiceFormatEditor() {
                 fontFamily={form.fontFamily}
                 headerText={form.headerText}
                 style={form.style}
+                company={company}
               />
             </div>
           </div>

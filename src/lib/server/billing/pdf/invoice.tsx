@@ -10,10 +10,14 @@ import {
   type InvoiceLayout,
 } from '@/lib/billing/invoice-layout';
 import {
+  AMOUNT_COL_WIDTH,
   DEFAULT_INVOICE_STYLE,
+  invoiceTableColumns,
   metricsFor,
+  readableTextOn,
   type InvoiceMetrics,
   type InvoiceStyle,
+  type TableCol,
 } from '@/lib/billing/invoice-style';
 import { formatRupeesPlain, rupeesInWordsINR } from '@/lib/money';
 
@@ -145,11 +149,20 @@ type Dyn = {
   m: InvoiceMetrics;
   /** Section-heading colour (brand colour when `colorHeadings`, else near-black). */
   headingColor: string;
+  /** Document-title colour. */
+  titleColor: string;
   accent: string;
   primary: string;
   accentBand: boolean;
   emphasizeTotal: boolean;
   logoAlign: 'left' | 'center' | 'right';
+  /** Resolved table colours. */
+  tableHeaderBg: string;
+  tableHeaderText: string;
+  totalBg: string;
+  totalText: string;
+  /** Ordered, sized line-item columns. */
+  columns: TableCol[];
 };
 
 /** Merge the optional theme overlay onto neutral defaults. */
@@ -297,14 +310,21 @@ export function InvoiceDocument({ data }: { data: InvoicePdfData }): React.JSX.E
   const layout = data.layout ?? DEFAULT_INVOICE_LAYOUT;
   const style = data.style ?? DEFAULT_INVOICE_STYLE;
   const m = metricsFor(style);
+  const col = style.colors;
   const dyn: Dyn = {
     m,
-    headingColor: style.colorHeadings ? theme.primary : '#111111',
+    headingColor: col.heading ?? (style.colorHeadings ? theme.primary : '#111111'),
+    titleColor: col.title ?? theme.primary,
     accent: theme.accent,
     primary: theme.primary,
     accentBand: style.accentHeaderBand,
     emphasizeTotal: style.emphasizeTotal,
     logoAlign: style.logoAlign,
+    tableHeaderBg: col.tableHeaderBg ?? theme.accent,
+    tableHeaderText: col.tableHeaderText ?? readableTextOn(col.tableHeaderBg ?? theme.accent),
+    totalBg: col.totalBg ?? theme.accent,
+    totalText: col.totalText ?? readableTextOn(col.totalBg ?? theme.accent),
+    columns: invoiceTableColumns(style),
   };
   const isProforma = data.documentType === 'proforma';
   const title = isProforma ? 'PROFORMA INVOICE' : theme.headerText;
@@ -479,7 +499,7 @@ function MetaBlock({
             alignSelf: right ? 'flex-end' : 'flex-start',
           }}
         >
-          <Text style={{ fontSize: dyn.m.titleSize, fontWeight: 'bold', color: theme.primary }}>
+          <Text style={{ fontSize: dyn.m.titleSize, fontWeight: 'bold', color: dyn.titleColor }}>
             {title}
           </Text>
         </View>
@@ -489,10 +509,10 @@ function MetaBlock({
             right
               ? [
                   styles.metaTitle,
-                  { fontSize: dyn.m.titleSize, color: theme.primary },
+                  { fontSize: dyn.m.titleSize, color: dyn.titleColor },
                   styles.textRight,
                 ]
-              : [styles.metaTitle, { fontSize: dyn.m.titleSize, color: theme.primary }]
+              : [styles.metaTitle, { fontSize: dyn.m.titleSize, color: dyn.titleColor }]
           }
         >
           {title}
@@ -545,11 +565,52 @@ function BilledTo({
   );
 }
 
+/** Per-line GST rate label from basis points (1800 → "18%"). */
+function taxPctLabel(bps: number): string {
+  const pct = bps / 100;
+  return `${Number.isInteger(pct) ? pct : Number(pct.toFixed(2))}%`;
+}
+
+type LineRow = InvoicePdfData['lines'][number];
+
+/** The content of one body cell for a given column. */
+function lineCellContent(l: LineRow, key: TableCol['key'], qtyRateOn: boolean): React.ReactNode {
+  switch (key) {
+    case 'srNo':
+      return l.lineNo;
+    case 'description':
+      return (
+        <>
+          {l.description}
+          {!qtyRateOn && l.qty > 1 ? (
+            <Text style={{ color: '#6b7280' }}>{`  (Qty ${l.qty})`}</Text>
+          ) : null}
+        </>
+      );
+    case 'hsn':
+      return l.sacCode ?? '—';
+    case 'qty':
+      return l.qty;
+    case 'rate':
+      return formatRupeesPlain(l.ratePaise);
+    case 'taxPct':
+      return taxPctLabel(l.capturedTaxRateBps);
+    case 'amount':
+      return formatRupeesPlain(l.capturedTaxableValuePaise);
+    default:
+      return null;
+  }
+}
+
 function LinesTable({ data, dyn }: { data: InvoicePdfData; dyn: Dyn }): React.JSX.Element {
-  const headBg = { backgroundColor: dyn.accent };
-  const totalCell = dyn.emphasizeTotal
-    ? { backgroundColor: dyn.accent, fontSize: dyn.m.totalSize, color: dyn.primary }
-    : { fontSize: dyn.m.totalSize };
+  const cols = dyn.columns;
+  const qtyRateOn = cols.some((c) => c.key === 'qty');
+  const labelWidth = `${100 - AMOUNT_COL_WIDTH}%`;
+  const amtWidth = `${AMOUNT_COL_WIDTH}%`;
+  const totalExtra = dyn.emphasizeTotal
+    ? { backgroundColor: dyn.totalBg, color: dyn.totalText }
+    : {};
+
   const s = data.capturedTaxSplit;
   const summary: Array<{ label: string; valuePaise: bigint }> = [
     { label: 'Sub Total', valuePaise: data.subtotalPaise },
@@ -573,36 +634,66 @@ function LinesTable({ data, dyn }: { data: InvoicePdfData; dyn: Dyn }): React.JS
 
   return (
     <View style={styles.table}>
+      {/* Header */}
       <View style={styles.row}>
-        <Text style={[styles.cell, styles.headCell, styles.cSr, headBg]}>Sr. No.</Text>
-        <Text style={[styles.cell, styles.headCell, styles.cDesc, headBg]}>Description</Text>
-        <Text style={[styles.cell, styles.headCell, styles.cHsn, headBg]}>HSN/SAC</Text>
-        <Text style={[styles.cell, styles.headCell, styles.cAmt, headBg]}>
-          Amount in Rupees (INR)
-        </Text>
+        {cols.map((c) => (
+          <Text
+            key={c.key}
+            style={[
+              styles.cell,
+              {
+                width: `${c.width}%`,
+                textAlign: c.align,
+                backgroundColor: dyn.tableHeaderBg,
+                color: dyn.tableHeaderText,
+                fontWeight: 'bold',
+              },
+            ]}
+          >
+            {c.label}
+          </Text>
+        ))}
       </View>
+      {/* Body */}
       {data.lines.map((l) => (
         <View key={l.lineNo} style={styles.row}>
-          <Text style={[styles.cell, styles.cSr]}>{l.lineNo}</Text>
-          <Text style={[styles.cell, styles.cDesc]}>
-            {l.description}
-            {l.qty > 1 ? <Text style={{ color: '#6b7280' }}>{`  (Qty ${l.qty})`}</Text> : null}
-          </Text>
-          <Text style={[styles.cell, styles.cHsn]}>{l.sacCode ?? '—'}</Text>
-          <Text style={[styles.cell, styles.cAmt]}>
-            {formatRupeesPlain(l.capturedTaxableValuePaise)}
-          </Text>
+          {cols.map((c) => (
+            <Text key={c.key} style={[styles.cell, { width: `${c.width}%`, textAlign: c.align }]}>
+              {lineCellContent(l, c.key, qtyRateOn)}
+            </Text>
+          ))}
         </View>
       ))}
+      {/* Summary rows — label spans everything but the Amount column. */}
       {summary.map((r) => (
         <View key={r.label} style={styles.row}>
-          <Text style={[styles.cell, styles.cSummaryLabel]}>{r.label}</Text>
-          <Text style={[styles.cell, styles.cAmt]}>{formatRupeesPlain(r.valuePaise)}</Text>
+          <Text
+            style={[styles.cell, { width: labelWidth, textAlign: 'right', fontWeight: 'bold' }]}
+          >
+            {r.label}
+          </Text>
+          <Text style={[styles.cell, { width: amtWidth, textAlign: 'right' }]}>
+            {formatRupeesPlain(r.valuePaise)}
+          </Text>
         </View>
       ))}
       <View style={styles.row}>
-        <Text style={[styles.cell, styles.cSummaryLabel, styles.totalRow, totalCell]}>TOTAL</Text>
-        <Text style={[styles.cell, styles.cAmt, styles.totalRow, totalCell]}>
+        <Text
+          style={[
+            styles.cell,
+            styles.totalRow,
+            { width: labelWidth, textAlign: 'right', fontSize: dyn.m.totalSize, ...totalExtra },
+          ]}
+        >
+          TOTAL
+        </Text>
+        <Text
+          style={[
+            styles.cell,
+            styles.totalRow,
+            { width: amtWidth, textAlign: 'right', fontSize: dyn.m.totalSize, ...totalExtra },
+          ]}
+        >
           {formatRupeesPlain(data.capturedTotalPaise)}
         </Text>
       </View>
