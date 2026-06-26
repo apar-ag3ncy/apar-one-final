@@ -291,7 +291,7 @@ export function InvoiceFormatEditor() {
       </div>
 
       <Dialog open={open} onOpenChange={(v) => !busy && setOpen(v)}>
-        <DialogContent className="flex max-h-[90vh] flex-col sm:max-w-3xl">
+        <DialogContent className="flex max-h-[90vh] flex-col sm:max-w-5xl">
           <DialogHeader>
             <DialogTitle>{editingId ? 'Edit invoice format' : 'New invoice format'}</DialogTitle>
             <DialogDescription>

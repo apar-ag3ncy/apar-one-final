@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import {
   DndContext,
@@ -118,6 +118,9 @@ export function InvoiceLayoutEditor({
 }: InvoiceLayoutEditorProps) {
   const [containers, setContainers] = useState<Containers>(() => layoutToContainers(defaultValue));
   const [activeId, setActiveId] = useState<InvoiceBlockId | null>(null);
+  // Width of the grabbed card, so the floating overlay matches it and the
+  // cursor stays on the card no matter where you grab a (wide) card.
+  const [activeWidth, setActiveWidth] = useState<number | null>(null);
   const logoAlign = defaultValue.logoAlign;
 
   // Notify the parent on any change without looping on a fresh `onChange` ref.
@@ -141,6 +144,12 @@ export function InvoiceLayoutEditor({
 
   function handleDragStart(e: DragStartEvent) {
     setActiveId(e.active.id as InvoiceBlockId);
+    setActiveWidth(e.active.rect.current.initial?.width ?? null);
+  }
+
+  function handleDragCancel() {
+    setActiveId(null);
+    setActiveWidth(null);
   }
 
   function handleDragOver(e: DragOverEvent) {
@@ -172,6 +181,7 @@ export function InvoiceLayoutEditor({
   function handleDragEnd(e: DragEndEvent) {
     const { active, over } = e;
     setActiveId(null);
+    setActiveWidth(null);
     if (!over) return;
     const from = findContainer(containers, active.id);
     const to = findContainer(containers, over.id);
@@ -214,8 +224,9 @@ export function InvoiceLayoutEditor({
       onDragStart={handleDragStart}
       onDragOver={handleDragOver}
       onDragEnd={handleDragEnd}
+      onDragCancel={handleDragCancel}
     >
-      <div className="grid gap-4 lg:grid-cols-[1fr_minmax(220px,260px)]">
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(300px,380px)]">
         {/* The board */}
         <div className="space-y-2">
           <div className="grid grid-cols-2 gap-2">
@@ -276,10 +287,15 @@ export function InvoiceLayoutEditor({
               {activeId ? (
                 <div
                   data-testid="layout-drag-overlay"
-                  className="bg-background flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs shadow-md"
+                  // Match the grabbed card's width so the cursor stays on it.
+                  style={{ width: activeWidth ?? undefined }}
+                  className="bg-background ring-primary flex cursor-grabbing items-center gap-1.5 rounded-md border px-1.5 py-1 text-xs shadow-lg ring-1"
                 >
-                  <GripVerticalIcon className="size-3.5 opacity-60" aria-hidden />
-                  {BLOCK_LABELS[activeId]}
+                  <GripVerticalIcon
+                    className="text-muted-foreground size-3.5 shrink-0"
+                    aria-hidden
+                  />
+                  <span className="flex-1 truncate">{BLOCK_LABELS[activeId]}</span>
                 </div>
               ) : null}
             </DragOverlay>,
@@ -348,30 +364,28 @@ function Chip({
     transition,
     opacity: isDragging ? 0.4 : 1,
   };
+  // The WHOLE card is the drag handle — grab it anywhere. The eye button stops
+  // pointer propagation so a click toggles instead of starting a drag.
   return (
     <div
       ref={setNodeRef}
+      data-block={id}
       style={style}
       className={cn(
-        'bg-background flex items-center gap-1.5 rounded-md border px-1.5 py-1 text-xs',
+        'bg-background flex cursor-grab touch-none items-center gap-1.5 rounded-md border px-1.5 py-1 text-xs select-none active:cursor-grabbing',
         hidden && 'opacity-70',
       )}
+      {...attributes}
+      {...listeners}
     >
-      <button
-        type="button"
-        className="text-muted-foreground hover:text-foreground cursor-grab touch-none active:cursor-grabbing"
-        aria-label={`Drag ${BLOCK_LABELS[id]}`}
-        {...attributes}
-        {...listeners}
-      >
-        <GripVerticalIcon className="size-3.5" aria-hidden />
-      </button>
+      <GripVerticalIcon className="text-muted-foreground size-3.5 shrink-0" aria-hidden />
       <span className="flex-1 truncate">{BLOCK_LABELS[id]}</span>
       <button
         type="button"
         className="text-muted-foreground hover:text-foreground"
         aria-label={hidden ? `Show ${BLOCK_LABELS[id]}` : `Hide ${BLOCK_LABELS[id]}`}
         title={hidden ? 'Show on invoice' : 'Hide from invoice'}
+        onPointerDown={(e) => e.stopPropagation()}
         onClick={() => onToggle(id)}
       >
         {hidden ? (
@@ -385,8 +399,52 @@ function Chip({
 }
 
 /* -------------------------------------------------------------------------- */
-/* Live preview — a scaled approximation of the invoice                       */
+/* Live preview — a realistic, proportionally-scaled mini-invoice so the user  */
+/* sees how much space each block actually takes.                              */
 /* -------------------------------------------------------------------------- */
+
+const MUTED = '#6b7280';
+
+// Representative content so block heights reflect the real invoice footprint.
+const MOCK = {
+  company: 'Apar Creative LLP',
+  companyLines: [
+    '4th Floor, Trade House, Lower Parel, Mumbai 400013',
+    'GSTIN 27ABCDE1234F1Z5',
+    'PAN ABCDE1234F',
+  ],
+  metaLines: [
+    'Invoice: INV/2026-27/0007',
+    'Date: 26 Jun 2026',
+    'Due by: 26 Jul 2026',
+    'Place of supply: Maharashtra',
+  ],
+  client: 'Lodha Group',
+  clientLines: [
+    'One Lodha Place, Lower Parel',
+    'Mumbai, Maharashtra 400013',
+    'GSTIN 27LODHA1234A1Z3',
+  ],
+  amountWords: 'Rupees Seven Lakh Nineteen Thousand Eight Hundred Only',
+  terms: 'Net 30. Interest @ 18% p.a. on balances overdue beyond the due date.',
+  notes: 'Thank you for partnering with Apar Creative.',
+  payment: [
+    ['Beneficiary', 'Apar Creative LLP'],
+    ['Bank', 'HDFC Bank'],
+    ['A/c No.', '50200012345678'],
+    ['IFSC', 'HDFC0000123'],
+  ] as const,
+  items: [
+    ['1', 'Brand identity refresh — Phase 1', '9983', '2,50,000.00'],
+    ['2', 'Festive campaign films (3 × 30s)', '9983', '3,60,000.00'],
+  ] as const,
+  summary: [
+    ['Sub Total', '6,10,000.00'],
+    ['CGST @ 9%', '54,900.00'],
+    ['SGST @ 9%', '54,900.00'],
+  ] as const,
+  total: '7,19,800.00',
+};
 
 function LayoutPreview({
   containers,
@@ -409,63 +467,49 @@ function LayoutPreview({
       : fontFamily === 'Courier'
         ? 'monospace'
         : 'sans-serif';
-  const fs = style.fontScale;
+  const pad = style.density === 'relaxed' ? 16 : style.density === 'compact' ? 8 : 12;
+  const gap = style.density === 'relaxed' ? 11 : style.density === 'compact' ? 5 : 8;
   const ctx = { primaryColor, accentColor, headerText, style };
 
   return (
-    <div className="space-y-1">
-      <div className="text-muted-foreground text-[11px] font-medium tracking-wide uppercase">
+    <div className="space-y-1 lg:sticky lg:top-0">
+      <div className="text-muted-foreground flex items-baseline gap-1.5 text-[11px] font-medium tracking-wide uppercase">
         Preview
+        <span className="text-[10px] normal-case opacity-70">live · approximate spacing</span>
       </div>
       <div
-        className="bg-background mx-auto aspect-[1/1.414] w-full overflow-hidden rounded-md border leading-tight shadow-sm"
-        style={{
-          fontFamily: font,
-          padding: style.density === 'relaxed' ? 12 : style.density === 'compact' ? 5 : 8,
-        }}
+        className="mx-auto aspect-[1/1.414] w-full max-w-[380px] overflow-hidden rounded-md border bg-white leading-snug text-black shadow-sm"
+        style={{ fontFamily: font, padding: pad }}
       >
-        {/* Header */}
-        <div className="flex items-start justify-between gap-2">
-          <div className="flex w-1/2 flex-col gap-1">
+        {/* Header — two columns */}
+        <div className="flex items-start justify-between" style={{ gap }}>
+          <div className="flex flex-col" style={{ width: '56%', gap: gap * 0.6 }}>
             {containers.headerLeft.map((id) => (
               <PreviewBlock key={id} id={id} {...ctx} />
             ))}
           </div>
-          <div className="flex w-1/2 flex-col items-end gap-1">
+          <div className="flex flex-col items-end" style={{ width: '42%', gap: gap * 0.6 }}>
             {containers.headerRight.map((id) => (
               <PreviewBlock key={id} id={id} align="right" {...ctx} />
             ))}
           </div>
         </div>
-        <div className="my-1.5 h-px" style={{ backgroundColor: primaryColor }} />
-        {/* Above table */}
-        <div className="flex flex-col gap-1">
+        <div
+          className="h-px"
+          style={{ backgroundColor: primaryColor, marginTop: gap, marginBottom: gap }}
+        />
+        {/* Above the table */}
+        <div className="flex flex-col" style={{ gap }}>
           {containers.aboveTable.map((id) => (
             <PreviewBlock key={id} id={id} {...ctx} />
           ))}
         </div>
-        {/* Fixed table */}
-        <div className="my-1 overflow-hidden rounded-sm border border-dashed">
-          <div
-            className="px-1 py-0.5 text-center"
-            style={{ backgroundColor: accentColor, color: primaryColor, fontSize: 5 * fs }}
-          >
-            Line items &amp; tax table
-          </div>
-          <div
-            className="flex justify-between px-1 py-0.5 font-semibold"
-            style={{
-              fontSize: 5 * fs,
-              backgroundColor: style.emphasizeTotal ? accentColor : undefined,
-              color: style.emphasizeTotal ? primaryColor : undefined,
-            }}
-          >
-            <span>TOTAL</span>
-            <span>₹ —</span>
-          </div>
+        {/* Fixed line-items + tax table */}
+        <div style={{ marginTop: gap, marginBottom: gap }}>
+          <PreviewTable {...ctx} />
         </div>
-        {/* Below table */}
-        <div className="flex flex-col gap-1">
+        {/* Below the table */}
+        <div className="flex flex-col" style={{ gap }}>
           {containers.belowTable.map((id) => (
             <PreviewBlock key={id} id={id} {...ctx} />
           ))}
@@ -475,65 +519,269 @@ function LayoutPreview({
   );
 }
 
-function PreviewBlock({
-  id,
-  align = 'left',
-  primaryColor,
-  accentColor,
-  headerText,
-  style,
-}: {
-  id: InvoiceBlockId;
-  align?: 'left' | 'right';
+type Ctx = {
   primaryColor: string;
   accentColor: string;
   headerText: string;
   style: InvoiceStyle;
-}) {
+};
+
+/** A small label/value line used inside several blocks. */
+function Line({ children, size, color }: { children: ReactNode; size: number; color?: string }) {
+  return (
+    <div style={{ fontSize: size, color }} className="truncate">
+      {children}
+    </div>
+  );
+}
+
+function PreviewBlock({
+  id,
+  align = 'left',
+  ...ctx
+}: { id: InvoiceBlockId; align?: 'left' | 'right' } & Ctx) {
+  const { primaryColor, accentColor, headerText, style } = ctx;
   const fs = style.fontScale;
-  if (id === 'logo') {
-    const h = style.logoSize === 'sm' ? 8 : style.logoSize === 'lg' ? 16 : 12;
-    const w = style.logoSize === 'sm' ? 26 : style.logoSize === 'lg' ? 46 : 36;
-    const self =
-      style.logoAlign === 'center'
-        ? 'mx-auto'
-        : style.logoAlign === 'right'
-          ? 'ml-auto'
-          : 'mr-auto';
-    return (
-      <div
-        className={cn('flex items-center justify-center rounded-sm border border-dashed', self)}
-        style={{ color: primaryColor, height: h, width: w, fontSize: 4 * fs }}
-      >
-        LOGO
-      </div>
-    );
-  }
-  const label = id === 'meta' ? headerText || 'TAX INVOICE' : BLOCK_LABELS[id];
-  const isTitle = id === 'meta';
-  const emphatic = isTitle || id === 'supplier';
-  // The title gets an accent band when enabled.
-  if (isTitle && style.accentHeaderBand) {
-    return (
-      <div className={cn('flex', align === 'right' ? 'justify-end' : 'justify-start')}>
+  const body = 6.8 * fs;
+  const muted = 6 * fs;
+  const name = 9 * fs;
+  const headingColor = style.colorHeadings ? primaryColor : '#111111';
+  const right = align === 'right';
+
+  switch (id) {
+    case 'logo': {
+      const h = style.logoSize === 'sm' ? 14 : style.logoSize === 'lg' ? 30 : 20;
+      const w = style.logoSize === 'sm' ? 50 : style.logoSize === 'lg' ? 92 : 70;
+      const self =
+        style.logoAlign === 'center'
+          ? 'mx-auto'
+          : style.logoAlign === 'right'
+            ? 'ml-auto'
+            : 'mr-auto';
+      return (
         <div
-          className="rounded-sm px-1 py-0.5 font-semibold"
-          style={{ backgroundColor: accentColor, color: primaryColor, fontSize: 5 * fs }}
+          className={cn('flex items-center justify-center rounded-sm border border-dashed', self)}
+          style={{
+            color: primaryColor,
+            borderColor: primaryColor,
+            height: h,
+            width: w,
+            fontSize: 5 * fs,
+          }}
         >
-          {label}
+          LOGO
         </div>
-      </div>
-    );
+      );
+    }
+    case 'supplier':
+      return (
+        <div className={right ? 'text-right' : 'text-left'}>
+          <div style={{ fontSize: name, fontWeight: 700 }} className="truncate">
+            {MOCK.company}
+          </div>
+          {MOCK.companyLines.map((l, i) => (
+            <Line key={i} size={muted} color={MUTED}>
+              {l}
+            </Line>
+          ))}
+        </div>
+      );
+    case 'meta':
+      return (
+        <div className={right ? 'text-right' : 'text-left'}>
+          {style.accentHeaderBand ? (
+            <div className={cn('mb-0.5 flex', right ? 'justify-end' : 'justify-start')}>
+              <span
+                className="rounded-sm px-1.5 py-0.5 font-bold"
+                style={{ backgroundColor: accentColor, color: primaryColor, fontSize: 9.5 * fs }}
+              >
+                {headerText || 'TAX INVOICE'}
+              </span>
+            </div>
+          ) : (
+            <div
+              style={{ fontSize: 9.5 * fs, fontWeight: 700, color: primaryColor }}
+              className="truncate"
+            >
+              {headerText || 'TAX INVOICE'}
+            </div>
+          )}
+          {MOCK.metaLines.map((l, i) => (
+            <Line key={i} size={body}>
+              {l}
+            </Line>
+          ))}
+        </div>
+      );
+    case 'billTo':
+      return (
+        <div className={right ? 'text-right' : 'text-left'}>
+          <Line size={muted} color={MUTED}>
+            Billed To,
+          </Line>
+          <div style={{ fontSize: name * 0.95, fontWeight: 700 }} className="truncate">
+            {MOCK.client}
+          </div>
+          {MOCK.clientLines.map((l, i) => (
+            <Line key={i} size={body}>
+              {l}
+            </Line>
+          ))}
+        </div>
+      );
+    case 'amountWords':
+      return (
+        <div style={{ fontSize: body, fontStyle: 'italic' }} className="truncate">
+          {MOCK.amountWords}
+        </div>
+      );
+    case 'terms':
+      return (
+        <div>
+          <div style={{ fontSize: body, fontWeight: 700, color: headingColor }}>Terms</div>
+          <div style={{ fontSize: body }}>{MOCK.terms}</div>
+        </div>
+      );
+    case 'notes':
+      return (
+        <div>
+          <div style={{ fontSize: body, fontWeight: 700, color: headingColor }}>Notes</div>
+          <div style={{ fontSize: body }}>{MOCK.notes}</div>
+        </div>
+      );
+    case 'payment':
+      return (
+        <div className="rounded-sm border" style={{ borderColor: '#d1d5db', padding: 5 }}>
+          <div style={{ fontSize: body, fontWeight: 700, color: headingColor }} className="mb-0.5">
+            Payment details
+          </div>
+          {MOCK.payment.map(([k, v]) => (
+            <div key={k} className="flex gap-2" style={{ fontSize: muted }}>
+              <span style={{ width: '34%', color: MUTED }}>{k}</span>
+              <span className="flex-1 truncate">{v}</span>
+            </div>
+          ))}
+        </div>
+      );
+    case 'paymentLink':
+      return (
+        <div className="rounded-sm" style={{ backgroundColor: '#eff6ff', padding: 4 }}>
+          <div style={{ fontSize: body, fontWeight: 700, color: headingColor }}>Pay online</div>
+          <Line size={muted} color="#2563eb">
+            https://rzp.io/i/sample-link
+          </Line>
+        </div>
+      );
+    case 'signatory':
+      return (
+        <div className="ml-auto text-right" style={{ width: '48%' }}>
+          <div style={{ fontSize: body, fontWeight: 700, color: headingColor }}>
+            For {MOCK.company}
+          </div>
+          <div style={{ height: 16 * fs }} />
+          <Line size={body}>Authorised Signatory</Line>
+        </div>
+      );
+    default:
+      return null;
   }
+}
+
+/** One bordered table cell for the preview. Hoisted (not defined in render). */
+function Cell({
+  children,
+  w,
+  size,
+  border,
+  right,
+  st,
+}: {
+  children: ReactNode;
+  w: string;
+  size: number;
+  border: string;
+  right?: boolean;
+  st?: CSSProperties;
+}) {
   return (
     <div
-      className={cn(
-        'bg-muted/60 rounded-sm px-1 py-0.5',
-        align === 'right' ? 'text-right' : 'text-left',
-      )}
-      style={{ fontSize: 5 * fs, color: emphatic ? primaryColor : undefined }}
+      style={{
+        width: w,
+        fontSize: size,
+        borderRight: `0.5px solid ${border}`,
+        borderBottom: `0.5px solid ${border}`,
+        padding: '2px 3px',
+        ...st,
+      }}
+      className={cn('truncate', right && 'text-right')}
     >
-      {label}
+      {children}
+    </div>
+  );
+}
+
+/** The fixed GST line-items + tax-summary table — always present. */
+function PreviewTable({ primaryColor, accentColor, style }: Ctx) {
+  const cell = 6 * style.fontScale;
+  const border = '#9ca3af';
+  const head: CSSProperties = {
+    backgroundColor: accentColor,
+    color: primaryColor,
+    fontWeight: 700,
+  };
+  const totalStyle: CSSProperties = style.emphasizeTotal
+    ? { backgroundColor: accentColor, color: primaryColor, fontWeight: 700 }
+    : { fontWeight: 700 };
+  return (
+    <div style={{ borderTop: `0.5px solid ${border}`, borderLeft: `0.5px solid ${border}` }}>
+      <div className="flex">
+        <Cell w="11%" size={cell} border={border} st={head}>
+          Sr.
+        </Cell>
+        <Cell w="49%" size={cell} border={border} st={head}>
+          Description
+        </Cell>
+        <Cell w="16%" size={cell} border={border} st={head}>
+          HSN/SAC
+        </Cell>
+        <Cell w="24%" size={cell} border={border} right st={head}>
+          Amount (INR)
+        </Cell>
+      </div>
+      {MOCK.items.map((it) => (
+        <div className="flex" key={it[0]}>
+          <Cell w="11%" size={cell} border={border}>
+            {it[0]}
+          </Cell>
+          <Cell w="49%" size={cell} border={border}>
+            {it[1]}
+          </Cell>
+          <Cell w="16%" size={cell} border={border}>
+            {it[2]}
+          </Cell>
+          <Cell w="24%" size={cell} border={border} right>
+            {it[3]}
+          </Cell>
+        </div>
+      ))}
+      {MOCK.summary.map(([k, v]) => (
+        <div className="flex" key={k}>
+          <Cell w="76%" size={cell} border={border} right st={{ fontWeight: 700 }}>
+            {k}
+          </Cell>
+          <Cell w="24%" size={cell} border={border} right>
+            {v}
+          </Cell>
+        </div>
+      ))}
+      <div className="flex">
+        <Cell w="76%" size={cell} border={border} right st={totalStyle}>
+          TOTAL
+        </Cell>
+        <Cell w="24%" size={cell} border={border} right st={totalStyle}>
+          {MOCK.total}
+        </Cell>
+      </div>
     </div>
   );
 }

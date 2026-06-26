@@ -19,6 +19,8 @@ import {
 } from '@/lib/server/entities/attendance';
 import { defaultStatusForDate } from '@/lib/attendance-defaults';
 import { osActions } from '@/lib/os/store';
+import { ExportAttendanceDialog } from '@/components/attendance/export-attendance-dialog';
+import { ImportAttendanceDialog } from '@/components/attendance/import-attendance-dialog';
 
 const STATUS_LABEL: Record<AttendanceStatus, string> = {
   present: 'Present',
@@ -347,6 +349,9 @@ export function AttendanceApp() {
           >
             Today
           </button>
+          <span style={{ width: 1, height: 20, background: 'var(--border)', margin: '0 2px' }} />
+          <ExportAttendanceDialog />
+          <ImportAttendanceDialog onImported={reload} />
         </div>
       </div>
 
