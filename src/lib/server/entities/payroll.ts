@@ -4,10 +4,22 @@ import { and, desc, eq, isNull, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { db } from '@/lib/db/client';
-import { bonusesAndPerks, leaves, reimbursements, salaryStructures } from '@/lib/db/schema';
+import {
+  bonusesAndPerks,
+  employees,
+  leaves,
+  reimbursements,
+  salaryPayments,
+  salaryStructures,
+} from '@/lib/db/schema';
 import { AppError } from '@/lib/errors';
 import { requireCapability } from '@/lib/rbac';
 import { getActorContext } from '@/lib/server/actor';
+import {
+  createDraftTransaction,
+  postTransaction,
+  reverseTransaction,
+} from '@/lib/server/ledger/transactions';
 
 /**
  * Payroll capture surfaces — SPEC-AMENDMENT-001 §9. Apar never computes
@@ -483,4 +495,214 @@ export async function createSalaryStructure(
   });
 
   return { id: newId };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Salary payments (disbursements actually given out)                          */
+/* -------------------------------------------------------------------------- */
+
+export type SalaryPaymentRow = {
+  id: string;
+  paidOn: string;
+  amountPaise: bigint;
+  notes: string | null;
+  /** Ledger transaction this payment posted to (open it in the txn window). */
+  transactionId: string | null;
+};
+
+const RecordSalaryPaymentSchema = z.object({
+  employeeId: z.string().uuid(),
+  paidOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'paid_on must be YYYY-MM-DD'),
+  amountPaise: PaiseBigInt.refine((v) => v > 0n, 'amount must be greater than 0'),
+  notes: z.string().max(2000).nullable().optional(),
+});
+
+export type RecordSalaryPaymentInput = z.input<typeof RecordSalaryPaymentSchema>;
+
+/**
+ * Record a salary disbursement (amount + date) actually paid to an employee.
+ * Captured, not computed. Posts a real double-entry transaction
+ * (Dr 6100 Salaries & Wages / Cr 1110 Cash on Hand) attributed to the employee
+ * on the header, then stores a capture row linking to it — so the payment shows
+ * in the company books, deducts office cash, and feeds the per-employee book.
+ */
+export async function recordSalaryPayment(
+  input: RecordSalaryPaymentInput,
+): Promise<{ id: string; transactionId: string }> {
+  const ctx = await getActorContext();
+  requireCapability(ctx, 'manage_salary_structures');
+  // Posting the entry needs both — fail fast rather than leave an orphan draft.
+  requireCapability(ctx, 'post_transaction');
+  const parsed = RecordSalaryPaymentSchema.parse(input);
+
+  const externalRef = `SAL-${parsed.paidOn}-${parsed.employeeId.slice(0, 8)}-${Date.now()}`;
+  const { transactionId } = await createDraftTransaction(ctx, {
+    kind: 'salary_disbursement',
+    input: {
+      employeeId: parsed.employeeId,
+      amountPaise: parsed.amountPaise,
+      txnDate: parsed.paidOn,
+      externalRef,
+      notes: parsed.notes ?? null,
+    },
+  });
+  await postTransaction(ctx, { transactionId });
+
+  const [row] = await db
+    .insert(salaryPayments)
+    .values({
+      employeeId: parsed.employeeId,
+      paidOn: parsed.paidOn,
+      amountPaise: parsed.amountPaise,
+      notes: parsed.notes ?? null,
+      transactionId,
+      createdBy: ctx.userId,
+      updatedBy: ctx.userId,
+    })
+    .returning({ id: salaryPayments.id });
+  if (!row) throw new AppError('internal', 'salary_payments insert returned no row');
+  return { id: row.id, transactionId };
+}
+
+export async function listEmployeeSalaryPayments(
+  employeeId: string,
+): Promise<readonly SalaryPaymentRow[]> {
+  const ctx = await getActorContext();
+  requireCapability(ctx, 'view_salary');
+  const rows = await db
+    .select({
+      id: salaryPayments.id,
+      paidOn: salaryPayments.paidOn,
+      amountPaise: salaryPayments.amountPaise,
+      notes: salaryPayments.notes,
+      transactionId: salaryPayments.transactionId,
+    })
+    .from(salaryPayments)
+    .where(and(eq(salaryPayments.employeeId, employeeId), isNull(salaryPayments.deletedAt)))
+    .orderBy(desc(salaryPayments.paidOn))
+    .limit(100);
+  return rows;
+}
+
+/**
+ * Remove a salary payment: reverse its ledger transaction (a paired reversal,
+ * never a delete) and soft-delete the capture row, so the office balance and
+ * the per-employee book both drop back.
+ */
+export async function deleteSalaryPayment(id: string): Promise<void> {
+  const ctx = await getActorContext();
+  requireCapability(ctx, 'manage_salary_structures');
+  const [row] = await db
+    .select({ id: salaryPayments.id, transactionId: salaryPayments.transactionId })
+    .from(salaryPayments)
+    .where(and(eq(salaryPayments.id, id), isNull(salaryPayments.deletedAt)))
+    .limit(1);
+  if (!row) return;
+  if (row.transactionId) {
+    requireCapability(ctx, 'reverse_transaction');
+    await reverseTransaction(ctx, {
+      transactionId: row.transactionId,
+      reason: 'Salary payment deleted from the Salary Book.',
+    });
+  }
+  await db
+    .update(salaryPayments)
+    .set({ deletedAt: new Date(), updatedBy: ctx.userId })
+    .where(eq(salaryPayments.id, id));
+}
+
+export type SalaryPaymentsSummary = {
+  /** Sum of all (non-deleted) salary payments in range — the office deduction. */
+  totalPaise: bigint;
+  count: number;
+  latestPaidOn: string | null;
+};
+
+/**
+ * Cumulative salary disbursed across all employees, optionally within a date
+ * range (paid_on). Backs the Office app KPI and the Office Ledger's
+ * net-of-salaries figure. Aggregate only — not gated by `view_salary`, mirroring
+ * the office cash/expense summaries.
+ */
+export async function getSalaryPaymentsSummary(args?: {
+  from?: string;
+  to?: string;
+}): Promise<SalaryPaymentsSummary> {
+  await getActorContext();
+  const conds = [isNull(salaryPayments.deletedAt)];
+  if (args?.from) conds.push(sql`${salaryPayments.paidOn} >= ${args.from}`);
+  if (args?.to) conds.push(sql`${salaryPayments.paidOn} <= ${args.to}`);
+
+  const [row] = await db
+    .select({
+      total: sql<string>`coalesce(sum(${salaryPayments.amountPaise}), 0)::text`,
+      count: sql<string>`count(*)::text`,
+      latest: sql<string | null>`max(${salaryPayments.paidOn})::text`,
+    })
+    .from(salaryPayments)
+    .where(and(...conds));
+
+  return {
+    totalPaise: row ? BigInt(row.total) : 0n,
+    count: row ? Number(row.count) : 0,
+    latestPaidOn: row?.latest ?? null,
+  };
+}
+
+export type SalaryBookRow = {
+  employeeId: string;
+  employeeName: string;
+  employeeCode: string;
+  totalPaise: bigint;
+  count: number;
+  lastPaidOn: string | null;
+};
+
+export type SalaryBook = {
+  rows: readonly SalaryBookRow[];
+  totalPaise: bigint;
+};
+
+/**
+ * Per-employee salary book — how much each employee has been paid, optionally
+ * within a date range (paid_on), highest first. Backs the dedicated Salary Book
+ * window and the Office Ledger's per-employee breakdown. Mirrors the posted
+ * ledger transactions one-to-one. Aggregate only — not gated by `view_salary`,
+ * mirroring the office cash/expense summaries.
+ */
+export async function getSalaryBook(args?: { from?: string; to?: string }): Promise<SalaryBook> {
+  await getActorContext();
+  const conds = [isNull(salaryPayments.deletedAt)];
+  if (args?.from) conds.push(sql`${salaryPayments.paidOn} >= ${args.from}`);
+  if (args?.to) conds.push(sql`${salaryPayments.paidOn} <= ${args.to}`);
+
+  const rows = await db
+    .select({
+      employeeId: salaryPayments.employeeId,
+      employeeName: employees.fullName,
+      employeeCode: employees.employeeCode,
+      total: sql<string>`sum(${salaryPayments.amountPaise})::text`,
+      count: sql<string>`count(*)::text`,
+      last: sql<string | null>`max(${salaryPayments.paidOn})::text`,
+    })
+    .from(salaryPayments)
+    .innerJoin(employees, eq(employees.id, salaryPayments.employeeId))
+    .where(and(...conds))
+    .groupBy(salaryPayments.employeeId, employees.fullName, employees.employeeCode)
+    .orderBy(sql`sum(${salaryPayments.amountPaise}) desc`);
+
+  let total = 0n;
+  const mapped = rows.map((r) => {
+    const totalPaise = BigInt(r.total);
+    total += totalPaise;
+    return {
+      employeeId: r.employeeId,
+      employeeName: r.employeeName,
+      employeeCode: r.employeeCode,
+      totalPaise,
+      count: Number(r.count),
+      lastPaidOn: r.last,
+    };
+  });
+  return { rows: mapped, totalPaise: total };
 }

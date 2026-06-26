@@ -64,7 +64,9 @@ async function runOne(
     case 'document_missing':
       if (
         !template.sourceDocumentId &&
-        !['journal', 'inter_bank_transfer'].includes(inputs.kind) &&
+        !['journal', 'inter_bank_transfer', 'salary_disbursement', 'bonus_payment'].includes(
+          inputs.kind,
+        ) &&
         template.sourceKind !== 'opening_balance'
       ) {
         const flag: ValidationFlag = {
