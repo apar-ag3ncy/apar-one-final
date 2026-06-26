@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   DndContext,
   DragOverlay,
@@ -265,14 +266,26 @@ export function InvoiceLayoutEditor({
         />
       </div>
 
-      <DragOverlay>
-        {activeId ? (
-          <div className="bg-background flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs shadow-md">
-            <GripVerticalIcon className="size-3.5 opacity-60" aria-hidden />
-            {BLOCK_LABELS[activeId]}
-          </div>
-        ) : null}
-      </DragOverlay>
+      {/* Portal the drag overlay to <body> so it escapes the Dialog's centering
+          transform. A transformed ancestor becomes the containing block for a
+          position:fixed overlay, which otherwise offsets the floating card far
+          from the cursor (it's rendered inside the translate-x/y-50% dialog). */}
+      {typeof document !== 'undefined'
+        ? createPortal(
+            <DragOverlay>
+              {activeId ? (
+                <div
+                  data-testid="layout-drag-overlay"
+                  className="bg-background flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs shadow-md"
+                >
+                  <GripVerticalIcon className="size-3.5 opacity-60" aria-hidden />
+                  {BLOCK_LABELS[activeId]}
+                </div>
+              ) : null}
+            </DragOverlay>,
+            document.body,
+          )
+        : null}
     </DndContext>
   );
 }
