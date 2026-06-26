@@ -128,6 +128,7 @@ describe('renderInvoicePdf', () => {
           heading: '#0B5E3B',
           title: '#0B5E3B',
         },
+        margins: { top: 22, right: 18, bottom: 24, left: 18 },
       },
       layout: {
         version: 1,

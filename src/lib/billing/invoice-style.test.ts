@@ -55,11 +55,22 @@ describe('metricsFor', () => {
     expect(metricsFor({ ...DEFAULT_INVOICE_STYLE, fontScale: 1.25 }).fontSize).toBeGreaterThan(9);
   });
 
-  it('maps density + logo size to concrete metrics', () => {
+  it('maps density (block gap) + logo size to concrete metrics', () => {
     const compact = metricsFor({ ...DEFAULT_INVOICE_STYLE, density: 'compact', logoSize: 'sm' });
     const relaxed = metricsFor({ ...DEFAULT_INVOICE_STYLE, density: 'relaxed', logoSize: 'lg' });
-    expect(relaxed.pagePadTop).toBeGreaterThan(compact.pagePadTop);
+    expect(relaxed.blockGap).toBeGreaterThan(compact.blockGap);
     expect(relaxed.logoHeight).toBeGreaterThan(compact.logoHeight);
+  });
+
+  it('turns margins (mm) into page padding (pt)', () => {
+    const m = metricsFor({
+      ...DEFAULT_INVOICE_STYLE,
+      margins: { top: 10, right: 20, bottom: 30, left: 40 },
+    });
+    // 1mm ≈ 2.83pt, so left (40mm) > top (10mm), and all are positive.
+    expect(m.padLeft).toBeGreaterThan(m.padTop);
+    expect(m.padBottom).toBeGreaterThan(m.padRight);
+    expect(m.padTop).toBeGreaterThan(20); // 10mm ≈ 28pt
   });
 });
 

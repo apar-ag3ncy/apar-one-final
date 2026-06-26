@@ -37,9 +37,14 @@ import {
 import { INVOICE_FONTS } from '@/lib/billing/invoice-fonts';
 import { InvoiceLayoutEditor } from '@/components/settings/invoice-layout-editor';
 import { getCompanyPreview, type CompanyPreview } from '@/lib/server/settings/company';
-import type { InvoiceColumns, InvoiceColors } from '@/lib/billing/invoice-style';
+import type { InvoiceColumns, InvoiceColors, InvoiceMargins } from '@/lib/billing/invoice-style';
 import { DEFAULT_INVOICE_LAYOUT, type InvoiceLayout } from '@/lib/billing/invoice-layout';
-import { DEFAULT_INVOICE_STYLE, type InvoiceStyle } from '@/lib/billing/invoice-style';
+import {
+  DEFAULT_INVOICE_STYLE,
+  MARGIN_MAX_MM,
+  MARGIN_MIN_MM,
+  type InvoiceStyle,
+} from '@/lib/billing/invoice-style';
 
 type Form = {
   name: string;
@@ -128,6 +133,7 @@ export function InvoiceFormatEditor() {
     address: '',
     gstin: null,
     pan: null,
+    logoUrl: null,
   });
 
   const reload = useCallback(() => {
@@ -164,6 +170,16 @@ export function InvoiceFormatEditor() {
   }
   function setColor<K extends keyof InvoiceColors>(key: K, value: InvoiceColors[K]) {
     setForm((f) => ({ ...f, style: { ...f.style, colors: { ...f.style.colors, [key]: value } } }));
+  }
+  function setMargin(key: keyof InvoiceMargins, raw: string) {
+    const n = Math.round(Number(raw));
+    const value = Number.isFinite(n)
+      ? Math.min(MARGIN_MAX_MM, Math.max(MARGIN_MIN_MM, n))
+      : MARGIN_MIN_MM;
+    setForm((f) => ({
+      ...f,
+      style: { ...f.style, margins: { ...f.style.margins, [key]: value } },
+    }));
   }
 
   function openCreate() {
@@ -642,6 +658,34 @@ export function InvoiceFormatEditor() {
                   value={form.style.colors.title}
                   onChange={(v) => setColor('title', v)}
                 />
+              </div>
+            </div>
+
+            {/* Page margins (mm) */}
+            <div className="grid gap-2">
+              <Label>Page margins (mm)</Label>
+              <p className="text-muted-foreground text-xs">
+                Whitespace around the page edges. The preview updates as you type.
+              </p>
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                {(['top', 'right', 'bottom', 'left'] as const).map((side) => (
+                  <div key={side} className="grid gap-1.5">
+                    <Label
+                      htmlFor={`mg-${side}`}
+                      className="text-muted-foreground text-xs font-normal capitalize"
+                    >
+                      {side}
+                    </Label>
+                    <Input
+                      id={`mg-${side}`}
+                      type="number"
+                      min={MARGIN_MIN_MM}
+                      max={MARGIN_MAX_MM}
+                      value={form.style.margins[side]}
+                      onChange={(e) => setMargin(side, e.target.value)}
+                    />
+                  </div>
+                ))}
               </div>
             </div>
 

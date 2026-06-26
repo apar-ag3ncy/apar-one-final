@@ -496,8 +496,10 @@ function LayoutPreview({
       : fontFamily === 'Courier'
         ? 'monospace'
         : 'sans-serif';
-  const pad = style.density === 'relaxed' ? 16 : style.density === 'compact' ? 8 : 12;
   const gap = style.density === 'relaxed' ? 11 : style.density === 'compact' ? 5 : 8;
+  // The preview card is ~360px wide for a 210mm-wide A4 page.
+  const pxPerMm = 360 / 210;
+  const mg = style.margins;
   const ctx = { primaryColor, accentColor, headerText, style, company };
 
   return (
@@ -507,8 +509,14 @@ function LayoutPreview({
         <span className="text-[10px] normal-case opacity-70">live · approximate spacing</span>
       </div>
       <div
-        className="mx-auto aspect-[1/1.414] w-full max-w-[380px] overflow-hidden rounded-md border bg-white leading-snug text-black shadow-sm"
-        style={{ fontFamily: font, padding: pad }}
+        className="mx-auto aspect-[1/1.414] w-[360px] max-w-full overflow-hidden rounded-md border bg-white leading-snug text-black shadow-sm"
+        style={{
+          fontFamily: font,
+          paddingTop: mg.top * pxPerMm,
+          paddingRight: mg.right * pxPerMm,
+          paddingBottom: mg.bottom * pxPerMm,
+          paddingLeft: mg.left * pxPerMm,
+        }}
       >
         {/* Header — two columns */}
         <div className="flex items-start justify-between" style={{ gap }}>
@@ -586,14 +594,25 @@ function PreviewBlock({
 
   switch (id) {
     case 'logo': {
-      const h = style.logoSize === 'sm' ? 14 : style.logoSize === 'lg' ? 30 : 20;
-      const w = style.logoSize === 'sm' ? 50 : style.logoSize === 'lg' ? 92 : 70;
+      const h = style.logoSize === 'sm' ? 16 : style.logoSize === 'lg' ? 34 : 24;
+      const w = style.logoSize === 'sm' ? 56 : style.logoSize === 'lg' ? 110 : 80;
       const self =
         style.logoAlign === 'center'
           ? 'mx-auto'
           : style.logoAlign === 'right'
             ? 'ml-auto'
             : 'mr-auto';
+      if (company.logoUrl) {
+        return (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={company.logoUrl}
+            alt="Company logo"
+            className={cn('object-contain', self)}
+            style={{ height: h, maxWidth: w }}
+          />
+        );
+      }
       return (
         <div
           className={cn('flex items-center justify-center rounded-sm border border-dashed', self)}

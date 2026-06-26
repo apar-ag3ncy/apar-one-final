@@ -32,6 +32,9 @@ export type InvoiceColors = {
   title: string | null;
 };
 
+/** Page margins, in millimetres. */
+export type InvoiceMargins = { top: number; right: number; bottom: number; left: number };
+
 export type InvoiceStyle = {
   /** Base font multiplier (0.85–1.25). 1 = the classic 9pt body. */
   fontScale: number;
@@ -51,6 +54,8 @@ export type InvoiceStyle = {
   columns: InvoiceColumns;
   /** Per-element colour overrides. */
   colors: InvoiceColors;
+  /** Page margins in millimetres. */
+  margins: InvoiceMargins;
 };
 
 export const DEFAULT_INVOICE_COLUMNS: InvoiceColumns = {
@@ -69,6 +74,14 @@ export const DEFAULT_INVOICE_COLORS: InvoiceColors = {
   title: null,
 };
 
+/** ≈ the classic 38/40/60/40-pt page padding, in millimetres. */
+export const DEFAULT_INVOICE_MARGINS: InvoiceMargins = { top: 14, right: 14, bottom: 18, left: 14 };
+
+export const MARGIN_MIN_MM = 5;
+export const MARGIN_MAX_MM = 40;
+/** Millimetres → PDF points (1mm = 72/25.4 pt). */
+export const MM_TO_PT = 72 / 25.4;
+
 export const DEFAULT_INVOICE_STYLE: InvoiceStyle = {
   fontScale: 1,
   density: 'normal',
@@ -79,6 +92,7 @@ export const DEFAULT_INVOICE_STYLE: InvoiceStyle = {
   colorHeadings: true,
   columns: DEFAULT_INVOICE_COLUMNS,
   colors: DEFAULT_INVOICE_COLORS,
+  margins: DEFAULT_INVOICE_MARGINS,
 };
 
 export const FONT_SCALE_MIN = 0.85;
@@ -113,6 +127,12 @@ export function sanitizeInvoiceStyle(raw: unknown): InvoiceStyle {
     unknown
   >;
   const cl = (r.colors && typeof r.colors === 'object' ? r.colors : {}) as Record<string, unknown>;
+  const mg = (r.margins && typeof r.margins === 'object' ? r.margins : {}) as Record<
+    string,
+    unknown
+  >;
+  const mm = (v: unknown, fallback: number): number =>
+    Math.round(clampNum(v, MARGIN_MIN_MM, MARGIN_MAX_MM, fallback));
   return {
     fontScale: Math.round(clampNum(r.fontScale, FONT_SCALE_MIN, FONT_SCALE_MAX, 1) * 100) / 100,
     density: oneOf(r.density, DENSITIES, 'normal'),
@@ -134,6 +154,12 @@ export function sanitizeInvoiceStyle(raw: unknown): InvoiceStyle {
       totalText: hexOrNull(cl.totalText),
       heading: hexOrNull(cl.heading),
       title: hexOrNull(cl.title),
+    },
+    margins: {
+      top: mm(mg.top, DEFAULT_INVOICE_MARGINS.top),
+      right: mm(mg.right, DEFAULT_INVOICE_MARGINS.right),
+      bottom: mm(mg.bottom, DEFAULT_INVOICE_MARGINS.bottom),
+      left: mm(mg.left, DEFAULT_INVOICE_MARGINS.left),
     },
   };
 }
@@ -204,9 +230,11 @@ export type InvoiceMetrics = {
   supplierNameSize: number;
   recipientNameSize: number;
   totalSize: number;
-  pagePadTop: number;
-  pagePadX: number;
-  pagePadBottom: number;
+  /** Page padding (= margins) in points. */
+  padTop: number;
+  padRight: number;
+  padBottom: number;
+  padLeft: number;
   blockGap: number;
   logoHeight: number;
   logoMaxWidth: number;
@@ -214,28 +242,26 @@ export type InvoiceMetrics = {
 
 export function metricsFor(style: InvoiceStyle): InvoiceMetrics {
   const s = style.fontScale;
-  const dens =
-    style.density === 'compact'
-      ? { padTop: 30, padX: 34, padBottom: 50, gap: 8 }
-      : style.density === 'relaxed'
-        ? { padTop: 46, padX: 50, padBottom: 70, gap: 18 }
-        : { padTop: 38, padX: 40, padBottom: 60, gap: 12 };
+  // Density now only governs inter-block spacing; the page margins are explicit.
+  const gap = style.density === 'compact' ? 8 : style.density === 'relaxed' ? 18 : 12;
   const logo =
     style.logoSize === 'sm'
       ? { h: 24, w: 120 }
       : style.logoSize === 'lg'
         ? { h: 52, w: 220 }
         : { h: 36, w: 165 };
+  const m = style.margins;
   return {
     fontSize: Math.round(9 * s * 10) / 10,
     titleSize: Math.round(13 * s * 10) / 10,
     supplierNameSize: Math.round(12 * s * 10) / 10,
     recipientNameSize: Math.round(11 * s * 10) / 10,
     totalSize: Math.round(11 * s * 10) / 10,
-    pagePadTop: dens.padTop,
-    pagePadX: dens.padX,
-    pagePadBottom: dens.padBottom,
-    blockGap: dens.gap,
+    padTop: Math.round(m.top * MM_TO_PT),
+    padRight: Math.round(m.right * MM_TO_PT),
+    padBottom: Math.round(m.bottom * MM_TO_PT),
+    padLeft: Math.round(m.left * MM_TO_PT),
+    blockGap: gap,
     logoHeight: logo.h,
     logoMaxWidth: logo.w,
   };
