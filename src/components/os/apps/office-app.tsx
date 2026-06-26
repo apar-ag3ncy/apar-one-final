@@ -30,6 +30,7 @@ import {
 } from '@/lib/server/entities/payroll';
 import { formatINR, paiseToDecimalRupees, parseRupeesToPaise } from '../format';
 import { Icon } from '../icons';
+import { osActions } from '@/lib/os/store';
 
 type EmployeeOption = { id: string; name: string };
 type VendorOption = { id: string; name: string; category: string | null };
@@ -275,6 +276,22 @@ export function OfficeApp({
             onChange={(e) => setSearch(e.target.value)}
           />
         </div>
+        <button
+          className="btn"
+          type="button"
+          onClick={() =>
+            osActions.openWindow({
+              app: 'ledger',
+              entityId: 'salary-book',
+              title: 'Salary book',
+              position: 'beside-focused',
+            })
+          }
+          title="Per-employee salary book"
+        >
+          <Icon name="book" size={13} />
+          Salary book
+        </button>
         <button
           className="btn primary"
           type="button"

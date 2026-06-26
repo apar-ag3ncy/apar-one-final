@@ -111,12 +111,11 @@ export type SalaryLine = typeof salaryLines.$inferSelect;
 
 /**
  * Salary payments — individual disbursements actually paid out to an employee
- * (amount + date). Captured, not computed. This is a lightweight tracker
- * surfaced in the employee Compensation tab; the cumulative total is shown in
- * the Office app and deducted from the Office Ledger's net cash position. It is
- * deliberately NOT posted to the double-entry ledger (product decision) — the
- * `salary_runs` / `salary_lines` path remains the route for that, once the
- * disbursement posting template ships.
+ * (amount + date). Captured, not computed. Surfaced in the employee
+ * Compensation tab and a per-employee Salary Book. Each payment posts a real
+ * double-entry transaction (Dr 6100 Salaries & Wages / Cr 1110 Cash on Hand),
+ * attributed to the employee on the transaction header; `transactionId` links
+ * the capture row to that posting (mirroring `salary_lines.transaction_id`).
  */
 export const salaryPayments = pgTable(
   'salary_payments',
@@ -129,6 +128,9 @@ export const salaryPayments = pgTable(
     paidOn: date().notNull(),
     amountPaise: bigint({ mode: 'bigint' }).notNull(),
     notes: text(),
+    // Ledger transaction this payment posted. FK added in the SQL migration;
+    // kept a plain uuid here like salary_lines.transaction_id.
+    transactionId: uuid(),
   },
   (t) => [index().on(t.employeeId, t.paidOn.desc()), index().on(t.paidOn)],
 );

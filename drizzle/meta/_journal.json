@@ -323,6 +323,13 @@
       "when": 1780600007004,
       "tag": "0045_salary_payments",
       "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "7",
+      "when": 1780600007005,
+      "tag": "0046_salary_payments_ledger",
+      "breakpoints": true
     }
   ]
 }
