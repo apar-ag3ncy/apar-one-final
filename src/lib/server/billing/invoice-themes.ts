@@ -36,7 +36,13 @@ export type InvoiceThemeSummary = {
   secondaryColor: string | null;
   accentColor: string | null;
   fontFamily: string | null;
+  headerText: string | null;
+  footerText: string | null;
   hasLogo: boolean;
+  /** Came from a .docx upload (vs created/edited by hand in the editor). */
+  imported: boolean;
+  /** Built-in themes are read-only; everything else can be edited/deleted. */
+  editable: boolean;
 };
 
 function toSummary(t: InvoiceTheme): InvoiceThemeSummary {
@@ -49,8 +55,133 @@ function toSummary(t: InvoiceTheme): InvoiceThemeSummary {
     secondaryColor: t.secondaryColor,
     accentColor: t.accentColor,
     fontFamily: t.fontFamily,
+    headerText: t.headerText,
+    footerText: t.footerText,
     hasLogo: t.logoDocumentId != null,
+    imported: t.sourceDocumentId != null,
+    editable: t.kind !== 'builtin',
   };
+}
+
+/** react-pdf can only lay out these three built-in font families. */
+export const INVOICE_FONTS = ['Helvetica', 'Times-Roman', 'Courier'] as const;
+export type InvoiceFont = (typeof INVOICE_FONTS)[number];
+
+const HEX_RE = /^#[0-9a-fA-F]{6}$/;
+
+function normColor(v: unknown): string | null {
+  if (typeof v !== 'string') return null;
+  const t = v.trim();
+  return HEX_RE.test(t) ? t.toUpperCase() : null;
+}
+function normFont(v: unknown): InvoiceFont | null {
+  return typeof v === 'string' && (INVOICE_FONTS as readonly string[]).includes(v)
+    ? (v as InvoiceFont)
+    : null;
+}
+function normText(v: unknown, max: number): string | null {
+  if (typeof v !== 'string') return null;
+  const t = v.trim();
+  return t.length > 0 ? t.slice(0, max) : null;
+}
+
+export type InvoiceThemeEditInput = {
+  name: string;
+  headerText?: string | null;
+  footerText?: string | null;
+  primaryColor?: string | null;
+  secondaryColor?: string | null;
+  accentColor?: string | null;
+  fontFamily?: string | null;
+  makeDefault?: boolean;
+};
+
+/**
+ * Create a hand-authored ("custom") invoice theme — the dynamic
+ * invoice-format editor's "new format" path. Stored as a `docx`-kind row
+ * with no source document (so it's editable + deletable, unlike built-ins).
+ */
+export async function createInvoiceTheme(input: InvoiceThemeEditInput): Promise<InvoiceThemeSummary> {
+  const ctx = await getActorContext();
+  requireCapability(ctx, 'manage_invoice_themes');
+  const name = normText(input.name, 120);
+  if (!name) throw new AppError('validation', 'Give the invoice format a name.');
+
+  const row = await db.transaction(async (tx) => {
+    if (input.makeDefault) {
+      await tx
+        .update(invoiceThemes)
+        .set({ isDefault: false, updatedBy: ctx.userId })
+        .where(and(eq(invoiceThemes.isDefault, true), isNull(invoiceThemes.deletedAt)));
+    }
+    const [created] = await tx
+      .insert(invoiceThemes)
+      .values({
+        name,
+        kind: 'docx',
+        isDefault: Boolean(input.makeDefault),
+        primaryColor: normColor(input.primaryColor),
+        secondaryColor: normColor(input.secondaryColor),
+        accentColor: normColor(input.accentColor),
+        fontFamily: normFont(input.fontFamily),
+        headerText: normText(input.headerText, 60),
+        footerText: normText(input.footerText, 240),
+        createdBy: ctx.userId,
+        updatedBy: ctx.userId,
+      })
+      .returning();
+    return created!;
+  });
+  return toSummary(row);
+}
+
+/**
+ * Edit an existing non-builtin theme's brand tokens + header/footer text.
+ * Built-in themes are immutable. `makeDefault` promotes it in the same tx.
+ */
+export async function updateInvoiceTheme(
+  id: string,
+  input: InvoiceThemeEditInput,
+): Promise<InvoiceThemeSummary> {
+  const ctx = await getActorContext();
+  requireCapability(ctx, 'manage_invoice_themes');
+  const name = normText(input.name, 120);
+  if (!name) throw new AppError('validation', 'Give the invoice format a name.');
+
+  const row = await db.transaction(async (tx) => {
+    const [target] = await tx
+      .select()
+      .from(invoiceThemes)
+      .where(and(eq(invoiceThemes.id, id), isNull(invoiceThemes.deletedAt)))
+      .limit(1);
+    if (!target) throw new AppError('not_found', `invoice theme ${id} not found`);
+    if (target.kind === 'builtin') {
+      throw new AppError('validation', 'Built-in formats are read-only. Duplicate it to customise.');
+    }
+    if (input.makeDefault && !target.isDefault) {
+      await tx
+        .update(invoiceThemes)
+        .set({ isDefault: false, updatedBy: ctx.userId })
+        .where(and(eq(invoiceThemes.isDefault, true), isNull(invoiceThemes.deletedAt)));
+    }
+    const [updated] = await tx
+      .update(invoiceThemes)
+      .set({
+        name,
+        primaryColor: normColor(input.primaryColor),
+        secondaryColor: normColor(input.secondaryColor),
+        accentColor: normColor(input.accentColor),
+        fontFamily: normFont(input.fontFamily),
+        headerText: normText(input.headerText, 60),
+        footerText: normText(input.footerText, 240),
+        ...(input.makeDefault ? { isDefault: true } : {}),
+        updatedBy: ctx.userId,
+      })
+      .where(eq(invoiceThemes.id, id))
+      .returning();
+    return updated!;
+  });
+  return toSummary(row);
 }
 
 /** All non-deleted themes, default first then alphabetical. */

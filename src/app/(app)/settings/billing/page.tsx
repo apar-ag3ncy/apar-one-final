@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 
 import { ProfileHeader } from '@/components/entity/profile-header';
 import { listCompanyBankAccounts } from '@/lib/server/settings/company-data';
+import { InvoiceFormatEditor } from '@/components/settings/invoice-format-editor';
 import { BillingSettingsClient } from './billing-settings-client';
 
 export const metadata: Metadata = { title: 'Billing · Settings · Apār Dashboard' };
@@ -16,6 +17,9 @@ export default async function BillingSettingsPage() {
         back={{ href: '/settings', label: 'Back to settings' }}
       />
       <BillingSettingsClient accounts={accounts} />
+      <div className="mt-8 border-t pt-6">
+        <InvoiceFormatEditor />
+      </div>
     </>
   );
 }

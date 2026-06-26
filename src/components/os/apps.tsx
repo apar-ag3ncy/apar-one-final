@@ -5,7 +5,9 @@ import { APPS } from './data';
 import { useBusinessData } from './data-store';
 import { navigateBesideFocused } from './apps/navigate';
 import { CompanySettingsPane } from './apps/company-settings-pane';
+import { BillingSettingsPane } from './apps/billing-settings-pane';
 import { VaultPane } from './apps/vault-pane';
+import { ImportEmployeesDialog } from '@/components/employees/import-employees-dialog';
 import { EntityRef } from '@/components/entity/entity-ref';
 import {
   listClients as listDbClients,
@@ -3144,6 +3146,47 @@ export function EmployeesApp({
     if (next) setRows(next);
   }
 
+  function exportEmployees() {
+    const headers = [
+      'Full Name',
+      'Work Email',
+      'Designation',
+      'Department',
+      'Employment Type',
+      'Status',
+      'Joined',
+      'Reports To',
+    ];
+    const esc = (v: unknown) => {
+      const s = String(v ?? '');
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const body = visible.map((e) =>
+      [
+        e.fullName,
+        e.workEmail ?? '',
+        e.designation ?? '',
+        departmentLabel(e.department),
+        e.employmentType,
+        e.status,
+        e.joinedAt instanceof Date ? e.joinedAt.toISOString().slice(0, 10) : '',
+        e.managerName ?? '',
+      ]
+        .map(esc)
+        .join(','),
+    );
+    const csv = [headers.join(','), ...body].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'employees.csv';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
   useEffect(() => {
     let cancelled = false;
     fetchEmployeeList()
@@ -3210,6 +3253,17 @@ export function EmployeesApp({
           <Icon name="folder" size={13} />
           Departments
         </button>
+        <button
+          className="btn"
+          type="button"
+          onClick={exportEmployees}
+          disabled={visible.length === 0}
+          title="Export the current list to CSV"
+        >
+          <Icon name="filetext" size={13} />
+          Export
+        </button>
+        {canEdit ? <ImportEmployeesDialog onImported={refreshEmployeeList} /> : null}
         <button
           className="btn primary"
           type="button"
@@ -4549,6 +4603,7 @@ type SettingsSection = {
   name:
     | 'General'
     | 'Company documents'
+    | 'Billing'
     | 'Vault'
     | 'Appearance'
     | 'Account'
@@ -4579,6 +4634,7 @@ export function SettingsApp({
   const sections: readonly SettingsSection[] = [
     { name: 'General', icon: 'settings' },
     { name: 'Company documents', icon: 'building' },
+    { name: 'Billing', icon: 'book' },
     { name: 'Vault', icon: 'shield' },
     { name: 'Appearance', icon: 'palette' },
     { name: 'Account', icon: 'user' },
@@ -4754,6 +4810,8 @@ export function SettingsApp({
           </div>
         ) : section === 'Company documents' ? (
           <CompanySettingsPane />
+        ) : section === 'Billing' ? (
+          <BillingSettingsPane />
         ) : section === 'Vault' ? (
           <VaultPane />
         ) : section === 'Account' ? (

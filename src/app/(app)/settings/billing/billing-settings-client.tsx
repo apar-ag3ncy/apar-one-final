@@ -63,10 +63,19 @@ const EMPTY: FormState = {
 
 export function BillingSettingsClient({
   accounts,
+  onChanged,
 }: {
   accounts: readonly CompanyBankAccountRow[];
+  /** Called after a successful mutation — lets a client-fetched host (the OS
+   *  Settings pane) re-fetch, since router.refresh() only re-runs server
+   *  components. The dashboard page relies on router.refresh() alone. */
+  onChanged?: () => void;
 }) {
   const router = useRouter();
+  const afterChange = () => {
+    router.refresh();
+    onChanged?.();
+  };
   const [pending, startTransition] = useTransition();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -116,7 +125,7 @@ export function BillingSettingsClient({
       if (result.ok) {
         notify.success(editingId ? 'Bank account updated' : 'Bank account added');
         setDialogOpen(false);
-        router.refresh();
+        afterChange();
       } else {
         notify.error('Could not save', result.message);
       }
@@ -128,7 +137,7 @@ export function BillingSettingsClient({
       const result = await setPrimaryBankAccount(id);
       if (result.ok) {
         notify.success('Primary account updated');
-        router.refresh();
+        afterChange();
       } else {
         notify.error('Could not update', result.message);
       }
@@ -143,7 +152,7 @@ export function BillingSettingsClient({
       const result = await deleteCompanyBankAccount(id);
       if (result.ok) {
         notify.success('Bank account removed');
-        router.refresh();
+        afterChange();
       } else {
         notify.error('Could not remove', result.message);
       }
