@@ -37,6 +37,7 @@ import {
 import { INVOICE_FONTS } from '@/lib/billing/invoice-fonts';
 import { InvoiceLayoutEditor } from '@/components/settings/invoice-layout-editor';
 import { DEFAULT_INVOICE_LAYOUT, type InvoiceLayout } from '@/lib/billing/invoice-layout';
+import { DEFAULT_INVOICE_STYLE, type InvoiceStyle } from '@/lib/billing/invoice-style';
 
 type Form = {
   name: string;
@@ -47,6 +48,7 @@ type Form = {
   fontFamily: string;
   makeDefault: boolean;
   layout: InvoiceLayout;
+  style: InvoiceStyle;
 };
 
 const EMPTY: Form = {
@@ -58,7 +60,15 @@ const EMPTY: Form = {
   fontFamily: 'Helvetica',
   makeDefault: false,
   layout: DEFAULT_INVOICE_LAYOUT,
+  style: DEFAULT_INVOICE_STYLE,
 };
+
+const FONT_SIZE_OPTIONS = [
+  { label: 'Small', value: 0.9 },
+  { label: 'Normal', value: 1 },
+  { label: 'Large', value: 1.15 },
+  { label: 'Extra large', value: 1.25 },
+] as const;
 
 /**
  * Dynamic invoice-format editor. Lists the invoice formats (themes), lets the
@@ -90,6 +100,9 @@ export function InvoiceFormatEditor() {
   function set<K extends keyof Form>(key: K, value: Form[K]) {
     setForm((f) => ({ ...f, [key]: value }));
   }
+  function setStyle<K extends keyof InvoiceStyle>(key: K, value: InvoiceStyle[K]) {
+    setForm((f) => ({ ...f, style: { ...f.style, [key]: value } }));
+  }
 
   function openCreate() {
     setEditingId(null);
@@ -109,6 +122,7 @@ export function InvoiceFormatEditor() {
       fontFamily: t.fontFamily ?? 'Helvetica',
       makeDefault: t.isDefault,
       layout: t.layout,
+      style: t.style,
     });
     setOpen(true);
   }
@@ -163,6 +177,7 @@ export function InvoiceFormatEditor() {
         fontFamily: form.fontFamily || null,
         makeDefault: form.makeDefault,
         layout: form.layout,
+        style: form.style,
       };
       if (editingId) await updateInvoiceTheme(editingId, payload);
       else await createInvoiceTheme(payload);
@@ -377,6 +392,125 @@ export function InvoiceFormatEditor() {
               </label>
             </div>
 
+            {/* Style — size, density, logo footprint and a few polish toggles. */}
+            <div className="grid gap-2">
+              <Label>Style</Label>
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                <div className="grid gap-1.5">
+                  <Label
+                    htmlFor="fmt-fontsize"
+                    className="text-muted-foreground text-xs font-normal"
+                  >
+                    Font size
+                  </Label>
+                  <Select
+                    value={String(form.style.fontScale)}
+                    onValueChange={(v) => setStyle('fontScale', Number(v))}
+                  >
+                    <SelectTrigger id="fmt-fontsize">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {FONT_SIZE_OPTIONS.map((o) => (
+                        <SelectItem key={o.label} value={String(o.value)}>
+                          {o.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="grid gap-1.5">
+                  <Label
+                    htmlFor="fmt-density"
+                    className="text-muted-foreground text-xs font-normal"
+                  >
+                    Density
+                  </Label>
+                  <Select
+                    value={form.style.density}
+                    onValueChange={(v) => setStyle('density', v as InvoiceStyle['density'])}
+                  >
+                    <SelectTrigger id="fmt-density">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="compact">Compact</SelectItem>
+                      <SelectItem value="normal">Normal</SelectItem>
+                      <SelectItem value="relaxed">Relaxed</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="grid gap-1.5">
+                  <Label
+                    htmlFor="fmt-logosize"
+                    className="text-muted-foreground text-xs font-normal"
+                  >
+                    Logo size
+                  </Label>
+                  <Select
+                    value={form.style.logoSize}
+                    onValueChange={(v) => setStyle('logoSize', v as InvoiceStyle['logoSize'])}
+                  >
+                    <SelectTrigger id="fmt-logosize">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="sm">Small</SelectItem>
+                      <SelectItem value="md">Medium</SelectItem>
+                      <SelectItem value="lg">Large</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="grid gap-1.5">
+                  <Label
+                    htmlFor="fmt-logoalign"
+                    className="text-muted-foreground text-xs font-normal"
+                  >
+                    Logo align
+                  </Label>
+                  <Select
+                    value={form.style.logoAlign}
+                    onValueChange={(v) => setStyle('logoAlign', v as InvoiceStyle['logoAlign'])}
+                  >
+                    <SelectTrigger id="fmt-logoalign">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="left">Left</SelectItem>
+                      <SelectItem value="center">Center</SelectItem>
+                      <SelectItem value="right">Right</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-x-4 gap-y-1.5 pt-0.5">
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={form.style.accentHeaderBand}
+                    onChange={(e) => setStyle('accentHeaderBand', e.target.checked)}
+                  />
+                  Accent title band
+                </label>
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={form.style.emphasizeTotal}
+                    onChange={(e) => setStyle('emphasizeTotal', e.target.checked)}
+                  />
+                  Emphasise grand total
+                </label>
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={form.style.colorHeadings}
+                    onChange={(e) => setStyle('colorHeadings', e.target.checked)}
+                  />
+                  Colour section headings
+                </label>
+              </div>
+            </div>
+
             {/* Logo — uploadable once the format exists (we need its id to attach). */}
             <div className="grid gap-1.5">
               <Label>Logo</Label>
@@ -438,8 +572,10 @@ export function InvoiceFormatEditor() {
                 defaultValue={form.layout}
                 onChange={(layout) => set('layout', layout)}
                 primaryColor={form.primaryColor}
+                accentColor={form.accentColor}
                 fontFamily={form.fontFamily}
                 headerText={form.headerText}
+                style={form.style}
               />
             </div>
           </div>

@@ -107,6 +107,33 @@ describe('renderInvoicePdf', () => {
     expect(bytes[3]).toBe(0x46); // F
   }, 20_000);
 
+  it('renders with bold style tokens + a rearranged layout to a valid PDF', async () => {
+    const styled: InvoicePdfData = {
+      ...fixture,
+      themeOverrides: { primaryColor: '#1f6b3b', accentColor: '#a4d8b3' },
+      style: {
+        fontScale: 1.25,
+        density: 'relaxed',
+        logoSize: 'lg',
+        logoAlign: 'center',
+        accentHeaderBand: true,
+        emphasizeTotal: true,
+        colorHeadings: true,
+      },
+      layout: {
+        version: 1,
+        header: { left: ['logo', 'supplier'], right: ['meta', 'billTo'] },
+        aboveTable: [],
+        belowTable: ['amountWords', 'payment', 'terms', 'notes', 'signatory', 'paymentLink'],
+        hidden: [],
+      },
+    };
+    const bytes = await renderInvoicePdf(styled);
+    expect(bytes.byteLength).toBeGreaterThan(1024);
+    expect(bytes[0]).toBe(0x25); // %
+    expect(bytes[3]).toBe(0x46); // F
+  }, 20_000);
+
   it('clamps a non-built-in font to a safe family instead of throwing', async () => {
     const themed: InvoicePdfData = {
       ...fixture,

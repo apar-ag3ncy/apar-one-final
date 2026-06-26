@@ -5,6 +5,7 @@ import { and, asc, desc, eq, isNull } from 'drizzle-orm';
 import { db } from '@/lib/db/client';
 import { documents, invoiceThemes, type InvoiceTheme } from '@/lib/db/schema';
 import { sanitizeInvoiceLayout, type InvoiceLayout } from '@/lib/billing/invoice-layout';
+import { sanitizeInvoiceStyle, type InvoiceStyle } from '@/lib/billing/invoice-style';
 import { AppError } from '@/lib/errors';
 import { requireCapability } from '@/lib/rbac';
 import { getActorContext } from '@/lib/server/actor';
@@ -47,12 +48,20 @@ export type InvoiceThemeSummary = {
   editable: boolean;
   /** Block placement for the PDF (sanitised; defaults reproduce the classic layout). */
   layout: InvoiceLayout;
+  /** Visual style tokens (font scale, density, logo size, polish flags). */
+  style: InvoiceStyle;
 };
 
 /** Read the persisted layout out of the theme's `tokens` jsonb bag. */
 function readLayout(tokens: unknown): InvoiceLayout {
   const bag = (tokens && typeof tokens === 'object' ? tokens : {}) as Record<string, unknown>;
   return sanitizeInvoiceLayout(bag.layout);
+}
+
+/** Read the persisted style out of the theme's `tokens` jsonb bag. */
+function readStyle(tokens: unknown): InvoiceStyle {
+  const bag = (tokens && typeof tokens === 'object' ? tokens : {}) as Record<string, unknown>;
+  return sanitizeInvoiceStyle(bag.style);
 }
 
 function toSummary(t: InvoiceTheme): InvoiceThemeSummary {
@@ -71,6 +80,7 @@ function toSummary(t: InvoiceTheme): InvoiceThemeSummary {
     imported: t.sourceDocumentId != null,
     editable: t.kind !== 'builtin',
     layout: readLayout(t.tokens),
+    style: readStyle(t.tokens),
   };
 }
 
@@ -109,20 +119,29 @@ export type InvoiceThemeEditInput = {
   makeDefault?: boolean;
   /** Block placement. Omit to leave a theme's existing layout untouched. */
   layout?: InvoiceLayout | null;
+  /** Visual style tokens. Omit to leave a theme's existing style untouched. */
+  style?: InvoiceStyle | null;
 };
 
-/** Merge a (possibly undefined) layout into a theme's `tokens` jsonb bag. */
-function mergeLayoutIntoTokens(
+/**
+ * Merge the (possibly omitted) layout + style into a theme's `tokens` jsonb bag,
+ * sanitising both and preserving any other keys (e.g. docx-extracted tokens).
+ * When a field is omitted by the caller, the value already stored is kept.
+ */
+function mergeTokens(
   existingTokens: unknown,
-  layout: InvoiceLayout | null | undefined,
-  hasExplicitLayout: boolean,
+  input: InvoiceThemeEditInput,
 ): Record<string, unknown> {
   const bag = (
     existingTokens && typeof existingTokens === 'object' ? existingTokens : {}
   ) as Record<string, unknown>;
-  // When the caller didn't pass a layout, keep whatever was stored before.
-  const source = hasExplicitLayout ? layout : bag.layout;
-  return { ...bag, layout: sanitizeInvoiceLayout(source) };
+  const layoutSource = 'layout' in input ? input.layout : bag.layout;
+  const styleSource = 'style' in input ? input.style : bag.style;
+  return {
+    ...bag,
+    layout: sanitizeInvoiceLayout(layoutSource),
+    style: sanitizeInvoiceStyle(styleSource),
+  };
 }
 
 /**
@@ -157,7 +176,7 @@ export async function createInvoiceTheme(
         fontFamily: normFont(input.fontFamily),
         headerText: normText(input.headerText, 60),
         footerText: normText(input.footerText, 240),
-        tokens: mergeLayoutIntoTokens({}, input.layout, 'layout' in input),
+        tokens: mergeTokens({}, input),
         createdBy: ctx.userId,
         updatedBy: ctx.userId,
       })
@@ -209,7 +228,7 @@ export async function updateInvoiceTheme(
         fontFamily: normFont(input.fontFamily),
         headerText: normText(input.headerText, 60),
         footerText: normText(input.footerText, 240),
-        tokens: mergeLayoutIntoTokens(target.tokens, input.layout, 'layout' in input),
+        tokens: mergeTokens(target.tokens, input),
         ...(input.makeDefault ? { isDefault: true } : {}),
         updatedBy: ctx.userId,
       })

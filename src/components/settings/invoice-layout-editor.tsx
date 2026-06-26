@@ -34,6 +34,7 @@ import {
   type InvoiceLayout,
   type InvoiceLayoutContainer,
 } from '@/lib/billing/invoice-layout';
+import type { InvoiceStyle } from '@/lib/billing/invoice-style';
 
 /* -------------------------------------------------------------------------- */
 /* Container <-> layout conversion                                            */
@@ -90,10 +91,12 @@ export type InvoiceLayoutEditorProps = {
   /** Initial layout — the editor is uncontrolled (remount via `key` to reset). */
   defaultValue: InvoiceLayout;
   onChange: (next: InvoiceLayout) => void;
-  /** Brand tokens, for the live preview only. */
+  /** Brand tokens + style, for the live preview only. */
   primaryColor: string;
+  accentColor: string;
   fontFamily: string;
   headerText: string;
+  style: InvoiceStyle;
 };
 
 /**
@@ -107,8 +110,10 @@ export function InvoiceLayoutEditor({
   defaultValue,
   onChange,
   primaryColor,
+  accentColor,
   fontFamily,
   headerText,
+  style,
 }: InvoiceLayoutEditorProps) {
   const [containers, setContainers] = useState<Containers>(() => layoutToContainers(defaultValue));
   const [activeId, setActiveId] = useState<InvoiceBlockId | null>(null);
@@ -253,8 +258,10 @@ export function InvoiceLayoutEditor({
         <LayoutPreview
           containers={containers}
           primaryColor={primaryColor}
+          accentColor={accentColor}
           fontFamily={fontFamily}
           headerText={headerText}
+          style={style}
         />
       </div>
 
@@ -371,13 +378,17 @@ function Chip({
 function LayoutPreview({
   containers,
   primaryColor,
+  accentColor,
   fontFamily,
   headerText,
+  style,
 }: {
   containers: Containers;
   primaryColor: string;
+  accentColor: string;
   fontFamily: string;
   headerText: string;
+  style: InvoiceStyle;
 }) {
   const font =
     fontFamily === 'Times-Roman'
@@ -385,6 +396,8 @@ function LayoutPreview({
       : fontFamily === 'Courier'
         ? 'monospace'
         : 'sans-serif';
+  const fs = style.fontScale;
+  const ctx = { primaryColor, accentColor, headerText, style };
 
   return (
     <div className="space-y-1">
@@ -392,25 +405,22 @@ function LayoutPreview({
         Preview
       </div>
       <div
-        className="bg-background mx-auto aspect-[1/1.414] w-full overflow-hidden rounded-md border p-2 text-[6px] leading-tight shadow-sm"
-        style={{ fontFamily: font }}
+        className="bg-background mx-auto aspect-[1/1.414] w-full overflow-hidden rounded-md border leading-tight shadow-sm"
+        style={{
+          fontFamily: font,
+          padding: style.density === 'relaxed' ? 12 : style.density === 'compact' ? 5 : 8,
+        }}
       >
         {/* Header */}
         <div className="flex items-start justify-between gap-2">
           <div className="flex w-1/2 flex-col gap-1">
             {containers.headerLeft.map((id) => (
-              <PreviewBlock key={id} id={id} primaryColor={primaryColor} headerText={headerText} />
+              <PreviewBlock key={id} id={id} {...ctx} />
             ))}
           </div>
           <div className="flex w-1/2 flex-col items-end gap-1">
             {containers.headerRight.map((id) => (
-              <PreviewBlock
-                key={id}
-                id={id}
-                align="right"
-                primaryColor={primaryColor}
-                headerText={headerText}
-              />
+              <PreviewBlock key={id} id={id} align="right" {...ctx} />
             ))}
           </div>
         </div>
@@ -418,17 +428,33 @@ function LayoutPreview({
         {/* Above table */}
         <div className="flex flex-col gap-1">
           {containers.aboveTable.map((id) => (
-            <PreviewBlock key={id} id={id} primaryColor={primaryColor} headerText={headerText} />
+            <PreviewBlock key={id} id={id} {...ctx} />
           ))}
         </div>
         {/* Fixed table */}
-        <div className="text-muted-foreground my-1 rounded-sm border border-dashed p-1 text-center text-[5px]">
-          Line items &amp; tax table
+        <div className="my-1 overflow-hidden rounded-sm border border-dashed">
+          <div
+            className="px-1 py-0.5 text-center"
+            style={{ backgroundColor: accentColor, color: primaryColor, fontSize: 5 * fs }}
+          >
+            Line items &amp; tax table
+          </div>
+          <div
+            className="flex justify-between px-1 py-0.5 font-semibold"
+            style={{
+              fontSize: 5 * fs,
+              backgroundColor: style.emphasizeTotal ? accentColor : undefined,
+              color: style.emphasizeTotal ? primaryColor : undefined,
+            }}
+          >
+            <span>TOTAL</span>
+            <span>₹ —</span>
+          </div>
         </div>
         {/* Below table */}
         <div className="flex flex-col gap-1">
           {containers.belowTable.map((id) => (
-            <PreviewBlock key={id} id={id} primaryColor={primaryColor} headerText={headerText} />
+            <PreviewBlock key={id} id={id} {...ctx} />
           ))}
         </div>
       </div>
@@ -440,32 +466,59 @@ function PreviewBlock({
   id,
   align = 'left',
   primaryColor,
+  accentColor,
   headerText,
+  style,
 }: {
   id: InvoiceBlockId;
   align?: 'left' | 'right';
   primaryColor: string;
+  accentColor: string;
   headerText: string;
+  style: InvoiceStyle;
 }) {
+  const fs = style.fontScale;
   if (id === 'logo') {
+    const h = style.logoSize === 'sm' ? 8 : style.logoSize === 'lg' ? 16 : 12;
+    const w = style.logoSize === 'sm' ? 26 : style.logoSize === 'lg' ? 46 : 36;
+    const self =
+      style.logoAlign === 'center'
+        ? 'mx-auto'
+        : style.logoAlign === 'right'
+          ? 'ml-auto'
+          : 'mr-auto';
     return (
       <div
-        className="rounded-sm border border-dashed px-1 py-0.5 text-[5px]"
-        style={{ color: primaryColor }}
+        className={cn('flex items-center justify-center rounded-sm border border-dashed', self)}
+        style={{ color: primaryColor, height: h, width: w, fontSize: 4 * fs }}
       >
         LOGO
       </div>
     );
   }
   const label = id === 'meta' ? headerText || 'TAX INVOICE' : BLOCK_LABELS[id];
-  const emphatic = id === 'meta' || id === 'supplier';
+  const isTitle = id === 'meta';
+  const emphatic = isTitle || id === 'supplier';
+  // The title gets an accent band when enabled.
+  if (isTitle && style.accentHeaderBand) {
+    return (
+      <div className={cn('flex', align === 'right' ? 'justify-end' : 'justify-start')}>
+        <div
+          className="rounded-sm px-1 py-0.5 font-semibold"
+          style={{ backgroundColor: accentColor, color: primaryColor, fontSize: 5 * fs }}
+        >
+          {label}
+        </div>
+      </div>
+    );
+  }
   return (
     <div
       className={cn(
-        'bg-muted/60 rounded-sm px-1 py-0.5 text-[5px]',
+        'bg-muted/60 rounded-sm px-1 py-0.5',
         align === 'right' ? 'text-right' : 'text-left',
       )}
-      style={emphatic ? { color: primaryColor } : undefined}
+      style={{ fontSize: 5 * fs, color: emphatic ? primaryColor : undefined }}
     >
       {label}
     </div>

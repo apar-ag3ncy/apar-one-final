@@ -28,6 +28,11 @@ import {
   sanitizeInvoiceLayout,
   type InvoiceLayout,
 } from '@/lib/billing/invoice-layout';
+import {
+  DEFAULT_INVOICE_STYLE,
+  sanitizeInvoiceStyle,
+  type InvoiceStyle,
+} from '@/lib/billing/invoice-style';
 
 import type { InvoicePdfData } from './invoice';
 
@@ -141,7 +146,7 @@ export async function loadInvoicePdfData(
     stateCodeToGstCode(recipientAddress?.stateCode) ??
     (recipientGstin && recipientGstin.length >= 2 ? recipientGstin.slice(0, 2) : null);
 
-  const { overrides: themeOverrides, layout } = await resolveTheme(client, invoice.themeId);
+  const { overrides: themeOverrides, layout, style } = await resolveTheme(client, invoice.themeId);
 
   // Payment instructions — the bank account the invoice pinned (else the
   // agency's primary) plus an optional pay-by-UPI QR encoding the exact invoice
@@ -238,6 +243,7 @@ export async function loadInvoicePdfData(
     notes: invoice.notes,
     themeOverrides,
     layout,
+    style,
   };
 }
 
@@ -253,7 +259,11 @@ export async function loadInvoicePdfData(
 async function resolveTheme(
   client: DbClient,
   themeId: string | null,
-): Promise<{ overrides: InvoicePdfData['themeOverrides']; layout: InvoiceLayout }> {
+): Promise<{
+  overrides: InvoicePdfData['themeOverrides'];
+  layout: InvoiceLayout;
+  style: InvoiceStyle;
+}> {
   // Theming is purely cosmetic: a missing/empty themes table, an unmigrated
   // DB, or a fetch error must NEVER block invoice generation. Any failure here
   // degrades to neutral defaults (overrides=null, classic layout), and the
@@ -275,7 +285,8 @@ async function resolveTheme(
         .where(and(eq(invoiceThemes.isDefault, true), isNull(invoiceThemes.deletedAt)))
         .limit(1);
     }
-    if (!theme) return { overrides: null, layout: DEFAULT_INVOICE_LAYOUT };
+    if (!theme)
+      return { overrides: null, layout: DEFAULT_INVOICE_LAYOUT, style: DEFAULT_INVOICE_STYLE };
 
     let logoDataUri: string | null = null;
     if (theme.logoDocumentId) {
@@ -298,9 +309,10 @@ async function resolveTheme(
         logoDataUri,
       },
       layout: sanitizeInvoiceLayout(tokens.layout),
+      style: sanitizeInvoiceStyle(tokens.style),
     };
   } catch {
-    return { overrides: null, layout: DEFAULT_INVOICE_LAYOUT };
+    return { overrides: null, layout: DEFAULT_INVOICE_LAYOUT, style: DEFAULT_INVOICE_STYLE };
   }
 }
 
