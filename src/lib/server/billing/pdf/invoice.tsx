@@ -236,7 +236,6 @@ const styles = StyleSheet.create({
   payLabel: { width: 70, color: '#6b7280' },
   payVal: { flex: 1 },
   qrImg: { width: 92, height: 92 },
-  qrCaption: { fontSize: 7.5, color: '#6b7280', marginTop: 3, textAlign: 'center' },
 
   footer: {
     position: 'absolute',
@@ -469,7 +468,6 @@ function PaymentDetails({
         <View style={styles.payQrCol}>
           {/* eslint-disable-next-line jsx-a11y/alt-text */}
           <Image src={payment.upiQrDataUri} style={styles.qrImg} />
-          <Text style={styles.qrCaption}>Scan to pay via UPI</Text>
         </View>
       ) : null}
     </View>

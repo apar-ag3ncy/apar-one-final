@@ -14,7 +14,9 @@ import { getActorContext } from '@/lib/server/actor';
 import { GSTIN_RE, IFSC_RE, PAN_RE } from '@/lib/validators';
 import {
   getCompanyProfile,
+  listCompanyBankAccounts,
   listCompanyDocuments,
+  type CompanyBankAccountRow,
   type CompanyDocumentRow,
   type CompanyProfile,
 } from '@/lib/server/settings/company-data';
@@ -53,6 +55,16 @@ export async function getCompanySettings(): Promise<CompanySettingsData> {
   requireCapability(ctx, 'manage_company_profile');
   const [profile, documents] = await Promise.all([getCompanyProfile(), listCompanyDocuments()]);
   return { profile, documents };
+}
+
+/**
+ * Client-callable read of the agency's bank accounts — for surfaces (the OS
+ * Settings → Billing pane) that can't import the server-only reader directly.
+ */
+export async function listBankAccountsForSettings(): Promise<CompanyBankAccountRow[]> {
+  const ctx = await getActorContext();
+  requireCapability(ctx, 'manage_bank_accounts');
+  return listCompanyBankAccounts();
 }
 
 const MAX_DOC_BYTES = 25 * 1024 * 1024; // 25 MB — matches uploadDocument default

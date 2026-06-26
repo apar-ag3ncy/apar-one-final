@@ -87,7 +87,7 @@ type ImportOutcome = {
   total: number;
 };
 
-export function ImportEmployeesDialog() {
+export function ImportEmployeesDialog({ onImported }: { onImported?: () => void } = {}) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [file, setFile] = useState<File | null>(null);
@@ -185,11 +185,13 @@ export function ImportEmployeesDialog() {
       if (result.errors.length === 0) {
         toast.success(`Imported ${result.successCount} employee${result.successCount === 1 ? '' : 's'}.`);
         router.refresh();
+        onImported?.();
       } else {
         toast.warning(
           `Imported ${result.successCount} of ${inputs.length}. ${result.errors.length} row${result.errors.length === 1 ? '' : 's'} need attention.`,
         );
         router.refresh();
+        onImported?.();
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not read the file.');
