@@ -118,6 +118,9 @@ export function InvoiceLayoutEditor({
 }: InvoiceLayoutEditorProps) {
   const [containers, setContainers] = useState<Containers>(() => layoutToContainers(defaultValue));
   const [activeId, setActiveId] = useState<InvoiceBlockId | null>(null);
+  // Width of the grabbed card, so the floating overlay matches it and the
+  // cursor stays on the card no matter where you grab a (wide) card.
+  const [activeWidth, setActiveWidth] = useState<number | null>(null);
   const logoAlign = defaultValue.logoAlign;
 
   // Notify the parent on any change without looping on a fresh `onChange` ref.
@@ -141,6 +144,12 @@ export function InvoiceLayoutEditor({
 
   function handleDragStart(e: DragStartEvent) {
     setActiveId(e.active.id as InvoiceBlockId);
+    setActiveWidth(e.active.rect.current.initial?.width ?? null);
+  }
+
+  function handleDragCancel() {
+    setActiveId(null);
+    setActiveWidth(null);
   }
 
   function handleDragOver(e: DragOverEvent) {
@@ -172,6 +181,7 @@ export function InvoiceLayoutEditor({
   function handleDragEnd(e: DragEndEvent) {
     const { active, over } = e;
     setActiveId(null);
+    setActiveWidth(null);
     if (!over) return;
     const from = findContainer(containers, active.id);
     const to = findContainer(containers, over.id);
@@ -214,6 +224,7 @@ export function InvoiceLayoutEditor({
       onDragStart={handleDragStart}
       onDragOver={handleDragOver}
       onDragEnd={handleDragEnd}
+      onDragCancel={handleDragCancel}
     >
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(300px,380px)]">
         {/* The board */}
@@ -276,10 +287,15 @@ export function InvoiceLayoutEditor({
               {activeId ? (
                 <div
                   data-testid="layout-drag-overlay"
-                  className="bg-background flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs shadow-md"
+                  // Match the grabbed card's width so the cursor stays on it.
+                  style={{ width: activeWidth ?? undefined }}
+                  className="bg-background ring-primary flex cursor-grabbing items-center gap-1.5 rounded-md border px-1.5 py-1 text-xs shadow-lg ring-1"
                 >
-                  <GripVerticalIcon className="size-3.5 opacity-60" aria-hidden />
-                  {BLOCK_LABELS[activeId]}
+                  <GripVerticalIcon
+                    className="text-muted-foreground size-3.5 shrink-0"
+                    aria-hidden
+                  />
+                  <span className="flex-1 truncate">{BLOCK_LABELS[activeId]}</span>
                 </div>
               ) : null}
             </DragOverlay>,
