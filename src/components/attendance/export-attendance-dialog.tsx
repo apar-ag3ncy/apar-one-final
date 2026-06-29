@@ -36,8 +36,10 @@ import {
   aggregateAttendanceStats,
   computeAttendanceStats,
   eachIsoDate,
+  splitIntoMonths,
   weekdayShort,
 } from './attendance-io';
+import type { AttendanceCalendarData, CalendarMonth, CalendarRow } from './attendance-io';
 import type { AttendanceReportData, AttendanceReportRow } from './attendance-report-pdf';
 
 type Preset = 'today' | 'week' | 'month' | 'year' | 'custom';
@@ -94,6 +96,7 @@ export function ExportAttendanceDialog() {
   const [limitToSelected, setLimitToSelected] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [empSearch, setEmpSearch] = useState('');
+  const [calendarLayout, setCalendarLayout] = useState(false);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -171,6 +174,57 @@ export function ExportAttendanceDialog() {
       const statusFor = (empId: string, date: string): AttendanceStatus =>
         byCell.get(`${empId}|${date}`)?.status ?? defaultStatusForDate(date);
 
+      const generatedLabel = new Date().toLocaleString('en-IN', {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+
+      if (calendarLayout) {
+        // Muster-roll grid: one block per month, employees × days, a status in
+        // every cell. Applies to both PDF and Excel.
+        const months: CalendarMonth[] = splitIntoMonths(dates).map((g) => ({
+          label: g.label,
+          days: g.days.map((iso) => ({
+            iso,
+            dayNum: Number(iso.slice(8, 10)),
+            weekday: weekdayShort(iso),
+            isSunday: new Date(`${iso}T00:00:00Z`).getUTCDay() === 0,
+          })),
+          rows: emps.map((e): CalendarRow => {
+            const statuses = g.days.map((iso) => statusFor(e.id, iso));
+            return {
+              employeeCode: e.employeeCode,
+              employeeName: e.fullName,
+              statuses,
+              stats: computeAttendanceStats(statuses),
+            };
+          }),
+        }));
+        const calData: AttendanceCalendarData = {
+          fromDate: from,
+          toDate: to,
+          generatedLabel,
+          months,
+        };
+        if (format === 'pdf') {
+          const { downloadAttendanceCalendarPdf } = await import('./attendance-calendar-pdf');
+          await downloadAttendanceCalendarPdf(calData, `attendance-calendar-${from}_to_${to}`);
+        } else {
+          const { downloadAttendanceCalendarXlsx } = await import('./attendance-calendar-xlsx');
+          downloadAttendanceCalendarXlsx(calData, `attendance-calendar-${from}_to_${to}`);
+        }
+        toast.success(
+          `Exported calendar — ${emps.length} employee${emps.length === 1 ? '' : 's'} across ${
+            months.length
+          } month${months.length === 1 ? '' : 's'}.`,
+        );
+        setOpen(false);
+        return;
+      }
+
       if (format === 'pdf') {
         // A proper report: per-employee figures (working days, present, WFH,
         // half-days, leave, absent, weekly-offs, holidays, attendance %), a
@@ -189,13 +243,7 @@ export function ExportAttendanceDialog() {
           fromDate: from,
           toDate: to,
           rangeDays: dates.length,
-          generatedLabel: new Date().toLocaleString('en-IN', {
-            day: '2-digit',
-            month: 'short',
-            year: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit',
-          }),
+          generatedLabel,
           rows: reportRows,
           totals,
           daily: only
@@ -385,6 +433,23 @@ export function ExportAttendanceDialog() {
                 </div>
               </div>
             )}
+          </div>
+
+          {/* Layout */}
+          <div className="grid gap-2">
+            <Label className="font-normal">
+              <Checkbox
+                checked={calendarLayout}
+                onCheckedChange={(v) => setCalendarLayout(v === true)}
+              />
+              Calendar grid (one column per day, by month)
+            </Label>
+            {calendarLayout ? (
+              <p className="text-muted-foreground text-xs">
+                Each month becomes a grid of employees × days — every day shows the status (P / W /
+                A / H / L / · / X) — in both the PDF and Excel.
+              </p>
+            ) : null}
           </div>
         </div>
 
