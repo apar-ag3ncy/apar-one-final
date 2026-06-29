@@ -32,6 +32,7 @@ import { interBankTransfer, type InterBankTransferInput } from './postings/inter
 import { journal, type JournalInput } from './postings/journal';
 import { officeExpense, type OfficeExpenseInput } from './postings/officeExpense';
 import { partnerEquity, type PartnerEquityInput } from './postings/partnerEquity';
+import { salaryDisbursement, type SalaryDisbursementInput } from './postings/salaryDisbursement';
 import { vendorBill, type VendorBillInput } from './postings/vendorBill';
 import { vendorPaymentMade, type VendorPaymentMadeInput } from './postings/vendorPaymentMade';
 
@@ -56,6 +57,7 @@ export type TransactionKindInput =
   | { kind: 'inter_bank_transfer'; input: InterBankTransferInput }
   | { kind: 'partner_capital'; input: PartnerEquityInput }
   | { kind: 'partner_drawing'; input: PartnerEquityInput }
+  | { kind: 'salary_disbursement'; input: SalaryDisbursementInput }
   | { kind: 'journal'; input: JournalInput };
 
 function buildTemplate(kindInput: TransactionKindInput): PostingTemplateResult {
@@ -82,6 +84,8 @@ function buildTemplate(kindInput: TransactionKindInput): PostingTemplateResult {
       return partnerEquity({ ...kindInput.input, kind: 'capital' });
     case 'partner_drawing':
       return partnerEquity({ ...kindInput.input, kind: 'drawing' });
+    case 'salary_disbursement':
+      return salaryDisbursement(kindInput.input);
     case 'journal':
       return journal(kindInput.input);
   }

@@ -15,13 +15,17 @@ import { toast } from 'sonner';
 
 import {
   createSalaryStructure,
+  deleteSalaryPayment,
   listEmployeeBonuses,
+  listEmployeeSalaryPayments,
   listEmployeeSalaryStructures,
   recordBonusOrPerk,
+  recordSalaryPayment,
   type BonusRow,
+  type SalaryPaymentRow,
   type SalaryStructureRow,
 } from '@/lib/server/entities/payroll';
-import { formatINR, rupeesToPaise, type Paise } from '@/lib/money';
+import { formatINR, paiseToRupees, rupeesToPaise, type Paise } from '@/lib/money';
 import { useCurrentUser } from '@/lib/client/use-current-user';
 
 export type CompensationSectionProps = {
@@ -74,18 +78,22 @@ export function CompensationSection({ employeeId, employeeName }: CompensationSe
 
   const [structures, setStructures] = useState<readonly SalaryStructureRow[] | null>(null);
   const [bonuses, setBonuses] = useState<readonly BonusRow[] | null>(null);
+  const [payments, setPayments] = useState<readonly SalaryPaymentRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showAddSalary, setShowAddSalary] = useState(false);
   const [showRecordBonus, setShowRecordBonus] = useState(false);
+  const [showAddPayment, setShowAddPayment] = useState(false);
 
   async function reload() {
     try {
-      const [s, b] = await Promise.all([
+      const [s, b, p] = await Promise.all([
         canView ? listEmployeeSalaryStructures(employeeId) : Promise.resolve([]),
         listEmployeeBonuses(employeeId),
+        canView ? listEmployeeSalaryPayments(employeeId) : Promise.resolve([]),
       ]);
       setStructures(s);
       setBonuses(b);
+      setPayments(p);
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not load compensation');
@@ -100,11 +108,15 @@ export function CompensationSection({ employeeId, employeeName }: CompensationSe
         ? listEmployeeSalaryStructures(employeeId)
         : Promise.resolve([] as readonly SalaryStructureRow[]),
       listEmployeeBonuses(employeeId),
+      canView
+        ? listEmployeeSalaryPayments(employeeId)
+        : Promise.resolve([] as readonly SalaryPaymentRow[]),
     ])
-      .then(([s, b]) => {
+      .then(([s, b, p]) => {
         if (cancelled) return;
         setStructures(s);
         setBonuses(b);
+        setPayments(p);
       })
       .catch((e: unknown) => {
         if (!cancelled) {
@@ -126,7 +138,7 @@ export function CompensationSection({ employeeId, employeeName }: CompensationSe
     );
   }, [structures]);
 
-  if (isLoading || structures === null || bonuses === null) {
+  if (isLoading || structures === null || bonuses === null || payments === null) {
     return (
       <div style={{ padding: 16, color: 'var(--text-muted)', fontSize: 13 }}>
         Loading compensation…
@@ -304,6 +316,243 @@ export function CompensationSection({ employeeId, employeeName }: CompensationSe
           </ul>
         )}
       </OsCard>
+
+      {/* Salary payments — disbursements actually given out */}
+      {canView ? (
+        <OsCard
+          title="Salary payments"
+          action={
+            canManageSalary ? (
+              <button type="button" className="btn" onClick={() => setShowAddPayment((v) => !v)}>
+                {showAddPayment ? 'Cancel' : '+ Record payment'}
+              </button>
+            ) : null
+          }
+        >
+          {showAddPayment && canManageSalary && (
+            <SalaryPaymentForm
+              employeeId={employeeId}
+              prefillPaise={active?.ctcMonthlyPaise ?? null}
+              onCancel={() => setShowAddPayment(false)}
+              onCreated={async () => {
+                setShowAddPayment(false);
+                await reload();
+              }}
+            />
+          )}
+          {payments.length === 0 ? (
+            <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: 13 }}>
+              No salary payments recorded for {employeeName} yet.
+            </p>
+          ) : (
+            <>
+              <ul
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 6,
+                  margin: 0,
+                  padding: 0,
+                  listStyle: 'none',
+                }}
+              >
+                {payments.map((p) => (
+                  <li
+                    key={p.id}
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: '110px 1fr auto auto',
+                      alignItems: 'center',
+                      gap: 10,
+                      padding: '8px 10px',
+                      border: '1px solid var(--border)',
+                      borderRadius: 8,
+                      fontSize: 13,
+                    }}
+                  >
+                    <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>
+                      {formatDay(p.paidOn)}
+                    </span>
+                    <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {p.notes ?? <span style={{ color: 'var(--text-muted)' }}>—</span>}
+                    </span>
+                    <span className="font-display" style={{ fontVariantNumeric: 'tabular-nums' }}>
+                      {formatINR(p.amountPaise)}
+                    </span>
+                    {canManageSalary ? (
+                      <button
+                        type="button"
+                        className="btn"
+                        title="Remove this payment"
+                        style={{ padding: '2px 8px' }}
+                        onClick={async () => {
+                          try {
+                            await deleteSalaryPayment(p.id);
+                            await reload();
+                            toast.success('Payment removed.');
+                          } catch (e) {
+                            toast.error(
+                              e instanceof Error ? e.message : 'Could not remove payment',
+                            );
+                          }
+                        }}
+                      >
+                        ✕
+                      </button>
+                    ) : (
+                      <span />
+                    )}
+                  </li>
+                ))}
+              </ul>
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'baseline',
+                  marginTop: 4,
+                  paddingTop: 8,
+                  borderTop: '1px solid var(--border)',
+                }}
+              >
+                <span
+                  style={{
+                    fontSize: 11,
+                    color: 'var(--text-muted)',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.05em',
+                    fontWeight: 600,
+                  }}
+                >
+                  Total paid ({payments.length})
+                </span>
+                <span
+                  className="font-display"
+                  style={{ fontSize: 16, fontVariantNumeric: 'tabular-nums' }}
+                >
+                  {formatINR(payments.reduce((acc, p) => acc + p.amountPaise, 0n))}
+                </span>
+              </div>
+            </>
+          )}
+        </OsCard>
+      ) : null}
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Salary payment form                                                        */
+/* -------------------------------------------------------------------------- */
+
+function SalaryPaymentForm({
+  employeeId,
+  prefillPaise,
+  onCancel,
+  onCreated,
+}: {
+  employeeId: string;
+  prefillPaise: Paise | null;
+  onCancel: () => void;
+  onCreated: () => void | Promise<void>;
+}) {
+  const [paidOn, setPaidOn] = useState(todayISO());
+  const [amount, setAmount] = useState(
+    prefillPaise && prefillPaise > 0n ? paiseToRupees(prefillPaise) : '',
+  );
+  const [notes, setNotes] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  async function submit() {
+    if (!paidOn) {
+      toast.error('Pick the date the salary was paid.');
+      return;
+    }
+    if (amount.trim() === '') {
+      toast.error('Enter the amount paid.');
+      return;
+    }
+    setBusy(true);
+    try {
+      await recordSalaryPayment({
+        employeeId,
+        paidOn,
+        amountPaise: rupeesToPaise(amount),
+        notes: notes.trim() || null,
+      });
+      toast.success('Salary payment recorded.');
+      await onCreated();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not record payment');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 10,
+        background: 'var(--content)',
+        border: '1px solid var(--border)',
+        borderRadius: 8,
+        padding: 12,
+      }}
+    >
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
+          gap: 8,
+        }}
+      >
+        <Field label="Date paid">
+          <input
+            type="date"
+            value={paidOn}
+            onChange={(e) => setPaidOn(e.target.value)}
+            disabled={busy}
+            style={inputStyle}
+          />
+        </Field>
+        <Field label="Amount (₹)">
+          <input
+            type="text"
+            inputMode="decimal"
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+            disabled={busy}
+            placeholder="60000"
+            style={inputStyle}
+          />
+        </Field>
+      </div>
+      <Field label="Note (optional)">
+        <input
+          type="text"
+          value={notes}
+          onChange={(e) => setNotes(e.target.value)}
+          disabled={busy}
+          placeholder="e.g. June 2026 salary"
+          style={{ ...inputStyle, width: '100%' }}
+        />
+      </Field>
+      <p style={{ margin: 0, fontSize: 11, color: 'var(--text-muted)' }}>
+        {prefillPaise && prefillPaise > 0n
+          ? 'Amount prefilled from the current salary structure — edit to the amount actually paid. '
+          : 'Captured as the amount actually disbursed. '}
+        Counts toward the cumulative salary deduction shown in the Office app.
+      </p>
+      <div style={{ display: 'flex', gap: 8 }}>
+        <button type="button" className="btn primary" onClick={submit} disabled={busy}>
+          {busy ? 'Saving…' : 'Record payment'}
+        </button>
+        <button type="button" className="btn" onClick={onCancel} disabled={busy}>
+          Cancel
+        </button>
+      </div>
     </div>
   );
 }
