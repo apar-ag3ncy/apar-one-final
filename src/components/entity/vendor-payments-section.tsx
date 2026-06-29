@@ -338,12 +338,13 @@ function RecordVendorPaymentDialog({
   return (
     <div
       className="os-modal-overlay"
+      style={modalOverlayStyle}
       onMouseDown={() => {
         if (!submitting) onOpenChange(false);
       }}
     >
-      <div className="os-modal" style={{ width: 680 }} onMouseDown={(e) => e.stopPropagation()}>
-        <div className="os-modal-head">
+      <div className="os-modal" style={modalBoxStyle} onMouseDown={(e) => e.stopPropagation()}>
+        <div className="os-modal-head" style={modalHeadStyle}>
           <div className="font-display" style={{ fontSize: 18 }}>
             Record payment made — {vendorName}
           </div>
@@ -360,6 +361,8 @@ function RecordVendorPaymentDialog({
 
         <div
           style={{
+            flex: 1,
+            minHeight: 0,
             padding: 18,
             display: 'flex',
             flexDirection: 'column',
@@ -493,25 +496,20 @@ function RecordVendorPaymentDialog({
             gap: 8,
             justifyContent: 'flex-end',
             padding: '12px 18px 14px',
-            borderTop: '1px solid var(--border)',
+            borderTop: '1px solid var(--border, #e5e7eb)',
           }}
         >
-          <button
-            type="button"
-            className="btn"
+          <Button
+            variant="outline"
+            size="sm"
             onClick={() => onOpenChange(false)}
             disabled={submitting}
           >
             Cancel
-          </button>
-          <button
-            type="button"
-            className="btn primary"
-            onClick={submit}
-            disabled={submitting || !bankAccountId}
-          >
+          </Button>
+          <Button size="sm" onClick={submit} disabled={submitting || !bankAccountId}>
             {submitting ? 'Recording…' : 'Record & post'}
-          </button>
+          </Button>
         </div>
       </div>
     </div>
@@ -526,11 +524,49 @@ function formatDate(d: string): string {
   });
 }
 
+// These dialogs render in the (app) dashboard, which does not load the OS
+// shell's os.css (`.os-root .os-modal*`). Style the modal chrome inline with
+// globals/shadcn tokens (+ literal fallbacks) so it presents as a proper
+// centered overlay regardless of route group.
+const modalOverlayStyle: React.CSSProperties = {
+  position: 'fixed',
+  inset: 0,
+  zIndex: 60,
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  padding: 16,
+  background: 'rgba(15, 23, 42, 0.45)',
+};
+
+const modalBoxStyle: React.CSSProperties = {
+  width: 680,
+  maxWidth: '95vw',
+  maxHeight: '90vh',
+  display: 'flex',
+  flexDirection: 'column',
+  overflow: 'hidden',
+  background: 'var(--popover, #ffffff)',
+  color: 'var(--popover-foreground, #0f172a)',
+  border: '1px solid var(--border, #e5e7eb)',
+  borderRadius: 12,
+  boxShadow: '0 24px 64px rgba(0, 0, 0, 0.32)',
+};
+
+const modalHeadStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  gap: 12,
+  padding: '14px 18px',
+  borderBottom: '1px solid var(--border, #e5e7eb)',
+};
+
 const osInputStyle: React.CSSProperties = {
   width: '100%',
-  background: 'var(--content)',
-  color: 'var(--text)',
-  border: '1px solid var(--border)',
+  background: 'var(--content, var(--background, #ffffff))',
+  color: 'var(--text, var(--foreground, inherit))',
+  border: '1px solid var(--border, #e5e7eb)',
   borderRadius: 7,
   padding: '8px 10px',
   fontSize: 13,
