@@ -20,13 +20,19 @@ import { createAdminClient } from '@/lib/supabase/server';
  * already-tracked entity (the row is reused; we just rewrite the file).
  */
 
-export type BillingDocCategory = 'invoice' | 'credit_note' | 'receipt_voucher' | 'refund_voucher';
+export type BillingDocCategory =
+  | 'invoice'
+  | 'credit_note'
+  | 'receipt_voucher'
+  | 'refund_voucher'
+  | 'payment_voucher';
 
 const STORAGE_PREFIX: Record<BillingDocCategory, string> = {
   invoice: 'invoices',
   credit_note: 'credit_notes',
   receipt_voucher: 'receipt_vouchers',
   refund_voucher: 'refund_vouchers',
+  payment_voucher: 'payment_vouchers',
 };
 
 export type UploadBillingPdfArgs = {

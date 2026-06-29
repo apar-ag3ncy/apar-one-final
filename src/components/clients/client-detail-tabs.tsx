@@ -33,6 +33,7 @@ import { ActivityFeed } from '@/components/entity/activity-feed';
 import { AddressList } from '@/components/entity/address-list';
 import { BankAccountList } from '@/components/entity/bank-account-list';
 import { ClientExpensesOnBehalfSection } from '@/components/entity/vendor-bills-section';
+import { ClientPaymentsSection } from '@/components/entity/client-payments-section';
 import { ClientTransactionsSection } from '@/components/entity/client-transactions-section';
 import { ContactsSection } from '@/components/entity/contacts-section';
 import { DocumentsSection } from '@/components/entity/documents-section';
@@ -90,6 +91,7 @@ export function ClientDetailTabs({
     { value: 'documents', label: 'Documents', count: client.documentsCount },
     { value: 'projects', label: 'Projects', count: projects.length },
     { value: 'transactions', label: 'Transactions' },
+    { value: 'payments', label: 'Payments' },
     { value: 'expenses-on-behalf', label: 'Expenses on behalf' },
     { value: 'ledger', label: 'Ledger' },
     { value: 'custom', label: 'Custom' },
@@ -120,6 +122,7 @@ export function ClientDetailTabs({
           <ProjectsTab client={client} projects={projects} employees={employees} users={users} />
         ),
         transactions: <ClientTransactionsSection clientId={client.id} clientName={client.name} />,
+        payments: <ClientPaymentsSection clientId={client.id} clientName={client.name} />,
         'expenses-on-behalf': (
           <ClientExpensesOnBehalfSection clientId={client.id} clientName={client.name} />
         ),

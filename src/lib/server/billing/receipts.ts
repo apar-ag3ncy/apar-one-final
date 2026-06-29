@@ -617,3 +617,218 @@ export async function listReceipts(
     .where(where);
   return { rows, total: totalRow?.count ?? 0 };
 }
+
+/* -------------------------------------------------------------------------- */
+/* Client "Payments" tab reads — receipts + allocations, open invoices, and  */
+/* receivables grouped by project. All computed live so totals refresh the    */
+/* instant a receipt is recorded (the ar_aging view is ~5 min stale).        */
+/* -------------------------------------------------------------------------- */
+
+export type ClientReceiptAllocationRow = {
+  invoiceId: string;
+  invoiceDocumentNumber: string;
+  projectId: string | null;
+  projectName: string | null;
+  allocatedPaise: bigint;
+};
+
+export type ClientReceiptRow = {
+  id: string;
+  receiptNumber: string;
+  receiptDate: string;
+  method: string;
+  totalPaise: bigint;
+  tdsPaise: bigint;
+  status: 'posted' | 'unposted';
+  allocations: ClientReceiptAllocationRow[];
+};
+
+/** Lists this client's receipts + the invoices each one is applied to. */
+export async function listClientReceipts(clientId: string): Promise<readonly ClientReceiptRow[]> {
+  await getActorContext();
+  const parsed = z.string().uuid().parse(clientId);
+
+  const receiptRows = await db.execute<{
+    id: string;
+    receipt_number: string;
+    receipt_date: string;
+    method: string;
+    total_paise: string;
+    tds_paise: string;
+    posted_transaction_id: string | null;
+  }>(sql`
+    SELECT
+      r.id::text AS id,
+      r.receipt_number,
+      r.receipt_date::text AS receipt_date,
+      r.method::text AS method,
+      r.total_paise::text AS total_paise,
+      r.captured_tds_amount_paise::text AS tds_paise,
+      r.posted_transaction_id::text AS posted_transaction_id
+    FROM receipts r
+    WHERE r.client_id = ${parsed}
+    ORDER BY r.receipt_date DESC, r.receipt_number DESC
+  `);
+
+  const allocRows = await db.execute<{
+    receipt_id: string;
+    invoice_id: string;
+    document_number: string;
+    project_id: string | null;
+    project_name: string | null;
+    allocated: string;
+  }>(sql`
+    SELECT
+      pa.receipt_id::text AS receipt_id,
+      i.id::text AS invoice_id,
+      i.document_number,
+      i.project_id::text AS project_id,
+      pr.name AS project_name,
+      pa.allocated_paise::text AS allocated
+    FROM payment_allocations pa
+    JOIN invoices i ON i.id = pa.invoice_id
+    LEFT JOIN projects pr ON pr.id = i.project_id
+    WHERE pa.receipt_id IN (SELECT id FROM receipts WHERE client_id = ${parsed})
+  `);
+
+  const allocByReceipt = new Map<string, ClientReceiptAllocationRow[]>();
+  for (const a of Array.isArray(allocRows) ? allocRows : []) {
+    const list = allocByReceipt.get(a.receipt_id) ?? [];
+    list.push({
+      invoiceId: a.invoice_id,
+      invoiceDocumentNumber: a.document_number,
+      projectId: a.project_id,
+      projectName: a.project_name,
+      allocatedPaise: BigInt(a.allocated ?? '0'),
+    });
+    allocByReceipt.set(a.receipt_id, list);
+  }
+
+  return (Array.isArray(receiptRows) ? receiptRows : []).map((r) => ({
+    id: r.id,
+    receiptNumber: r.receipt_number,
+    receiptDate: r.receipt_date,
+    method: r.method,
+    totalPaise: BigInt(r.total_paise ?? '0'),
+    tdsPaise: BigInt(r.tds_paise ?? '0'),
+    status: r.posted_transaction_id ? 'posted' : 'unposted',
+    allocations: allocByReceipt.get(r.id) ?? [],
+  }));
+}
+
+export type OpenInvoiceRow = {
+  invoiceId: string;
+  documentNumber: string;
+  documentDate: string;
+  projectId: string | null;
+  projectName: string | null;
+  totalPaise: bigint;
+  outstandingPaise: bigint;
+};
+
+/**
+ * Open invoices for a client (outstanding > 0), for the receipt allocation
+ * picker. Outstanding = captured total − payment allocations − advance
+ * allocations (the same figure the ar_aging view materialises, computed live).
+ */
+export async function listOpenInvoicesForClient(
+  clientId: string,
+): Promise<readonly OpenInvoiceRow[]> {
+  await getActorContext();
+  const parsed = z.string().uuid().parse(clientId);
+
+  const rows = await db.execute<{
+    invoice_id: string;
+    document_number: string;
+    document_date: string;
+    project_id: string | null;
+    project_name: string | null;
+    total: string;
+    outstanding: string;
+  }>(sql`
+    SELECT
+      i.id::text AS invoice_id,
+      i.document_number,
+      i.document_date::text AS document_date,
+      i.project_id::text AS project_id,
+      pr.name AS project_name,
+      i.captured_total_paise::text AS total,
+      (
+        i.captured_total_paise
+        - COALESCE((SELECT SUM(allocated_paise) FROM payment_allocations WHERE invoice_id = i.id), 0)
+        - COALESCE((SELECT SUM(allocated_paise) FROM advance_allocations WHERE invoice_id = i.id), 0)
+      )::bigint AS outstanding
+    FROM invoices i
+    LEFT JOIN projects pr ON pr.id = i.project_id
+    WHERE i.client_id = ${parsed}
+      AND i.deleted_at IS NULL
+      AND i.state IN ('sent', 'partially_paid')
+    ORDER BY i.document_date ASC, i.document_number ASC
+  `);
+
+  return (Array.isArray(rows) ? rows : [])
+    .map((r) => ({
+      invoiceId: r.invoice_id,
+      documentNumber: r.document_number,
+      documentDate: r.document_date,
+      projectId: r.project_id,
+      projectName: r.project_name,
+      totalPaise: BigInt(r.total ?? '0'),
+      outstandingPaise: BigInt(r.outstanding ?? '0'),
+    }))
+    .filter((r) => r.outstandingPaise > 0n);
+}
+
+export type ReceivableByProjectRow = {
+  projectId: string | null;
+  projectName: string | null;
+  outstandingPaise: bigint;
+};
+
+/**
+ * "Due to collect" grouped by project — outstanding receivable per project,
+ * computed live. Invoices with no project group under "Unassigned".
+ */
+export async function getClientReceivablesByProject(
+  clientId: string,
+): Promise<{ rows: readonly ReceivableByProjectRow[]; totalPaise: bigint }> {
+  await getActorContext();
+  const parsed = z.string().uuid().parse(clientId);
+
+  const rows = await db.execute<{
+    project_id: string | null;
+    project_name: string | null;
+    outstanding: string;
+  }>(sql`
+    WITH inv AS (
+      SELECT
+        i.project_id,
+        (
+          i.captured_total_paise
+          - COALESCE((SELECT SUM(allocated_paise) FROM payment_allocations WHERE invoice_id = i.id), 0)
+          - COALESCE((SELECT SUM(allocated_paise) FROM advance_allocations WHERE invoice_id = i.id), 0)
+        )::bigint AS outstanding
+      FROM invoices i
+      WHERE i.client_id = ${parsed}
+        AND i.deleted_at IS NULL
+        AND i.state IN ('sent', 'partially_paid')
+    )
+    SELECT
+      inv.project_id::text AS project_id,
+      pr.name AS project_name,
+      COALESCE(SUM(inv.outstanding), 0)::text AS outstanding
+    FROM inv
+    LEFT JOIN projects pr ON pr.id = inv.project_id
+    GROUP BY inv.project_id, pr.name
+    HAVING COALESCE(SUM(inv.outstanding), 0) > 0
+    ORDER BY COALESCE(SUM(inv.outstanding), 0) DESC
+  `);
+
+  const mapped = (Array.isArray(rows) ? rows : []).map((r) => ({
+    projectId: r.project_id,
+    projectName: r.project_name,
+    outstandingPaise: BigInt(r.outstanding ?? '0'),
+  }));
+  const totalPaise = mapped.reduce((acc, r) => acc + r.outstandingPaise, 0n);
+  return { rows: mapped, totalPaise };
+}
