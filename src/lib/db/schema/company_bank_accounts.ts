@@ -26,9 +26,6 @@ export const companyBankAccounts = pgTable('company_bank_accounts', {
   ifsc: text().notNull(),
   bankName: text().notNull(),
   branchName: text(),
-  /** Optional UPI VPA, e.g. "apar@hdfcbank". Rendered as a scannable QR on
-   *  the invoice payment block so clients can pay by scanning. */
-  upiId: text(),
   isPrimary: boolean().notNull().default(false),
   /** Manual ordering for the list; primary floats to the top regardless. */
   sortOrder: integer().notNull().default(0),

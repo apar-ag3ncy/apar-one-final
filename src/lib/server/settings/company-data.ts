@@ -72,7 +72,6 @@ export type CompanyBankAccountRow = {
   ifsc: string;
   bankName: string;
   branchName: string | null;
-  upiId: string | null;
   isPrimary: boolean;
   sortOrder: number;
   notes: string | null;
@@ -88,7 +87,6 @@ export async function listCompanyBankAccounts(): Promise<CompanyBankAccountRow[]
       ifsc: companyBankAccounts.ifsc,
       bankName: companyBankAccounts.bankName,
       branchName: companyBankAccounts.branchName,
-      upiId: companyBankAccounts.upiId,
       isPrimary: companyBankAccounts.isPrimary,
       sortOrder: companyBankAccounts.sortOrder,
       notes: companyBankAccounts.notes,

@@ -64,9 +64,6 @@ const fixture: InvoicePdfData = {
     accountNumber: '50200012345678',
     ifsc: 'HDFC0000123',
     branchName: 'Lower Parel, Mumbai',
-    upiId: 'apar@hdfcbank',
-    upiQrDataUri:
-      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
   },
   paymentLink: null,
   terms: 'Net 30',

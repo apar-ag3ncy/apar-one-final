@@ -345,7 +345,6 @@ const BankInput = z.object({
   ifsc: z.string().trim().min(1, 'IFSC is required.').max(20),
   bankName: z.string().trim().min(1, 'Bank name is required.').max(120),
   branchName: z.string().trim().max(160).nullish(),
-  upiId: z.string().trim().max(100).nullish(),
   isPrimary: z.boolean().optional(),
   notes: z.string().trim().max(1000).nullish(),
 });
@@ -383,7 +382,6 @@ export async function createCompanyBankAccount(input: BankInputShape): Promise<A
           ifsc,
           bankName: parsed.bankName,
           branchName: norm(parsed.branchName),
-          upiId: norm(parsed.upiId),
           isPrimary: makePrimary,
           sortOrder: existing.length,
           notes: norm(parsed.notes),
@@ -435,7 +433,6 @@ export async function updateCompanyBankAccount(
         ifsc,
         bankName: parsed.bankName,
         branchName: norm(parsed.branchName),
-        upiId: norm(parsed.upiId),
         notes: norm(parsed.notes),
         updatedBy: ctx.userId,
       })
