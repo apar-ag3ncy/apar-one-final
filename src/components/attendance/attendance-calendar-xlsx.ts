@@ -1,9 +1,9 @@
 // Calendar (muster-roll) attendance Excel — one sheet per month, a grid of
 // employees (rows) × days (columns) with a COLOUR-CODED status in each cell
-// (matching the PDF), plus per-employee summary columns. Month sheets come
-// first; a "Legend" sheet (with coloured swatches) is last. Uses
-// `xlsx-js-style` (a styled fork of SheetJS) because the community `xlsx`
-// build drops cell fills on write.
+// (matching the PDF), plus per-employee summary columns. Sheet order: month
+// grids, then a "Summary" sheet totalling each employee across the whole range,
+// then a "Legend" sheet (coloured swatches). Uses `xlsx-js-style` (a styled
+// fork of SheetJS) because the community `xlsx` build drops cell fills on write.
 
 import * as XLSX from 'xlsx-js-style';
 
@@ -13,6 +13,7 @@ import {
   STATUS_EXPORT_LABEL,
   STATUS_SHORT,
   type AttendanceCalendarData,
+  type AttendanceStats,
   type CalendarMonth,
 } from './attendance-io';
 import type { AttendanceStatus } from '@/lib/server/entities/attendance';
@@ -178,6 +179,109 @@ function monthSheet(month: CalendarMonth): XLSX.WorkSheet {
   return ws;
 }
 
+const SUMMARY_COLS = [
+  'Employee Code',
+  'Employee',
+  'Working days',
+  'Present',
+  'WFH',
+  'Half-day',
+  'On leave',
+  'Absent',
+  'Weekly off',
+  'Holiday',
+  'Attendance %',
+];
+
+function summaryRowValues(code: string, name: string, st: AttendanceStats): (string | number)[] {
+  return [
+    code,
+    name,
+    st.workingDays,
+    st.counts.present,
+    st.counts.work_from_home,
+    st.counts.half_day,
+    st.counts.on_leave,
+    st.counts.absent,
+    st.counts.weekly_off,
+    st.counts.holiday,
+    st.workingDays > 0 ? Number(st.attendancePct.toFixed(1)) : 0,
+  ];
+}
+
+/** Attendance-% cell: bold, traffic-light coloured (≥90 green, ≥75 amber, else red). */
+function attCellStyle(st: AttendanceStats): CellStyle {
+  const color =
+    st.workingDays === 0
+      ? '1A1A1A'
+      : st.attendancePct >= 90
+        ? '1A7A4D'
+        : st.attendancePct >= 75
+          ? 'B07D12'
+          : 'C0392B';
+  return {
+    border: BORDERS,
+    alignment: { horizontal: 'center' },
+    font: { bold: true, color: { rgb: color } },
+  };
+}
+
+/** Consolidated per-employee totals across the entire selected range. */
+function summarySheet(data: AttendanceCalendarData): XLSX.WorkSheet {
+  const body = data.summary.rows.map((r) =>
+    summaryRowValues(r.employeeCode, r.employeeName, r.stats),
+  );
+  const count = data.summary.rows.length;
+  const totalRow = summaryRowValues(
+    'TOTAL',
+    `${count} employee${count === 1 ? '' : 's'}`,
+    data.summary.totals,
+  );
+  const ws = XLSX.utils.aoa_to_sheet([
+    [`Summary — ${data.fromDate} to ${data.toDate}`],
+    SUMMARY_COLS,
+    ...body,
+    totalRow,
+  ]);
+  ws['!cols'] = [
+    { wch: 13 },
+    { wch: 22 },
+    ...SUMMARY_COLS.slice(2).map((h) => ({ wch: Math.max(8, h.length) })),
+  ];
+  ws['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 5 } }];
+
+  setStyle(ws, 0, 0, { font: { bold: true, sz: 14 } });
+  SUMMARY_COLS.forEach((_, c) =>
+    setStyle(ws, 1, c, {
+      font: { bold: true },
+      fill: HEADER_FILL,
+      alignment: { horizontal: c < 2 ? 'left' : 'center', vertical: 'center' },
+      border: BORDERS,
+    }),
+  );
+  data.summary.rows.forEach((r, ri) => {
+    const row = 2 + ri;
+    for (let c = 0; c < SUMMARY_COLS.length; c++) {
+      if (c === SUMMARY_COLS.length - 1) setStyle(ws, row, c, attCellStyle(r.stats));
+      else
+        setStyle(ws, row, c, {
+          border: BORDERS,
+          alignment: { horizontal: c < 2 ? 'left' : 'center' },
+        });
+    }
+  });
+  const trow = 2 + count;
+  for (let c = 0; c < SUMMARY_COLS.length; c++) {
+    setStyle(ws, trow, c, {
+      font: { bold: true },
+      fill: HEADER_FILL,
+      border: BORDERS,
+      alignment: { horizontal: c < 2 ? 'left' : 'center' },
+    });
+  }
+  return ws;
+}
+
 function legendSheet(data: AttendanceCalendarData): XLSX.WorkSheet {
   const aoa: (string | number)[][] = [
     ['Attendance — calendar (muster roll)'],
@@ -207,10 +311,12 @@ export function downloadAttendanceCalendarXlsx(
 ): void {
   const wb = XLSX.utils.book_new();
   const used = new Set<string>();
-  // Month sheets first so the workbook opens on real data, legend last.
+  // Month grids first (the workbook opens on real data), then the whole-range
+  // Summary, then the Legend.
   for (const month of data.months) {
     XLSX.utils.book_append_sheet(wb, monthSheet(month), sheetName(month.label, used));
   }
+  XLSX.utils.book_append_sheet(wb, summarySheet(data), sheetName('Summary', used));
   XLSX.utils.book_append_sheet(wb, legendSheet(data), sheetName('Legend', used));
 
   const buffer = XLSX.write(wb, { type: 'array', bookType: 'xlsx' }) as ArrayBuffer;

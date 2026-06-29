@@ -203,11 +203,22 @@ export function ExportAttendanceDialog() {
             };
           }),
         }));
+        // Per-employee totals across the WHOLE range (every selected date),
+        // for the Summary sheet at the end of the workbook.
+        const summaryRows = emps.map((e) => ({
+          employeeCode: e.employeeCode,
+          employeeName: e.fullName,
+          stats: computeAttendanceStats(dates.map((d) => statusFor(e.id, d))),
+        }));
         const calData: AttendanceCalendarData = {
           fromDate: from,
           toDate: to,
           generatedLabel,
           months,
+          summary: {
+            rows: summaryRows,
+            totals: aggregateAttendanceStats(summaryRows.map((r) => r.stats)),
+          },
         };
         if (format === 'pdf') {
           const { downloadAttendanceCalendarPdf } = await import('./attendance-calendar-pdf');
