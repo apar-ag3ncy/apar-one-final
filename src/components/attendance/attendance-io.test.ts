@@ -6,6 +6,7 @@ import {
   computeAttendanceStats,
   eachIsoDate,
   normalizeStatus,
+  splitIntoMonths,
   toIsoDate,
   weekdayShort,
 } from './attendance-io';
@@ -124,6 +125,28 @@ describe('computeAttendanceStats', () => {
     const stats = computeAttendanceStats(S({ weekly_off: 2, holiday: 1 }));
     expect(stats.workingDays).toBe(0);
     expect(stats.attendancePct).toBe(0);
+  });
+});
+
+describe('splitIntoMonths', () => {
+  it('groups consecutive dates into calendar months, preserving in-range days', () => {
+    const groups = splitIntoMonths(eachIsoDate('2026-05-30', '2026-07-02'));
+    expect(groups.map((g) => g.label)).toEqual(['May 2026', 'June 2026', 'July 2026']);
+    expect(groups[0]!.days).toEqual(['2026-05-30', '2026-05-31']); // partial month at the start
+    expect(groups[1]!.days).toHaveLength(30); // all of June
+    expect(groups[2]!.days).toEqual(['2026-07-01', '2026-07-02']); // partial month at the end
+    expect(groups[1]!.year).toBe(2026);
+    expect(groups[1]!.month).toBe(6);
+  });
+
+  it('returns a single group for a single month', () => {
+    const groups = splitIntoMonths(eachIsoDate('2026-06-01', '2026-06-30'));
+    expect(groups).toHaveLength(1);
+    expect(groups[0]!.days).toHaveLength(30);
+  });
+
+  it('handles an empty list', () => {
+    expect(splitIntoMonths([])).toEqual([]);
   });
 });
 

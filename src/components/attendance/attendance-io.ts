@@ -16,6 +16,28 @@ export const STATUS_EXPORT_LABEL: Record<AttendanceStatus, string> = {
   holiday: 'Holiday',
 };
 
+/** Single-letter code shown in calendar-grid cells (matches the OS app). */
+export const STATUS_SHORT: Record<AttendanceStatus, string> = {
+  present: 'P',
+  work_from_home: 'W',
+  absent: 'A',
+  half_day: 'H',
+  on_leave: 'L',
+  weekly_off: '·',
+  holiday: 'X',
+};
+
+/** Cell fill colour for the calendar grid (matches the OS Attendance app). */
+export const STATUS_COLOR: Record<AttendanceStatus, string> = {
+  present: '#1fa564',
+  work_from_home: '#3b82d9',
+  absent: '#e2543f',
+  half_day: '#e6a51c',
+  on_leave: '#8b5ad6',
+  weekly_off: '#7d8aa0',
+  holiday: '#cc7a3a',
+};
+
 // Accepted spellings → canonical status. Keys are pre-normalised (lower-cased,
 // runs of space / slash / hyphen collapsed to a single underscore).
 const STATUS_ALIASES: Record<string, AttendanceStatus> = {
@@ -188,3 +210,68 @@ export function aggregateAttendanceStats(blocks: readonly AttendanceStats[]): At
     attendancePct,
   };
 }
+
+/* -------------------------------------------------------------------------- */
+/* Calendar (muster-roll) grouping                                            */
+/* -------------------------------------------------------------------------- */
+
+export type MonthDateGroup = {
+  year: number;
+  month: number; // 1-12
+  /** e.g. "June 2026". */
+  label: string;
+  /** The in-range ISO dates of this month, ascending. */
+  days: readonly string[];
+};
+
+/** Month name + year for a (year, 1-12 month). */
+export function monthLabel(year: number, month: number): string {
+  return new Date(Date.UTC(year, month - 1, 1)).toLocaleDateString('en-IN', {
+    month: 'long',
+    year: 'numeric',
+    timeZone: 'UTC',
+  });
+}
+
+/**
+ * Group an ascending list of ISO dates into consecutive calendar months,
+ * preserving each month's in-range days. Backs the calendar-grid export.
+ */
+export function splitIntoMonths(dates: readonly string[]): MonthDateGroup[] {
+  const groups: MonthDateGroup[] = [];
+  let cur: { year: number; month: number; label: string; days: string[] } | null = null;
+  for (const iso of dates) {
+    const year = Number(iso.slice(0, 4));
+    const month = Number(iso.slice(5, 7));
+    if (!cur || cur.year !== year || cur.month !== month) {
+      cur = { year, month, label: monthLabel(year, month), days: [] };
+      groups.push(cur);
+    }
+    cur.days.push(iso);
+  }
+  return groups;
+}
+
+/* One day column in a calendar month. */
+export type CalendarDay = { iso: string; dayNum: number; weekday: string; isSunday: boolean };
+
+/* One employee row in a calendar month — a status per day, aligned to `days`. */
+export type CalendarRow = {
+  employeeCode: string;
+  employeeName: string;
+  statuses: readonly AttendanceStatus[];
+  stats: AttendanceStats;
+};
+
+export type CalendarMonth = {
+  label: string;
+  days: readonly CalendarDay[];
+  rows: readonly CalendarRow[];
+};
+
+export type AttendanceCalendarData = {
+  fromDate: string;
+  toDate: string;
+  generatedLabel: string;
+  months: readonly CalendarMonth[];
+};
