@@ -2,7 +2,7 @@
 
 import { randomUUID } from 'node:crypto';
 
-import { and, asc, eq, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { db } from '@/lib/db/client';
@@ -228,7 +228,7 @@ async function assembleVoucherData(
     const billRows = await db
       .select({ id: transactions.id, externalRef: transactions.externalRef })
       .from(transactions)
-      .where(sql`${transactions.id} = ANY(${ids}::uuid[])`);
+      .where(inArray(transactions.id, ids));
     const numByTxn = new Map(billRows.map((b) => [b.id, billDocNumber(b.externalRef)]));
     for (const a of v.allocations) {
       allocations.push({
