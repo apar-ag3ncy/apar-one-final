@@ -269,9 +269,18 @@ export type CalendarMonth = {
   rows: readonly CalendarRow[];
 };
 
+/** One employee's figures totalled across the whole selected range. */
+export type CalendarSummaryRow = {
+  employeeCode: string;
+  employeeName: string;
+  stats: AttendanceStats;
+};
+
 export type AttendanceCalendarData = {
   fromDate: string;
   toDate: string;
   generatedLabel: string;
   months: readonly CalendarMonth[];
+  /** Per-employee totals across the entire range + the grand total. */
+  summary: { rows: readonly CalendarSummaryRow[]; totals: AttendanceStats };
 };
