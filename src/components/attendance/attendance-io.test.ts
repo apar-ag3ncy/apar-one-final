@@ -2,11 +2,14 @@ import { describe, expect, it } from 'vitest';
 
 import {
   STATUS_EXPORT_LABEL,
+  aggregateAttendanceStats,
+  computeAttendanceStats,
   eachIsoDate,
   normalizeStatus,
   toIsoDate,
   weekdayShort,
 } from './attendance-io';
+import type { AttendanceStatus } from '@/lib/server/entities/attendance';
 
 describe('normalizeStatus', () => {
   it('round-trips every export label', () => {
@@ -81,5 +84,66 @@ describe('weekdayShort', () => {
     // 2026-06-22 is a Monday, 2026-06-28 is a Sunday.
     expect(weekdayShort('2026-06-22')).toBe('Mon');
     expect(weekdayShort('2026-06-28')).toBe('Sun');
+  });
+});
+
+const S = (parts: Partial<Record<AttendanceStatus, number>>): AttendanceStatus[] => {
+  const out: AttendanceStatus[] = [];
+  for (const [k, n] of Object.entries(parts)) {
+    for (let i = 0; i < (n ?? 0); i++) out.push(k as AttendanceStatus);
+  }
+  return out;
+};
+
+describe('computeAttendanceStats', () => {
+  it('counts statuses and derives working days + attendance %', () => {
+    // 22 present, 1 absent, 1 half-day, 1 on-leave, 4 weekly-off, 1 holiday = 30 days.
+    const stats = computeAttendanceStats(
+      S({ present: 22, absent: 1, half_day: 1, on_leave: 1, weekly_off: 4, holiday: 1 }),
+    );
+    expect(stats.totalDays).toBe(30);
+    // working = 30 − 4 weekly-off − 1 holiday = 25
+    expect(stats.workingDays).toBe(25);
+    expect(stats.counts.present).toBe(22);
+    expect(stats.absentDays).toBe(1);
+    expect(stats.leaveDays).toBe(1);
+    // effective present = 22 + 0 WFH + 0.5·1 half = 22.5
+    expect(stats.effectivePresent).toBe(22.5);
+    // 22.5 / 25 = 90%
+    expect(stats.attendancePct).toBeCloseTo(90, 5);
+  });
+
+  it('counts WFH as present and half-days as 0.5', () => {
+    const stats = computeAttendanceStats(S({ present: 1, work_from_home: 1, half_day: 1 }));
+    expect(stats.workingDays).toBe(3);
+    expect(stats.effectivePresent).toBe(2.5); // 1 + 1 + 0.5
+    expect(stats.attendancePct).toBeCloseTo((2.5 / 3) * 100, 5);
+  });
+
+  it('returns 0% when there are no working days (all weekly-off/holiday)', () => {
+    const stats = computeAttendanceStats(S({ weekly_off: 2, holiday: 1 }));
+    expect(stats.workingDays).toBe(0);
+    expect(stats.attendancePct).toBe(0);
+  });
+});
+
+describe('aggregateAttendanceStats', () => {
+  it('sums per-employee blocks into a correct total', () => {
+    const a = computeAttendanceStats(S({ present: 20, absent: 2, weekly_off: 4 }));
+    const b = computeAttendanceStats(S({ present: 18, on_leave: 4, weekly_off: 4 }));
+    const total = aggregateAttendanceStats([a, b]);
+    expect(total.counts.present).toBe(38);
+    expect(total.absentDays).toBe(2);
+    expect(total.leaveDays).toBe(4);
+    expect(total.totalDays).toBe(a.totalDays + b.totalDays);
+    expect(total.workingDays).toBe(a.workingDays + b.workingDays);
+    expect(total.effectivePresent).toBe(38);
+  });
+
+  it('aggregates empty input to zeroes', () => {
+    const total = aggregateAttendanceStats([]);
+    expect(total.totalDays).toBe(0);
+    expect(total.workingDays).toBe(0);
+    expect(total.attendancePct).toBe(0);
   });
 });
