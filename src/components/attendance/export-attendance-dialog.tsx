@@ -31,7 +31,14 @@ import {
   type AttendanceStatus,
 } from '@/lib/server/entities/attendance';
 
-import { STATUS_EXPORT_LABEL, eachIsoDate, weekdayShort } from './attendance-io';
+import {
+  STATUS_EXPORT_LABEL,
+  aggregateAttendanceStats,
+  computeAttendanceStats,
+  eachIsoDate,
+  weekdayShort,
+} from './attendance-io';
+import type { AttendanceReportData, AttendanceReportRow } from './attendance-report-pdf';
 
 type Preset = 'today' | 'week' | 'month' | 'year' | 'custom';
 
@@ -161,24 +168,79 @@ export function ExportAttendanceDialog() {
       for (const r of records) byCell.set(`${r.employeeId}|${r.date}`, r);
 
       const dates = eachIsoDate(from, to);
+      const statusFor = (empId: string, date: string): AttendanceStatus =>
+        byCell.get(`${empId}|${date}`)?.status ?? defaultStatusForDate(date);
+
+      if (format === 'pdf') {
+        // A proper report: per-employee figures (working days, present, WFH,
+        // half-days, leave, absent, weekly-offs, holidays, attendance %), a
+        // totals row, and a day-by-day breakdown when one employee is exported.
+        const reportRows: AttendanceReportRow[] = emps.map((e) => ({
+          employeeCode: e.employeeCode,
+          employeeName: e.fullName,
+          designation: e.designation,
+          department: e.department,
+          stats: computeAttendanceStats(dates.map((d) => statusFor(e.id, d))),
+        }));
+        const totals = aggregateAttendanceStats(reportRows.map((r) => r.stats));
+        const only = emps.length === 1 ? emps[0]! : null;
+
+        const data: AttendanceReportData = {
+          fromDate: from,
+          toDate: to,
+          rangeDays: dates.length,
+          generatedLabel: new Date().toLocaleString('en-IN', {
+            day: '2-digit',
+            month: 'short',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+          }),
+          rows: reportRows,
+          totals,
+          daily: only
+            ? {
+                employeeName: only.fullName,
+                employeeCode: only.employeeCode,
+                rows: dates.map((d) => ({
+                  date: d,
+                  day: weekdayShort(d),
+                  status: statusFor(only.id, d),
+                  notes: byCell.get(`${only.id}|${d}`)?.notes ?? '',
+                })),
+              }
+            : undefined,
+        };
+
+        const { downloadAttendanceReportPdf } = await import('./attendance-report-pdf');
+        await downloadAttendanceReportPdf(data, `attendance-report-${from}_to_${to}`);
+        toast.success(
+          `Exported attendance report — ${emps.length} employee${
+            emps.length === 1 ? '' : 's'
+          }, ${dates.length} day${dates.length === 1 ? '' : 's'}.`,
+        );
+        setOpen(false);
+        return;
+      }
+
+      // Excel — detailed day-by-day rows (one per employee per date).
       const headers = ['Employee Code', 'Employee', 'Date', 'Day', 'Status', 'Notes'];
       const rows: Record<string, string>[] = [];
       for (const e of emps) {
         for (const date of dates) {
           const rec = byCell.get(`${e.id}|${date}`);
-          const status: AttendanceStatus = rec?.status ?? defaultStatusForDate(date);
           rows.push({
             'Employee Code': e.employeeCode,
             Employee: e.fullName,
             Date: date,
             Day: weekdayShort(date),
-            Status: STATUS_EXPORT_LABEL[status],
+            Status: STATUS_EXPORT_LABEL[statusFor(e.id, date)],
             Notes: rec?.notes ?? '',
           });
         }
       }
 
-      exportRows(rows, headers, `attendance-${from}_to_${to}`, format, 'Attendance');
+      exportRows(rows, headers, `attendance-${from}_to_${to}`, 'xlsx', 'Attendance');
       toast.success(
         `Exported ${rows.length} row${rows.length === 1 ? '' : 's'} (${emps.length} employee${
           emps.length === 1 ? '' : 's'
@@ -203,8 +265,10 @@ export function ExportAttendanceDialog() {
         <DialogHeader>
           <DialogTitle>Export attendance</DialogTitle>
           <DialogDescription>
-            Download attendance for a date range as PDF or Excel. Days without an override use the
-            default (present on weekdays, weekly-off on Sundays).
+            <strong>PDF</strong> is a summary report — per-employee working days, present, leave,
+            absent and attendance % (plus a day-by-day breakdown for a single employee).{' '}
+            <strong>Excel</strong> gives the full day-by-day data. Unmarked days use the default
+            (present on weekdays, weekly-off on Sundays).
           </DialogDescription>
         </DialogHeader>
 

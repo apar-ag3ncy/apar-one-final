@@ -96,3 +96,95 @@ export function weekdayShort(iso: string): string {
     timeZone: 'UTC',
   });
 }
+
+/** All statuses, in the order shown across the attendance report columns. */
+export const ALL_STATUSES: readonly AttendanceStatus[] = [
+  'present',
+  'work_from_home',
+  'half_day',
+  'on_leave',
+  'absent',
+  'weekly_off',
+  'holiday',
+];
+
+/** Per-employee (or aggregate) attendance figures over a date range. */
+export type AttendanceStats = {
+  /** Count of each status across the range. */
+  counts: Record<AttendanceStatus, number>;
+  /** Calendar days summarised (sum of all counts). */
+  totalDays: number;
+  /** Scheduled working days = total − weekly-offs − holidays. */
+  workingDays: number;
+  /** Present-equivalent days = Present + WFH + ½·Half-day. */
+  effectivePresent: number;
+  /** Days absent. */
+  absentDays: number;
+  /** Days on leave. */
+  leaveDays: number;
+  /** effectivePresent ÷ workingDays × 100 (0 when no working days). */
+  attendancePct: number;
+};
+
+/**
+ * Tally an ordered list of effective statuses into attendance figures. Pure —
+ * the caller resolves each (employee, date) to its effective status first
+ * (stored override or the implicit default).
+ */
+export function computeAttendanceStats(statuses: readonly AttendanceStatus[]): AttendanceStats {
+  const counts: Record<AttendanceStatus, number> = {
+    present: 0,
+    work_from_home: 0,
+    absent: 0,
+    half_day: 0,
+    on_leave: 0,
+    weekly_off: 0,
+    holiday: 0,
+  };
+  for (const s of statuses) counts[s] += 1;
+
+  const totalDays = statuses.length;
+  const workingDays = totalDays - counts.weekly_off - counts.holiday;
+  const effectivePresent = counts.present + counts.work_from_home + 0.5 * counts.half_day;
+  const attendancePct = workingDays > 0 ? (effectivePresent / workingDays) * 100 : 0;
+
+  return {
+    counts,
+    totalDays,
+    workingDays,
+    effectivePresent,
+    absentDays: counts.absent,
+    leaveDays: counts.on_leave,
+    attendancePct,
+  };
+}
+
+/** Sum several stat blocks into one aggregate (for the report totals row). */
+export function aggregateAttendanceStats(blocks: readonly AttendanceStats[]): AttendanceStats {
+  const counts: Record<AttendanceStatus, number> = {
+    present: 0,
+    work_from_home: 0,
+    absent: 0,
+    half_day: 0,
+    on_leave: 0,
+    weekly_off: 0,
+    holiday: 0,
+  };
+  let totalDays = 0;
+  for (const b of blocks) {
+    for (const s of ALL_STATUSES) counts[s] += b.counts[s];
+    totalDays += b.totalDays;
+  }
+  const workingDays = totalDays - counts.weekly_off - counts.holiday;
+  const effectivePresent = counts.present + counts.work_from_home + 0.5 * counts.half_day;
+  const attendancePct = workingDays > 0 ? (effectivePresent / workingDays) * 100 : 0;
+  return {
+    counts,
+    totalDays,
+    workingDays,
+    effectivePresent,
+    absentDays: counts.absent,
+    leaveDays: counts.on_leave,
+    attendancePct,
+  };
+}
