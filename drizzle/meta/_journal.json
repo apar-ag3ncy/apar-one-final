@@ -330,6 +330,20 @@
       "when": 1780600007005,
       "tag": "0046_salary_payments_ledger",
       "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1780600007006,
+      "tag": "0047_bill_allocations_deleted_at",
+      "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1780600007007,
+      "tag": "0048_drop_company_bank_upi",
+      "breakpoints": true
     }
   ]
 }

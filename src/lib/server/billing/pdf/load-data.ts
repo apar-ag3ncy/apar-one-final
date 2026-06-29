@@ -13,7 +13,6 @@ import {
   invoices,
   organizations,
 } from '@/lib/db/schema';
-import QRCode from 'qrcode';
 
 import { AppError } from '@/lib/errors';
 import { createAdminClient } from '@/lib/supabase/server';
@@ -165,9 +164,8 @@ export async function loadInvoicePdfData(
       : null;
 
   // Payment instructions — the bank account the invoice pinned (else the
-  // agency's primary) plus an optional pay-by-UPI QR encoding the exact invoice
-  // amount. Omitted entirely when no company bank account exists (Settings →
-  // Billing). A pinned-but-retired account falls back to the primary.
+  // agency's primary). Omitted entirely when no company bank account exists
+  // (Settings → Billing). A pinned-but-retired account falls back to the primary.
   let bank: CompanyBankAccountRow | null = null;
   try {
     bank = invoice.bankAccountId ? await getCompanyBankAccountById(invoice.bankAccountId) : null;
@@ -177,24 +175,12 @@ export async function loadInvoicePdfData(
   }
   let payment: InvoicePdfData['payment'] = null;
   if (bank) {
-    const beneficiary = supplierOrg.legalName || supplierOrg.displayName;
-    let upiQrDataUri: string | null = null;
-    if (bank.upiId) {
-      const amount = (Number(invoice.capturedTotalPaise) / 100).toFixed(2);
-      const upiUri =
-        `upi://pay?pa=${encodeURIComponent(bank.upiId)}` +
-        `&pn=${encodeURIComponent(beneficiary)}` +
-        `&am=${amount}&cu=INR&tn=${encodeURIComponent(invoice.documentNumber)}`;
-      upiQrDataUri = await QRCode.toDataURL(upiUri, { margin: 1, width: 240 }).catch(() => null);
-    }
     payment = {
-      beneficiaryName: beneficiary,
+      beneficiaryName: supplierOrg.legalName || supplierOrg.displayName,
       bankName: bank.bankName,
       accountNumber: bank.accountNumber,
       ifsc: bank.ifsc,
       branchName: bank.branchName,
-      upiId: bank.upiId,
-      upiQrDataUri,
     };
   }
 

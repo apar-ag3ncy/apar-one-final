@@ -8,6 +8,7 @@ import { DocumentList } from '@/components/entity/document-list';
 import { DocumentsSection } from '@/components/entity/documents-section';
 import { TransactionList } from '@/components/entity/transaction-list';
 import { VendorBillsSection } from '@/components/entity/vendor-bills-section';
+import { VendorPaymentsSection } from '@/components/entity/vendor-payments-section';
 import { useEntityNavigate } from '@/lib/client/use-navigate';
 import type { Vendor, VendorCategory } from './types';
 
@@ -25,6 +26,7 @@ export function VendorDetailTabs({ vendor }: { vendor: Vendor }) {
   const tabs: UrlTab[] = [
     { value: 'overview', label: 'Overview' },
     { value: 'bills', label: 'Bills' },
+    { value: 'payments', label: 'Payments' },
     { value: 'ledger', label: 'Ledger' },
     { value: 'documents', label: 'Documents', count: vendor.documentsCount },
     { value: 'contracts', label: 'Contracts', count: vendor.contractsCount },
@@ -35,6 +37,7 @@ export function VendorDetailTabs({ vendor }: { vendor: Vendor }) {
       {{
         overview: <OverviewTab vendor={vendor} />,
         bills: <VendorBillsSection vendorId={vendor.id} vendorName={vendor.name} />,
+        payments: <VendorPaymentsSection vendorId={vendor.id} vendorName={vendor.name} />,
         ledger: <LedgerTab vendor={vendor} />,
         documents: (
           <DocumentsSection entityType="vendor" entityId={vendor.id} entityName={vendor.name} />

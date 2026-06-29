@@ -82,9 +82,8 @@ export type InvoicePdfData = {
   capturedTaxTotalPaise: bigint;
   capturedTotalPaise: bigint;
   /**
-   * The agency's bank / UPI payment instructions for this invoice. Null when no
-   * company bank account is configured (Settings → Billing). `upiQrDataUri` is a
-   * pre-rendered `data:image/png` QR encoding the UPI deep link + exact amount.
+   * The agency's bank payment instructions for this invoice. Null when no
+   * company bank account is configured (Settings → Billing).
    */
   payment: {
     beneficiaryName: string;
@@ -92,8 +91,6 @@ export type InvoicePdfData = {
     accountNumber: string;
     ifsc: string;
     branchName: string | null;
-    upiId: string | null;
-    upiQrDataUri: string | null;
   } | null;
   paymentLink: {
     url: string;
@@ -271,22 +268,17 @@ const styles = StyleSheet.create({
 
   paymentBlock: { marginTop: 14, padding: 10, backgroundColor: '#f0f9ff', borderRadius: 4 },
 
-  /* Bank & UPI payment details */
+  /* Bank payment details */
   payDetails: {
     marginTop: 14,
     padding: 10,
     borderRadius: 4,
     backgroundColor: '#f9fafb',
     border: BORDER,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
   },
-  payBankCol: { width: '64%' },
-  payQrCol: { width: '34%', alignItems: 'center', justifyContent: 'center' },
   payLine: { flexDirection: 'row', marginBottom: 1.5 },
   payLabel: { width: 70, color: '#6b7280' },
   payVal: { flex: 1 },
-  qrImg: { width: 92, height: 92 },
 
   footer: {
     position: 'absolute',
@@ -759,21 +751,12 @@ function PaymentDetails({
 }): React.JSX.Element {
   return (
     <View style={[styles.payDetails, { marginTop: dyn.m.blockGap }]} wrap={false}>
-      <View style={styles.payBankCol}>
-        <Text style={[styles.blockHeading, { color: dyn.headingColor }]}>Payment details</Text>
-        <PayLine label="Beneficiary" value={payment.beneficiaryName} />
-        <PayLine label="Bank" value={payment.bankName} />
-        <PayLine label="A/c No." value={payment.accountNumber} />
-        <PayLine label="IFSC" value={payment.ifsc} />
-        {payment.branchName ? <PayLine label="Branch" value={payment.branchName} /> : null}
-        {payment.upiId ? <PayLine label="UPI ID" value={payment.upiId} /> : null}
-      </View>
-      {payment.upiQrDataUri ? (
-        <View style={styles.payQrCol}>
-          {/* eslint-disable-next-line jsx-a11y/alt-text */}
-          <Image src={payment.upiQrDataUri} style={styles.qrImg} />
-        </View>
-      ) : null}
+      <Text style={[styles.blockHeading, { color: dyn.headingColor }]}>Payment details</Text>
+      <PayLine label="Beneficiary" value={payment.beneficiaryName} />
+      <PayLine label="Bank" value={payment.bankName} />
+      <PayLine label="A/c No." value={payment.accountNumber} />
+      <PayLine label="IFSC" value={payment.ifsc} />
+      {payment.branchName ? <PayLine label="Branch" value={payment.branchName} /> : null}
     </View>
   );
 }

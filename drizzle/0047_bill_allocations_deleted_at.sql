@@ -1,0 +1,11 @@
+-- 0045_bill_allocations_deleted_at — add the deleted_at column the schema's
+-- timestamps() mixin expects on bill_allocations.
+--
+-- Migration 0031 created bill_allocations WITHOUT deleted_at (unlike
+-- payment_allocations, which has it), but src/lib/db/schema/bill_allocations.ts
+-- spreads ...timestamps() — so Drizzle emits `deleted_at` in every INSERT and
+-- the write fails ("column bill_allocations.deleted_at does not exist"). The
+-- client side never hit this (it writes payment_allocations); the vendor
+-- payment path (recordVendorPayment / allocateVendorPayment) is the first to
+-- write bill_allocations, exposing the drift.
+ALTER TABLE "bill_allocations" ADD COLUMN IF NOT EXISTS "deleted_at" timestamptz;

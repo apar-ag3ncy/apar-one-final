@@ -1,6 +1,6 @@
 'use server';
 
-import { and, asc, eq, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { logActivity } from '@/lib/activity';
@@ -90,7 +90,10 @@ export async function allocateVendorPayment(args: {
         paidToVendorId: transactions.paidToVendorId,
       })
       .from(transactions)
-      .where(sql`${transactions.id} = ANY(${billIds}::uuid[])`);
+      // inArray emits `id = ANY($1::uuid[])` with a single array param. A raw
+      // `sql`...ANY(${billIds}::uuid[])`` mis-binds a JS array as a scalar
+      // (see the same footgun + fix documented in ledger/transactions.ts).
+      .where(inArray(transactions.id, billIds));
     const billById = new Map(bills.map((b) => [b.id, b]));
     for (const a of parsed) {
       const bill = billById.get(a.billTxnId);
