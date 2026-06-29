@@ -6,6 +6,7 @@ import {
   EyeIcon,
   EyeOffIcon,
   LoaderIcon,
+  PencilIcon,
   PlusIcon,
   ShieldAlertIcon,
   Trash2Icon,
@@ -52,6 +53,7 @@ export type BankAccountListProps = {
    */
   onReveal?: (accountId: string) => Promise<{ url: string; expiresAt: string }>;
   onAdd?: () => void;
+  onEdit?: (account: BankAccount) => void;
   onDelete?: (account: BankAccount) => void;
   className?: string;
 };
@@ -70,6 +72,7 @@ export function BankAccountList({
   canReveal,
   onReveal,
   onAdd,
+  onEdit,
   onDelete,
   className,
 }: BankAccountListProps) {
@@ -104,6 +107,7 @@ export function BankAccountList({
             account={account}
             canReveal={canReveal}
             onReveal={onReveal}
+            onEdit={onEdit ? () => onEdit(account) : undefined}
             onDelete={onDelete ? () => onDelete(account) : undefined}
           />
         ))}
@@ -116,11 +120,13 @@ function BankAccountCard({
   account,
   canReveal,
   onReveal,
+  onEdit,
   onDelete,
 }: {
   account: BankAccount;
   canReveal?: boolean;
   onReveal?: (accountId: string) => Promise<{ url: string; expiresAt: string }>;
+  onEdit?: () => void;
   onDelete?: () => void;
 }) {
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -194,6 +200,11 @@ function BankAccountCard({
                 <EyeIcon className="size-3.5" aria-hidden />
               )}
               Reveal
+            </Button>
+          ) : null}
+          {onEdit ? (
+            <Button variant="ghost" size="sm" onClick={onEdit} aria-label="Edit bank account">
+              <PencilIcon className="size-3.5" aria-hidden />
             </Button>
           ) : null}
           {onDelete ? (

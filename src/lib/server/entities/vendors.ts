@@ -8,7 +8,6 @@ import { logAudit } from '@/lib/audit';
 import { db } from '@/lib/db/client';
 import {
   entityAddresses,
-  entityBankAccounts,
   entityContacts,
   entityTaxIdentifiers,
   transactions,
@@ -17,7 +16,8 @@ import {
 import { AppError } from '@/lib/errors';
 import { requireCapability } from '@/lib/rbac';
 import { getActorContext } from '@/lib/server/actor';
-import { GSTIN_RE, IFSC_RE, PAN_RE, last4 } from '@/lib/validators';
+import { createBankAccount } from './bank-accounts';
+import { GSTIN_RE, IFSC_RE, PAN_RE } from '@/lib/validators';
 
 /**
  * Vendor write actions. Mirrors clients.ts (SPEC-AMENDMENT-001 §2.1 / §2.4).
@@ -503,28 +503,36 @@ export async function createVendor(input: CreateVendorInput): Promise<CreateVend
         });
       }
 
-      const b = v.bank ?? {};
-      const bankFilled =
-        (b.bankName ?? '') !== '' || (b.accountNumber ?? '') !== '' || (b.ifsc ?? '') !== '';
-      if (bankFilled) {
-        const acct = (b.accountNumber ?? '').replace(/\s+/g, '');
-        await tx.insert(entityBankAccounts).values({
-          entityType: 'vendor',
-          entityId: vendorId,
-          holderName: (b.holderName?.trim() || v.name).slice(0, 200),
-          accountLast4: acct.length >= 4 ? last4(acct) : '0000',
-          ifsc: (b.ifsc ?? '').toUpperCase(),
-          bankName: b.bankName ?? '',
-          accountType: 'current',
-          isPrimary: true,
-          vaultObjectKey: '',
-          createdBy: ctx.userId,
-          updatedBy: ctx.userId,
-        });
-      }
-
       return vendorId;
     });
+
+    // Optional bank account captured in the create wizard — stored with full
+    // vault discipline (full number → restricted-kyc vault; only last-4 +
+    // pointer on the row) via createBankAccount. Run after the create
+    // transaction so a storage hiccup can't fail vendor creation; best-effort,
+    // since the vendor already exists and the account can also be added from
+    // the Bank accounts tab. Requires a valid full number.
+    {
+      const acct = (v.bank?.accountNumber ?? '').replace(/\D/g, '');
+      const bankFilled =
+        (v.bank?.bankName ?? '') !== '' || acct !== '' || (v.bank?.ifsc ?? '') !== '';
+      if (bankFilled && /^[0-9]{4,20}$/.test(acct)) {
+        try {
+          await createBankAccount({
+            entityType: 'vendor',
+            entityId: newId,
+            holderName: (v.bank?.holderName?.trim() || v.name).slice(0, 200),
+            accountNumber: acct,
+            ifsc: (v.bank?.ifsc ?? '').toUpperCase(),
+            bankName: v.bank?.bankName ?? '',
+            accountType: 'current',
+            isPrimary: true,
+          });
+        } catch (e) {
+          console.error('[vendors.createVendor] bank capture failed (vendor created):', e);
+        }
+      }
+    }
 
     await logAudit({
       actorId: ctx.userId,

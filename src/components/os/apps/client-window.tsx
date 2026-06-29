@@ -10,6 +10,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 
 import { ContactsSection } from '@/components/entity/contacts-section';
 import { AddressesSection } from '@/components/entity/addresses-section';
+import { BankAccountsSection } from '@/components/entity/bank-accounts-section';
 import { EntitySettingsSection } from '@/components/entity/entity-settings-section';
 import { ClientEditDialog } from './client-edit-dialog';
 import { DocumentsSection } from '@/components/entity/documents-section';
@@ -47,6 +48,7 @@ type ClientTab =
   | 'overview'
   | 'contacts'
   | 'addresses'
+  | 'bank'
   | 'projects'
   | 'documents'
   | 'invoices'
@@ -60,6 +62,7 @@ const TAB_LABELS: Record<ClientTab, string> = {
   overview: 'Overview',
   contacts: 'Contacts',
   addresses: 'Addresses',
+  bank: 'Bank accounts',
   projects: 'Projects',
   documents: 'Documents',
   invoices: 'Invoices',
@@ -156,6 +159,7 @@ export function ClientWindow({ clientId, onClose }: ClientWindowProps) {
     'overview',
     'contacts',
     'addresses',
+    'bank',
     'projects',
     'documents',
     'invoices',
@@ -194,6 +198,9 @@ export function ClientWindow({ clientId, onClose }: ClientWindowProps) {
         ) : null}
         {tab === 'addresses' ? (
           <AddressesSection entityType="client" entityId={client.id} entityName={client.name} />
+        ) : null}
+        {tab === 'bank' ? (
+          <BankAccountsSection entityType="client" entityId={client.id} entityName={client.name} />
         ) : null}
         {tab === 'projects' ? (
           <ProjectsBody

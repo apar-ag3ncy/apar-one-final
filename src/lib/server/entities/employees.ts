@@ -9,7 +9,6 @@ import { db } from '@/lib/db/client';
 import {
   employees,
   entityAddresses,
-  entityBankAccounts,
   entityContacts,
   entityTaxIdentifiers,
   salaryLines,
@@ -19,8 +18,9 @@ import {
 import { AppError } from '@/lib/errors';
 import { requireCapability } from '@/lib/rbac';
 import { getActorContext } from '@/lib/server/actor';
+import { createBankAccount } from './bank-accounts';
 import { ensureDepartmentRegistered } from '@/lib/server/entities/department-registry';
-import { IFSC_RE, PAN_RE, last4, maskAadhaar, maskPAN } from '@/lib/validators';
+import { IFSC_RE, PAN_RE, maskAadhaar, maskPAN } from '@/lib/validators';
 
 /**
  * Employee write actions. Mirrors clients.ts and vendors.ts.
@@ -564,28 +564,6 @@ export async function createEmployee(input: CreateEmployeeInput): Promise<Create
         });
       }
 
-      // Banking (salary account) — optional. Full number lands in the vault
-      // later; we store last-4 + IFSC + holder.
-      const b = v.bank ?? {};
-      const bankFilled =
-        (b.bankName ?? '') !== '' || (b.accountNumber ?? '') !== '' || (b.ifsc ?? '') !== '';
-      if (bankFilled) {
-        const acct = (b.accountNumber ?? '').replace(/\s+/g, '');
-        await tx.insert(entityBankAccounts).values({
-          entityType: 'employee',
-          entityId: employeeId,
-          holderName: (b.holderName?.trim() || v.fullName).slice(0, 200),
-          accountLast4: acct.length >= 4 ? last4(acct) : '0000',
-          ifsc: (b.ifsc ?? '').toUpperCase(),
-          bankName: b.bankName ?? '',
-          accountType: 'savings',
-          isPrimary: true,
-          vaultObjectKey: '',
-          createdBy: ctx.userId,
-          updatedBy: ctx.userId,
-        });
-      }
-
       // Initial salary structure — captured from the offer letter, optional.
       if (v.salary && hasSalary(v.salary)) {
         await tx.insert(salaryStructures).values({
@@ -603,6 +581,34 @@ export async function createEmployee(input: CreateEmployeeInput): Promise<Create
 
       return employeeId;
     });
+
+    // Optional salary bank account captured in the create wizard — stored with
+    // full vault discipline (full number → restricted-kyc vault; only last-4 +
+    // pointer on the row) via createBankAccount. Run after the create
+    // transaction so a storage hiccup can't fail employee creation;
+    // best-effort, since the employee already exists and the account can also
+    // be added from the Bank accounts tab. Requires a valid full number.
+    {
+      const acct = (v.bank?.accountNumber ?? '').replace(/\D/g, '');
+      const bankFilled =
+        (v.bank?.bankName ?? '') !== '' || acct !== '' || (v.bank?.ifsc ?? '') !== '';
+      if (bankFilled && /^[0-9]{4,20}$/.test(acct)) {
+        try {
+          await createBankAccount({
+            entityType: 'employee',
+            entityId: newId,
+            holderName: (v.bank?.holderName?.trim() || v.fullName).slice(0, 200),
+            accountNumber: acct,
+            ifsc: (v.bank?.ifsc ?? '').toUpperCase(),
+            bankName: v.bank?.bankName ?? '',
+            accountType: 'savings',
+            isPrimary: true,
+          });
+        } catch (e) {
+          console.error('[employees.createEmployee] bank capture failed (employee created):', e);
+        }
+      }
+    }
 
     await logAudit({
       actorId: ctx.userId,

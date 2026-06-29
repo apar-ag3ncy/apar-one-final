@@ -132,6 +132,72 @@ export async function revealBank(
 }
 
 /**
+ * Store a full bank-account number in the vault. The write-side counterpart of
+ * `revealBank`: the plaintext number lives ONLY as a private blob in
+ * `restricted-kyc` (never on the entity row, which keeps just the last-4 + this
+ * object key). Capability gating is the caller's job (the create action checks
+ * `update_<entity>`); here we record the write to the audit trail.
+ *
+ * Returns the generated object key to persist as `vaultObjectKey`.
+ */
+export async function storeBank(
+  ctx: CurrentUserContext,
+  args: {
+    accountNumber: string;
+    entityType: string;
+    entityId: string;
+  },
+): Promise<{ objectKey: string }> {
+  const objectKey = `${args.entityType}/${args.entityId}/${crypto.randomUUID()}-bank.txt`;
+  const admin = createAdminClient();
+  const { error } = await admin.storage
+    .from(KYC_BUCKET)
+    .upload(objectKey, new TextEncoder().encode(args.accountNumber), {
+      contentType: 'text/plain; charset=utf-8',
+      cacheControl: '0',
+      upsert: false,
+    });
+  if (error) {
+    throw new AppError('internal', 'Failed to store the bank account number in the vault.', {
+      cause: error,
+    });
+  }
+
+  await logAudit({
+    actorId: ctx.userId,
+    entityType: args.entityType,
+    entityId: args.entityId,
+    action: 'store_bank',
+    changes: { object_key: objectKey, last4: args.accountNumber.slice(-4) },
+  });
+
+  return { objectKey };
+}
+
+/**
+ * Best-effort delete of a vault blob, used to avoid orphaning an uploaded
+ * account-number object when the row insert that would have referenced it
+ * fails. Swallows storage errors — an orphan blob is harmless and the caller
+ * is already unwinding a failure.
+ */
+export async function removeVaultObject(objectKey: string): Promise<void> {
+  try {
+    const admin = createAdminClient();
+    const { error } = await admin.storage.from(KYC_BUCKET).remove([objectKey]);
+    if (error) throw error;
+  } catch (e) {
+    // Don't rethrow — the caller is already unwinding a failure and an orphan
+    // blob is harmless to correctness. But log it so the (rare) orphaned
+    // account-number object can be found and swept rather than lingering
+    // silently in the vault.
+    console.error('[storage.removeVaultObject] failed to delete orphaned vault object', {
+      objectKey,
+      error: e,
+    });
+  }
+}
+
+/**
  * Get a signed URL for a regular (non-KYC) document. SPEC-AMENDMENT-001
  * §10.3 — used by `<DocumentViewer>` to render the PDF inline. Caller
  * decides whether the audit + activity row should be written; we

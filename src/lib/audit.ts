@@ -22,6 +22,7 @@ export type AuditAction =
   | 'delete'
   | 'reveal_kyc'
   | 'reveal_bank'
+  | 'store_bank'
   | 'upload_kyc'
   | 'sign_url'
   | 'capability_grant'

@@ -31,7 +31,7 @@ import { formatINR } from '@/components/shared/format-inr';
 import { UrlTabs, type UrlTab } from '@/components/shared/url-tabs';
 import { ActivityFeed } from '@/components/entity/activity-feed';
 import { AddressList } from '@/components/entity/address-list';
-import { BankAccountList } from '@/components/entity/bank-account-list';
+import { BankAccountsSection } from '@/components/entity/bank-accounts-section';
 import { ClientExpensesOnBehalfSection } from '@/components/entity/vendor-bills-section';
 import { ClientPaymentsSection } from '@/components/entity/client-payments-section';
 import { ClientTransactionsSection } from '@/components/entity/client-transactions-section';
@@ -49,7 +49,6 @@ import { useEntityNavigate } from '@/lib/client/use-navigate';
 import { useRealtimeActivity } from '@/lib/client/use-realtime-activity';
 import { getEntityActivity } from '@/lib/server/entities/activity';
 import { listAddresses, type AddressRow } from '@/lib/server/entities/addresses';
-import { listBankAccounts, type BankAccountRow } from '@/lib/server/entities/bank-accounts';
 import { listTaxIdentifiers, type TaxIdentifierRow } from '@/lib/server/entities/tax-identifiers';
 import type { ContactRow } from '@/lib/server/entities/contacts';
 import type { Client } from './types';
@@ -237,36 +236,14 @@ function AddressesTab({ entityId, entityName }: { entityId: string; entityName: 
 
 function BankTaxTab({ entityId, entityName }: { entityId: string; entityName: string }) {
   return (
-    <LazyTab
-      load={async () => {
-        const [banks, taxIds] = await Promise.all([
-          listBankAccounts({ entityType: 'client', entityId }),
-          listTaxIdentifiers({ entityType: 'client', entityId }),
-        ]);
-        return { banks, taxIds };
-      }}
-    >
-      {({
-        banks,
-        taxIds,
-      }: {
-        banks: readonly BankAccountRow[];
-        taxIds: readonly TaxIdentifierRow[];
-      }) => (
-        <div className="flex flex-col gap-4">
-          <BankAccountList
-            entityName={entityName}
-            accounts={banks.map((b) => ({
-              id: b.id,
-              bankName: b.bankName,
-              maskedNumber: `XXXX XXXX ${b.accountLast4}`,
-              ifsc: b.ifsc,
-              holderName: b.holderName,
-              accountType: b.accountType,
-              isPrimary: b.isPrimary,
-              branch: b.branch,
-            }))}
-          />
+    <div className="flex flex-col gap-4">
+      <BankAccountsSection entityType="client" entityId={entityId} entityName={entityName} />
+      <LazyTab
+        load={async () => ({
+          taxIds: await listTaxIdentifiers({ entityType: 'client', entityId }),
+        })}
+      >
+        {({ taxIds }: { taxIds: readonly TaxIdentifierRow[] }) => (
           <TaxIdentifierList
             entityName={entityName}
             identifiers={taxIds.map(
@@ -278,9 +255,9 @@ function BankTaxTab({ entityId, entityName }: { entityId: string; entityName: st
               }),
             )}
           />
-        </div>
-      )}
-    </LazyTab>
+        )}
+      </LazyTab>
+    </div>
   );
 }
 

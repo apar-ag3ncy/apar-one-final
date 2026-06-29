@@ -9,7 +9,6 @@ import { db } from '@/lib/db/client';
 import {
   clients,
   entityAddresses,
-  entityBankAccounts,
   entityContacts,
   entityTaxIdentifiers,
   transactions,
@@ -17,7 +16,8 @@ import {
 import { AppError } from '@/lib/errors';
 import { requireCapability } from '@/lib/rbac';
 import { getActorContext } from '@/lib/server/actor';
-import { GSTIN_RE, IFSC_RE, PAN_RE, last4 } from '@/lib/validators';
+import { createBankAccount } from './bank-accounts';
+import { GSTIN_RE, IFSC_RE, PAN_RE } from '@/lib/validators';
 
 /**
  * Client write actions. Mirrors SPEC-AMENDMENT-001 §2.1 + §2.4:
@@ -480,32 +480,38 @@ export async function createClient(input: CreateClientInput): Promise<CreateClie
         });
       }
 
-      // Bank account — optional. Vault upload not wired yet; we store
-      // the last-4 + IFSC + holder + an empty vaultObjectKey so the
-      // row is queryable. The reveal flow will refuse to surface a
-      // full number until storage upload lands.
-      const b = bank;
-      const bankFilled =
-        (b.bankName ?? '') !== '' || (b.accountNumber ?? '') !== '' || (b.ifsc ?? '') !== '';
-      if (bankFilled) {
-        const acct = (b.accountNumber ?? '').replace(/\s+/g, '');
-        await tx.insert(entityBankAccounts).values({
-          entityType: 'client',
-          entityId: clientId,
-          holderName: (b.holderName?.trim() || v.name).slice(0, 200),
-          accountLast4: acct.length >= 4 ? last4(acct) : '0000',
-          ifsc: (b.ifsc ?? '').toUpperCase(),
-          bankName: b.bankName ?? '',
-          accountType: 'current',
-          isPrimary: true,
-          vaultObjectKey: '', // populated when storage upload ships
-          createdBy: ctx.userId,
-          updatedBy: ctx.userId,
-        });
-      }
-
       return clientId;
     });
+
+    // Optional bank account captured in the create wizard — stored with full
+    // vault discipline (the full number goes to the restricted-kyc vault; only
+    // the last-4 + object pointer land on the row) via createBankAccount. Run
+    // after the create transaction so a storage hiccup can't fail client
+    // creation; best-effort, since the client already exists and the account
+    // can also be added from the Bank accounts tab. Requires a valid full
+    // number — partial bank info without one is skipped rather than stored
+    // un-revealably.
+    {
+      const acct = (bank.accountNumber ?? '').replace(/\D/g, '');
+      const bankFilled =
+        (bank.bankName ?? '') !== '' || acct !== '' || (bank.ifsc ?? '') !== '';
+      if (bankFilled && /^[0-9]{4,20}$/.test(acct)) {
+        try {
+          await createBankAccount({
+            entityType: 'client',
+            entityId: newId,
+            holderName: (bank.holderName?.trim() || v.name).slice(0, 200),
+            accountNumber: acct,
+            ifsc: (bank.ifsc ?? '').toUpperCase(),
+            bankName: bank.bankName ?? '',
+            accountType: 'current',
+            isPrimary: true,
+          });
+        } catch (e) {
+          console.error('[clients.createClient] bank capture failed (client created):', e);
+        }
+      }
+    }
 
     await logAudit({
       actorId: ctx.userId,
