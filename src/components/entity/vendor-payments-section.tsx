@@ -20,6 +20,7 @@ import {
   listOpenBillsForVendor,
   listVendorPayments,
   recordVendorPayment,
+  reverseVendorPayment,
   type OpenBillRow,
   type PayableByProjectRow,
   type VendorPaymentRow,
@@ -43,6 +44,7 @@ export function VendorPaymentsSection({
   const [due, setDue] = useState<DueState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [formOpen, setFormOpen] = useState(false);
+  const [reversing, setReversing] = useState<{ id: string; amount: bigint } | null>(null);
 
   async function reload() {
     try {
@@ -144,6 +146,18 @@ export function VendorPaymentsSection({
                         {formatINR(p.amountPaise)}
                       </div>
                       <div className="text-muted-foreground text-xs">{formatDate(p.txnDate)}</div>
+                      {p.status === 'posted' ? (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-7 px-2"
+                          onClick={() =>
+                            setReversing({ id: p.transactionId, amount: p.amountPaise })
+                          }
+                        >
+                          Reverse
+                        </Button>
+                      ) : null}
                     </div>
                   </div>
                 </li>
@@ -163,6 +177,118 @@ export function VendorPaymentsSection({
           void reload();
         }}
       />
+
+      <ReversePaymentDialog
+        target={reversing}
+        onOpenChange={(o) => !o && setReversing(null)}
+        onReversed={() => {
+          setReversing(null);
+          void reload();
+        }}
+      />
+    </div>
+  );
+}
+
+function ReversePaymentDialog({
+  target,
+  onOpenChange,
+  onReversed,
+}: {
+  target: { id: string; amount: bigint } | null;
+  onOpenChange: (open: boolean) => void;
+  onReversed: () => void;
+}) {
+  const [reason, setReason] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (target) queueMicrotask(() => setReason(''));
+  }, [target]);
+
+  if (!target) return null;
+
+  async function submit() {
+    const r = reason.trim();
+    if (r.length < 10) {
+      toast.error('Enter a reason of at least 10 characters.');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      await reverseVendorPayment(target!.id, r);
+      toast.success('Payment reversed.');
+      onReversed();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not reverse the payment.');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div
+      className="os-modal-overlay"
+      style={modalOverlayStyle}
+      onMouseDown={() => {
+        if (!submitting) onOpenChange(false);
+      }}
+    >
+      <div
+        className="os-modal"
+        style={{ ...modalBoxStyle, width: 460 }}
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <div className="os-modal-head" style={modalHeadStyle}>
+          <div className="font-display" style={{ fontSize: 18 }}>
+            Reverse payment ({formatINR(target.amount)})
+          </div>
+          <button
+            type="button"
+            className="btn"
+            onClick={() => onOpenChange(false)}
+            disabled={submitting}
+            aria-label="Close"
+          >
+            ×
+          </button>
+        </div>
+        <div style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0, lineHeight: 1.5 }}>
+            Posts an offsetting entry and marks this payment reversed (the ledger is append-only —
+            nothing is deleted). Give a reason (≥10 characters).
+          </p>
+          <textarea
+            rows={3}
+            placeholder="e.g. Duplicate / mis-recorded payment"
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            disabled={submitting}
+            style={{ ...osInputStyle, resize: 'vertical', minHeight: 64 }}
+          />
+        </div>
+        <div
+          style={{
+            display: 'flex',
+            gap: 8,
+            justifyContent: 'flex-end',
+            padding: '12px 18px 14px',
+            borderTop: '1px solid var(--border, #e5e7eb)',
+          }}
+        >
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => onOpenChange(false)}
+            disabled={submitting}
+          >
+            Cancel
+          </Button>
+          <Button variant="destructive" size="sm" onClick={submit} disabled={submitting}>
+            {submitting ? 'Reversing…' : 'Reverse payment'}
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }

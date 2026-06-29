@@ -16,7 +16,7 @@ import {
 import { AppError } from '@/lib/errors';
 import { requireCapability } from '@/lib/rbac';
 import { getActorContext } from '@/lib/server/actor';
-import { createDraftTransaction, postTransaction } from '@/lib/server/ledger';
+import { createDraftTransaction, postTransaction, reverseTransaction } from '@/lib/server/ledger';
 
 import { allocateVendorPayment } from './bill-allocations';
 import { renderPaymentVoucherPdf, type PaymentVoucherPdfData } from './pdf/payment-voucher';
@@ -268,6 +268,23 @@ async function assembleVoucherData(
     unappliedPaise: v.totalPaise - appliedPaise,
     notes: v.notes ?? null,
   };
+}
+
+/**
+ * Reverse a posted vendor payment (e.g. a duplicate / mis-recorded one). Posts
+ * an offsetting `vendor_payment_made` entry (Dr 1120 / Cr 2110) and marks the
+ * original reversed. `reverseTransaction` gates on `reverse_transaction` and
+ * requires reason ≥10 chars. Note: any `bill_allocations` on the original are
+ * NOT removed (the row isn't deleted), so reversal is intended for unallocated
+ * payments; un-allocate first if you need to undo a settled one.
+ */
+export async function reverseVendorPayment(
+  transactionId: string,
+  reason: string,
+): Promise<{ reversalTransactionId: string }> {
+  const ctx = await getActorContext();
+  const id = z.string().uuid().parse(transactionId);
+  return reverseTransaction(ctx, { transactionId: id, reason });
 }
 
 /* -------------------------------------------------------------------------- */

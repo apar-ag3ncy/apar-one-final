@@ -355,7 +355,11 @@ export async function reverseTransaction(
         postedBy: ctx.userId,
         reversesId: original.id,
         sourceKind: 'journal',
-        sourceDocumentId: null,
+        // Reuse the original's source document. Setting null violates
+        // transactions_source_document_required for any kind that isn't
+        // journal/inter_bank_transfer (e.g. reversing a vendor_payment_made or
+        // an invoice), so a reversal must carry the same doc the original did.
+        sourceDocumentId: original.sourceDocumentId,
         relatedEntityKind: original.relatedEntityKind,
         relatedEntityId: original.relatedEntityId,
         onBehalfOfClientId: original.onBehalfOfClientId,
