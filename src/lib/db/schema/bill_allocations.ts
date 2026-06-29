@@ -1,6 +1,7 @@
-import { bigint, index, pgTable, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
+import { bigint, index, pgTable, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
 
-import { auditColumns, timestamps } from './_shared';
+import { auditColumns } from './_shared';
 import { transactions } from './transactions';
 
 /**
@@ -15,14 +16,25 @@ import { transactions } from './transactions';
  *        (derived as SUM of debit-side postings on that txn).
  *
  * Server actions live at `src/lib/server/billing/bill-allocations.ts`.
- * The vendor payment posting template already accepts a
- * `billAllocations` field in its input schema; phase 4 wires that
- * through to writes here.
+ *
+ * NOTE: unlike `payment_allocations`, this table has NO `deleted_at` column —
+ * migration 0031 created it without one. So we must NOT spread `...timestamps()`
+ * here (that mixin adds `deletedAt`, which makes Drizzle emit `deleted_at` in
+ * every INSERT and fail with "column bill_allocations.deleted_at does not
+ * exist"). Soft-delete isn't used for allocations; the ON DELETE CASCADE from
+ * the payment txn handles removal of an unposted payment's allocations.
  */
 export const billAllocations = pgTable(
   'bill_allocations',
   {
-    ...timestamps(),
+    id: uuid()
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp({ withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
     ...auditColumns(),
     vendorPaymentTxnId: uuid()
       .notNull()
