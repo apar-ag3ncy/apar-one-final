@@ -10,6 +10,8 @@ import {
   BookOpenIcon,
   FileTextIcon,
   UsersIcon,
+  NotebookTextIcon,
+  ListTreeIcon,
   type LucideIcon,
 } from 'lucide-react';
 import { PageHeader } from '@/components/shared/page-header';
@@ -76,6 +78,18 @@ const GROUPS: readonly ReportGroup[] = [
         title: 'Bank Book',
         description: 'Bank account movements with running balance.',
         icon: BookOpenIcon,
+      },
+      {
+        slug: 'general-ledger',
+        title: 'General Ledger',
+        description: 'Every posting on one account, with running balance.',
+        icon: ListTreeIcon,
+      },
+      {
+        slug: 'day-book',
+        title: 'Day Book',
+        description: 'Chronological journal of all postings in a period.',
+        icon: NotebookTextIcon,
       },
       {
         slug: 'statement',

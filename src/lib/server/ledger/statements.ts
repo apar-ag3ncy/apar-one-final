@@ -83,7 +83,8 @@ async function fetchSubledgerLines(
   filter:
     | { kind: 'subledger'; entityType: 'client' | 'vendor'; entityId: string }
     | { kind: 'bankAccount'; bankAccountId: string }
-    | { kind: 'accountCodes'; codes: readonly string[] },
+    | { kind: 'accountCodes'; codes: readonly string[] }
+    | { kind: 'all' },
   opts: { from?: string; to?: string; includeReversed?: boolean },
 ): Promise<RawLine[]> {
   const conds = [] as Array<ReturnType<typeof eq>>;
@@ -97,9 +98,10 @@ async function fetchSubledgerLines(
     // to 1120 and match the bank id; that pair is unique to this account.
     conds.push(eq(accounts.code, '1120'));
     conds.push(eq(postings.subledgerEntityId, filter.bankAccountId));
-  } else {
+  } else if (filter.kind === 'accountCodes') {
     conds.push(inArray(accounts.code, filter.codes as string[]));
   }
+  // 'all' → every posting (the day book); no account filter.
   if (opts.from) conds.push(gte(transactions.txnDate, opts.from));
   if (opts.to) conds.push(lte(transactions.txnDate, opts.to));
   // Show drafts AND posted transactions — operators need to see what's
@@ -269,4 +271,60 @@ export async function getOfficeUtilitiesStatement(args: {
     { from: args.from, to: args.to, includeReversed: args.includeReversed },
   );
   return rollUp(lines, (side) => (side === 'debit' ? 1n : -1n));
+}
+
+/**
+ * **Day Book** — every posting in a date range, oldest first: a chronological
+ * journal register (date, transaction, account, debit/credit) across ALL
+ * accounts. No running balance; it's the raw movement log.
+ */
+export type DayBookEntry = Omit<StatementLine, 'runningBalancePaise'>;
+
+export async function getDayBook(args: {
+  from?: string;
+  to?: string;
+  includeReversed?: boolean;
+}): Promise<readonly DayBookEntry[]> {
+  await getActorContext();
+  return fetchSubledgerLines(
+    { kind: 'all' },
+    { from: args.from, to: args.to, includeReversed: args.includeReversed },
+  );
+}
+
+/**
+ * **General Ledger** — every posting on ONE GL account, oldest first, with a
+ * running balance in the account's natural direction (assets + expenses are
+ * debit-normal; liabilities, equity and income are credit-normal). The
+ * account-detail drill-down behind the trial balance.
+ */
+export async function getGeneralLedger(args: {
+  accountCode: string;
+  from?: string;
+  to?: string;
+  includeReversed?: boolean;
+}): Promise<Statement> {
+  await getActorContext();
+  const lines = await fetchSubledgerLines(
+    { kind: 'accountCodes', codes: [args.accountCode] },
+    { from: args.from, to: args.to, includeReversed: args.includeReversed },
+  );
+  // Debit-normal accounts: 1xxx assets, 5xxx/6xxx/8xxx expenses.
+  const debitNormal = /^[1568]/.test(args.accountCode);
+  return rollUp(lines, (side) =>
+    debitNormal ? (side === 'debit' ? 1n : -1n) : side === 'credit' ? 1n : -1n,
+  );
+}
+
+/** Active GL accounts for the General Ledger picker. */
+export async function listLedgerAccounts(): Promise<
+  ReadonlyArray<{ code: string; name: string; type: string }>
+> {
+  await getActorContext();
+  const rows = await db
+    .select({ code: accounts.code, name: accounts.name, type: accounts.type })
+    .from(accounts)
+    .where(eq(accounts.isActive, true))
+    .orderBy(asc(accounts.code));
+  return rows;
 }
