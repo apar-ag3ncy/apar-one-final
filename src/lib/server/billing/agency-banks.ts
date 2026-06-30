@@ -73,7 +73,7 @@ export async function listAgencyBankAccounts(): Promise<readonly AgencyBankAccou
 
 const BANK_TYPES = ['current', 'savings', 'od', 'escrow'] as const;
 
-export const AgencyBankInputSchema = z.object({
+const AgencyBankInputSchema = z.object({
   displayName: z.string().trim().min(1, 'Name is required'),
   bankName: z.string().trim().min(1, 'Bank name is required'),
   branch: z.string().trim().nullish(),
