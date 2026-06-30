@@ -1,10 +1,20 @@
 'use server';
 
-import { asc, desc } from 'drizzle-orm';
+import { randomUUID } from 'node:crypto';
+
+import { and, asc, desc, eq, like } from 'drizzle-orm';
+import { revalidatePath } from 'next/cache';
+import { z } from 'zod';
 
 import { db } from '@/lib/db/client';
-import { bankAccounts } from '@/lib/db/schema';
+import { accounts, bankAccounts, transactions } from '@/lib/db/schema';
+import { AppError } from '@/lib/errors';
+import { type CurrentUserContext, requireCapability } from '@/lib/rbac';
 import { getActorContext } from '@/lib/server/actor';
+import { createDraftTransaction, postTransaction, reverseTransaction } from '@/lib/server/ledger';
+import { type BankBook, getBankBook } from '@/lib/server/ledger/statements';
+
+type DbClient = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
 /**
  * Lists the agency's OWN bank accounts (the `bank_accounts` table — the
@@ -50,4 +60,310 @@ export async function listAgencyBankAccounts(): Promise<readonly AgencyBankAccou
     accountLast4: r.accountLast4,
     isActive: r.isActive,
   }));
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Agency bank-account management (create / edit + opening balance) and the
+// per-bank book. The opening balance is captured on the row AND posted as an
+// opening-balance journal voucher (Dr 1120 sub:bank / Cr 3900 Opening Balance
+// Equity) dated `openingBalanceDate`, so the global trial balance stays
+// balanced and the bank book shows it as the first line. Editing the opening
+// balance reverses the prior JV and posts a fresh one.
+// ───────────────────────────────────────────────────────────────────────────
+
+const BANK_TYPES = ['current', 'savings', 'od', 'escrow'] as const;
+
+export const AgencyBankInputSchema = z.object({
+  displayName: z.string().trim().min(1, 'Name is required'),
+  bankName: z.string().trim().min(1, 'Bank name is required'),
+  branch: z.string().trim().nullish(),
+  accountLast4: z
+    .string()
+    .trim()
+    .regex(/^\d{2,8}$/, 'Last digits should be 2–8 numbers'),
+  ifsc: z.string().trim().min(4, 'IFSC is required'),
+  accountType: z.enum(BANK_TYPES),
+  openingBalancePaise: z.bigint().default(0n),
+  openingBalanceDate: z.string().nullish(),
+  isActive: z.boolean().default(true),
+  notes: z.string().trim().nullish(),
+});
+
+export type AgencyBankInput = z.input<typeof AgencyBankInputSchema>;
+
+export type AgencyBankDetail = {
+  id: string;
+  displayName: string;
+  bankName: string;
+  branch: string | null;
+  accountLast4: string;
+  ifsc: string;
+  accountType: (typeof BANK_TYPES)[number];
+  openingBalancePaise: bigint;
+  openingBalanceDate: string | null;
+  isActive: boolean;
+  notes: string | null;
+  /** Current book balance = opening ± all posted movements. */
+  currentBalancePaise: bigint;
+};
+
+/** The 1120 control account is the GL parent for every agency bank row. */
+async function bankGlAccountId(client: DbClient | typeof db = db): Promise<string> {
+  const [gl] = await client
+    .select({ id: accounts.id })
+    .from(accounts)
+    .where(eq(accounts.code, '1120'))
+    .limit(1);
+  if (!gl) throw new AppError('internal', '1120 Bank Accounts GL account not found');
+  return gl.id;
+}
+
+/**
+ * Posts the opening-balance JV for a bank. Positive opening = money already in
+ * the bank → Dr 1120(sub) / Cr 3900. Negative (overdraft) flips the sides.
+ * Runs inside the caller's transaction so the freshly-inserted bank row is
+ * visible to the 1120 control trigger.
+ */
+async function postOpeningJv(
+  ctx: CurrentUserContext,
+  args: {
+    bankAccountId: string;
+    displayName: string;
+    openingBalancePaise: bigint;
+    openingBalanceDate: string;
+  },
+  client: DbClient,
+): Promise<void> {
+  const abs =
+    args.openingBalancePaise < 0n ? -args.openingBalancePaise : args.openingBalancePaise;
+  if (abs === 0n) return;
+  const bankDebit = args.openingBalancePaise > 0n;
+  const draft = await createDraftTransaction(
+    ctx,
+    {
+      kind: 'journal',
+      input: {
+        externalRef: `obe:${args.bankAccountId}:${Date.now()}`,
+        txnDate: args.openingBalanceDate,
+        journalReason: `Opening balance for bank ${args.displayName} as of ${args.openingBalanceDate}`,
+        legs: [
+          {
+            accountCode: '1120',
+            side: bankDebit ? 'debit' : 'credit',
+            amountPaise: abs,
+            subledger: { entityType: 'office', entityId: args.bankAccountId },
+          },
+          { accountCode: '3900', side: bankDebit ? 'credit' : 'debit', amountPaise: abs },
+        ],
+        isOpeningBalance: true,
+        notes: null,
+      },
+    },
+    client as unknown as typeof db,
+  );
+  await postTransaction(
+    ctx,
+    { transactionId: draft.transactionId, acknowledgedFlags: [] },
+    client as unknown as typeof db,
+  );
+}
+
+/** Finds the active (posted, not-yet-reversed) opening JV for a bank, if any. */
+async function findActiveOpeningJv(bankAccountId: string): Promise<string | null> {
+  const [row] = await db
+    .select({ id: transactions.id })
+    .from(transactions)
+    .where(
+      and(
+        like(transactions.externalRef, `obe:${bankAccountId}:%`),
+        eq(transactions.status, 'posted'),
+      ),
+    )
+    .orderBy(desc(transactions.createdAt))
+    .limit(1);
+  return row?.id ?? null;
+}
+
+export async function createAgencyBankAccount(input: AgencyBankInput): Promise<{ id: string }> {
+  const ctx = await getActorContext();
+  requireCapability(ctx, 'post_transaction');
+  const v = AgencyBankInputSchema.parse(input);
+
+  const glId = await bankGlAccountId();
+  const opening = v.openingBalancePaise ?? 0n;
+  const openingDate = v.openingBalanceDate ?? null;
+  const hasOpening = opening !== 0n && !!openingDate;
+
+  const id = await db.transaction(async (tx) => {
+    const [row] = await tx
+      .insert(bankAccounts)
+      .values({
+        accountId: glId,
+        displayName: v.displayName,
+        bankName: v.bankName,
+        branch: v.branch ?? null,
+        accountLast4: v.accountLast4,
+        ifsc: v.ifsc,
+        accountType: v.accountType,
+        // No vault upload flow for hand-entered banks; carry a stable marker.
+        vaultObjectKey: `manual:${randomUUID()}`,
+        openingBalancePaise: opening,
+        openingBalanceDate: openingDate,
+        isActive: v.isActive ?? true,
+        notes: v.notes ?? null,
+        createdBy: ctx.userId,
+        updatedBy: ctx.userId,
+      })
+      .returning({ id: bankAccounts.id });
+    if (!row) throw new AppError('internal', 'bank_accounts insert returned no row');
+
+    if (hasOpening) {
+      await postOpeningJv(
+        ctx,
+        {
+          bankAccountId: row.id,
+          displayName: v.displayName,
+          openingBalancePaise: opening,
+          openingBalanceDate: openingDate!,
+        },
+        tx,
+      );
+    }
+    return row.id as string;
+  });
+
+  revalidatePath('/banking');
+  return { id };
+}
+
+export async function updateAgencyBankAccount(
+  input: AgencyBankInput & { id: string },
+): Promise<{ id: string }> {
+  const ctx = await getActorContext();
+  requireCapability(ctx, 'post_transaction');
+  const { id } = z.object({ id: z.string().uuid() }).parse({ id: input.id });
+  const v = AgencyBankInputSchema.parse(input);
+
+  const [existing] = await db
+    .select({
+      openingBalancePaise: bankAccounts.openingBalancePaise,
+      openingBalanceDate: bankAccounts.openingBalanceDate,
+    })
+    .from(bankAccounts)
+    .where(eq(bankAccounts.id, id))
+    .limit(1);
+  if (!existing) throw new AppError('not_found', 'Bank account not found');
+
+  const opening = v.openingBalancePaise ?? 0n;
+  const openingDate = v.openingBalanceDate ?? null;
+  const openingChanged =
+    existing.openingBalancePaise !== opening || existing.openingBalanceDate !== openingDate;
+
+  // Reverse the prior opening JV OUTSIDE the row-update txn: reverseTransaction
+  // opens its own transaction. Order: reverse old → update row → post new.
+  if (openingChanged) {
+    const activeJvId = await findActiveOpeningJv(id);
+    if (activeJvId) {
+      await reverseTransaction(ctx, {
+        transactionId: activeJvId,
+        reason: 'Opening balance edited — superseded by a corrected opening entry.',
+      });
+    }
+  }
+
+  await db.transaction(async (tx) => {
+    await tx
+      .update(bankAccounts)
+      .set({
+        displayName: v.displayName,
+        bankName: v.bankName,
+        branch: v.branch ?? null,
+        accountLast4: v.accountLast4,
+        ifsc: v.ifsc,
+        accountType: v.accountType,
+        openingBalancePaise: opening,
+        openingBalanceDate: openingDate,
+        isActive: v.isActive ?? true,
+        notes: v.notes ?? null,
+        updatedBy: ctx.userId,
+      })
+      .where(eq(bankAccounts.id, id));
+
+    if (openingChanged && opening !== 0n && openingDate) {
+      await postOpeningJv(
+        ctx,
+        {
+          bankAccountId: id,
+          displayName: v.displayName,
+          openingBalancePaise: opening,
+          openingBalanceDate: openingDate,
+        },
+        tx,
+      );
+    }
+  });
+
+  revalidatePath('/banking');
+  revalidatePath(`/banking/${id}`);
+  return { id };
+}
+
+/** Full detail rows for the management list, each with its current book balance. */
+export async function listAgencyBankAccountsDetailed(): Promise<readonly AgencyBankDetail[]> {
+  await getActorContext();
+  const rows = await db
+    .select()
+    .from(bankAccounts)
+    .orderBy(desc(bankAccounts.isActive), asc(bankAccounts.displayName));
+
+  const out: AgencyBankDetail[] = [];
+  for (const r of rows) {
+    const book = await getBankBook({ bankAccountId: r.id });
+    out.push({
+      id: r.id,
+      displayName: r.displayName,
+      bankName: r.bankName,
+      branch: r.branch,
+      accountLast4: r.accountLast4,
+      ifsc: r.ifsc,
+      accountType: r.accountType,
+      openingBalancePaise: r.openingBalancePaise,
+      openingBalanceDate: r.openingBalanceDate,
+      isActive: r.isActive,
+      notes: r.notes,
+      currentBalancePaise: book.closingBalancePaise,
+    });
+  }
+  return out;
+}
+
+export async function getAgencyBankAccount(id: string): Promise<AgencyBankDetail | null> {
+  await getActorContext();
+  const [r] = await db.select().from(bankAccounts).where(eq(bankAccounts.id, id)).limit(1);
+  if (!r) return null;
+  const book = await getBankBook({ bankAccountId: r.id });
+  return {
+    id: r.id,
+    displayName: r.displayName,
+    bankName: r.bankName,
+    branch: r.branch,
+    accountLast4: r.accountLast4,
+    ifsc: r.ifsc,
+    accountType: r.accountType,
+    openingBalancePaise: r.openingBalancePaise,
+    openingBalanceDate: r.openingBalanceDate,
+    isActive: r.isActive,
+    notes: r.notes,
+    currentBalancePaise: book.closingBalancePaise,
+  };
+}
+
+/** The bank book (opening line + dated movements + running balance) for one bank. */
+export async function getAgencyBankBook(args: {
+  bankAccountId: string;
+  from?: string;
+  to?: string;
+}): Promise<BankBook> {
+  await getActorContext();
+  return getBankBook(args);
 }

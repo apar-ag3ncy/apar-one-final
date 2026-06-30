@@ -82,13 +82,23 @@ function rollUp(
 async function fetchSubledgerLines(
   filter:
     | { kind: 'subledger'; entityType: 'client' | 'vendor'; entityId: string }
-    | { kind: 'accountCodes'; codes: readonly string[] },
+    | { kind: 'accountCodes'; codes: readonly string[] }
+    | { kind: 'bankAccount'; bankAccountId: string },
   opts: { from?: string; to?: string; includeReversed?: boolean },
 ): Promise<RawLine[]> {
   const conds = [] as Array<ReturnType<typeof eq>>;
   if (filter.kind === 'subledger') {
     conds.push(eq(postings.subledgerEntityType, filter.entityType));
     conds.push(eq(postings.subledgerEntityId, filter.entityId));
+  } else if (filter.kind === 'bankAccount') {
+    // Each agency bank is a sub-ledger entry on 1120 Bank Accounts, carried
+    // as subledger (office, bankAccountId) — exactly how clientPaymentReceived
+    // / vendorPaymentMade / the opening-balance JV post the cash leg. Pin the
+    // account code to 1120 so we never pick up the partner-equity 'office'
+    // postings (3100/3200) that share the synthetic 'office' entity type.
+    conds.push(eq(accounts.code, '1120'));
+    conds.push(eq(postings.subledgerEntityType, 'office'));
+    conds.push(eq(postings.subledgerEntityId, filter.bankAccountId));
   } else {
     conds.push(inArray(accounts.code, filter.codes as string[]));
   }
@@ -238,4 +248,58 @@ export async function getOfficeUtilitiesStatement(args: {
     { from: args.from, to: args.to, includeReversed: args.includeReversed },
   );
   return rollUp(lines, (side) => (side === 'debit' ? 1n : -1n));
+}
+
+export type BankBook = Statement & {
+  /** Running balance carried in from postings dated before `from` (0 when no `from`). */
+  openingCarryPaise: bigint;
+};
+
+/**
+ * **Per-Bank Book** — every posting on `1120 Bank Accounts` sub-ledgered to one
+ * agency bank account, in date order, with a running balance. This is the
+ * per-bank tally the user asked for: the opening-balance JV (posted by
+ * createAgencyBankAccount) shows up as the first line, and every subsequent
+ * receipt / payment / charge moves the running balance. `closingBalancePaise`
+ * is the bank's current book balance.
+ *
+ * Balance convention: bank is an asset, so debits (money in) add and credits
+ * (money out) subtract — the running balance reads like a passbook.
+ *
+ * When `from` is set, postings before it are folded into `openingCarryPaise`
+ * (the brought-forward balance) so a date-range view still tallies; the opening
+ * JV is part of that carry unless it too falls inside the window.
+ */
+export async function getBankBook(args: {
+  bankAccountId: string;
+  from?: string;
+  to?: string;
+  includeReversed?: boolean;
+}): Promise<BankBook> {
+  await getActorContext();
+  // Pull everything up to `to`; split client-side so we can carry forward
+  // pre-`from` movements into the opening balance.
+  const all = await fetchSubledgerLines(
+    { kind: 'bankAccount', bankAccountId: args.bankAccountId },
+    { to: args.to, includeReversed: args.includeReversed },
+  );
+  const sign = (side: 'debit' | 'credit') => (side === 'debit' ? 1n : -1n);
+
+  let openingCarryPaise = 0n;
+  const windowed: RawLine[] = [];
+  for (const r of all) {
+    if (args.from && r.txnDate < args.from) {
+      openingCarryPaise += sign(r.side) * r.amountPaise;
+    } else {
+      windowed.push(r);
+    }
+  }
+
+  let running = openingCarryPaise;
+  const lines: StatementLine[] = [];
+  for (const r of windowed) {
+    running += sign(r.side) * r.amountPaise;
+    lines.push({ ...r, runningBalancePaise: running });
+  }
+  return { closingBalancePaise: running, lines, openingCarryPaise };
 }
