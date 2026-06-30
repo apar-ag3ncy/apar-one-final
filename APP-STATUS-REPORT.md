@@ -20,7 +20,7 @@ _Generated from a static audit of the codebase (branch `feat/client-vendor-payme
 **Runtime results:**
 - ✅ Live OS app: lock screen, sign-in (`apar2026`), menubar, command palette (⌘K), Vendors list + edit modal, Attendance all render.
 - ⚠️ **Smoke failure:** Attendance month matrix renders **no "today" column highlight** (`.is-today-col`) — minor UI/date bug.
-- 🐞 **E2E found a real defect (new Banking feature):** setting an opening balance creates the account but the balance shows **₹0** and the bank book is **empty** — the opening journal did **not** post. Root cause: the chart credits **`3100 Partner Capital`**, which is sub-ledgered **by partner user**, and the DB has **no `partner` user** (only 1 `admin`). `resolvePartnerUserId()` throws → the post is skipped (graceful warning path). **Opening balances cannot tally until a partner user exists or the counter-account changes.**
+- 🐞→✅ **E2E found a real defect, now FIXED + re-verified (new Banking feature):** setting an opening balance created the account but the balance showed **₹0** and the bank book was **empty** — the opening journal did **not** post. Root cause: the chart credited **`3100 Partner Capital`**, which is sub-ledgered **by partner user**, and the DB has **no `partner` user** (only 1 `admin`), so the post was skipped. **Fix (commit `b8619aa`):** added a non-control **`3900 Opening Balance Equity`** account (migration `0049`) and a fallback — when no partner exists, the opening balance posts `Dr 1120 / Cr 3900` via a journal. **Re-verified on the rebuilt preview:** the opening balance now posts as a balanced journal (`1120 debit 100000 / 3900 credit 100000`, status posted) and the bank balance + book read ₹1,00,000 and tally.
 
 ---
 
@@ -60,7 +60,7 @@ Legend: ✅ working · 🟡 partial · ⛔ stub/placeholder
 - ⛔ **Salary runs (list + new wizard)** — hardcoded; wizard submit is a **no-op** ("postSalaryRun not yet shipped"); `salary_runs`/`salary_lines` tables never written. (Note: `recordSalaryPayment` posts a real disbursement, but only from the OS employee window.)
 
 ### Banking _(NEW — preview only, not on prod yet)_
-- ✅ **`/banking`** — real list with balances + `getBankBook`; create/update real. 🐞 **opening-balance posting fails when no partner user exists** (see §0).
+- ✅ **`/banking`** — real list with balances + `getBankBook`; create/update real; opening balance posts to the ledger (`Dr 1120 / Cr 3100` with a partner, else `Cr 3900 Opening Balance Equity`) — fixed + verified (see §0).
 - ⛔ **Reconcile index `/banking/reconcile`** — hardcoded 2-row BANKS.
 - ⛔ **Reconcile detail** — `getReconciliationCandidates` returns `[]`; fake upload; "Mark complete" disabled.
 
@@ -169,7 +169,7 @@ The OS is **substantially real and DB-backed** (same server actions + shared `co
 ## 6. Recommendations
 
 ### Financial fixes (do first)
-1. **Fix opening-balance posting** (finding #7): either seed a real `partner` user, or fall back to a non-control **"Opening Balance Equity"** account when no partner exists (so it always posts). _Without this, the Banking/tally feature you asked for doesn't tally._
+1. ✅ **DONE — opening-balance posting fixed** (finding #7): added `3900 Opening Balance Equity` + a fallback so the opening posts (`Dr 1120 / Cr 3900`) when no partner user exists; posts to `3100 Partner Capital` when one does. Verified on the preview against the prod DB. _(Optionally seed a real `partner` user later if you want opening cash attributed to partner capital instead.)_
 2. **Post client-withheld TDS:** add a TDS-receivable asset account and post `Dr bank + Dr TDS-receivable / Cr AR` so receivables clear and the TDS register is ledger-backed.
 3. **Carry CGST/SGST/IGST split into the 2120 posting** and source GSTR-3B from the ledger; reconcile GSTR-1/3B to the books.
 4. **Add GST & TDS remittance transaction kinds** (with challan capture) to discharge 2120/2130.
@@ -190,4 +190,7 @@ The OS is **substantially real and DB-backed** (same server actions + shared `co
 ---
 
 ## 7. Cleanup attestation
-All dummy data created during testing was removed; the production DB is back to its exact pre-test baseline (verified row counts + zero `ZZTEST` rows). The only residue is append-only `audit_log` entries recording the test action, which cannot (and by design should not) be deleted.
+All dummy data created during testing was removed and the books were verified neutral:
+- The dummy bank accounts and their vault blobs were **deleted**; row counts are back to the exact pre-test baseline with **zero `ZZTEST` rows**.
+- The one posted opening-balance journal (from the fix re-test) was **reversed** (the ledger is append-only — posted entries are reversed, not deleted). Verified under the app's own trial-balance filter (`status='posted' AND reverses_id IS NULL`): **`3900 Opening Balance Equity` net = ₹0** and `1120 Bank Accounts` shows only its real pre-existing baseline — i.e. the test contributes **zero** to every account balance.
+- Irreducible residue (immutable by design, zero effect on balances): the reversed-original + reversal journal pair (excluded from all balances) and the append-only `audit_log` rows recording the test actions.
