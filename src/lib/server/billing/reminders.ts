@@ -16,6 +16,7 @@ import {
 import { AppError } from '@/lib/errors';
 import { requireCapability } from '@/lib/rbac';
 import { getActorContext } from '@/lib/server/actor';
+import { sendEmail as sendTransactionalEmail } from '@/lib/server/email/send';
 
 /**
  * Reminder-schedule CRUD + the cron-side decideRemindersForToday()
@@ -309,9 +310,11 @@ export type ReminderSendResult = {
 };
 
 /**
- * Pluggable email sender. Default impl writes a 'sent' log line and
- * does nothing else (Phase 9 dep ask for Resend). Real impl swaps in
- * a real email send + handles the bounce webhook for 'bounced' status.
+ * Pluggable email sender. The default routes through the real transactional
+ * sender (Gmail / Workspace SMTP — lib/server/email/send.ts) when email is
+ * configured; when it isn't, the send returns a clear failure that's recorded
+ * on the reminder log so the operator knows to set GMAIL_USER / GMAIL_APP_PASSWORD.
+ * Tests inject a mock to stay offline.
  */
 export type SendEmailFn = (args: {
   to: string;
@@ -320,14 +323,13 @@ export type SendEmailFn = (args: {
   bodyText: string;
 }) => Promise<{ ok: true } | { ok: false; error: string }>;
 
-const defaultSendEmail: SendEmailFn = async (args) => {
-  // Stub: log and pretend success. Resend impl replaces this.
-  // eslint-disable-next-line no-console
-  console.warn(
-    `[reminders/stub] would send "${args.subject}" to ${args.to}: ${args.bodyText.slice(0, 80)}…`,
-  );
-  return { ok: true };
-};
+const defaultSendEmail: SendEmailFn = (args) =>
+  sendTransactionalEmail({
+    to: args.to,
+    subject: args.subject,
+    html: args.bodyHtml,
+    text: args.bodyText,
+  });
 
 export async function runDailyReminderCron(sendEmail: SendEmailFn = defaultSendEmail): Promise<{
   ranAt: string;
