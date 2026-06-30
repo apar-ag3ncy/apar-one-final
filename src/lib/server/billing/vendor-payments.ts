@@ -47,9 +47,17 @@ export type VendorPaymentAllocationInput = z.input<typeof VendorPaymentAllocatio
 
 const RecordVendorPaymentInputSchema = z.object({
   vendorId: z.string().uuid(),
-  bankAccountId: z.string().uuid(),
+  mode: z.enum(['bank', 'cash']).default('bank'),
+  /** Our agency bank account (bank_accounts.id) — required when mode='bank' & source!='advance'. */
+  bankAccountId: z.string().uuid().nullish(),
+  /** The vendor's bank account we paid into (entity_bank_accounts.id) — noted. */
+  counterpartyBankAccountId: z.string().uuid().nullish(),
   paymentDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  /** Gross amount settled against bills (= net cash paid + TDS withheld). */
   totalPaise: z.bigint().positive(),
+  tdsPaise: z.bigint().nonnegative().default(0n),
+  tdsSection: z.string().trim().max(20).nullish(),
+  gstPaise: z.bigint().nonnegative().default(0n),
   source: z.enum(['bank', 'advance']).default('bank'),
   notes: z.string().trim().max(2000).nullish(),
   /** Explicit allocation to posted bill txns. Empty → FIFO over open bills. */
@@ -79,6 +87,12 @@ export async function recordVendorPayment(
   requireCapability(ctx, 'post_transaction');
 
   const v = RecordVendorPaymentInputSchema.parse(input);
+  if (v.mode === 'bank' && v.source !== 'advance' && !v.bankAccountId) {
+    throw new AppError('validation', 'Pick the bank account the money was paid from.');
+  }
+  if (v.tdsPaise >= v.totalPaise && v.tdsPaise > 0n) {
+    throw new AppError('validation', 'TDS cannot be greater than or equal to the amount.');
+  }
 
   const explicitSum = v.allocations.reduce((acc, a) => acc + a.amountPaise, 0n);
   if (explicitSum > v.totalPaise) {
@@ -115,9 +129,14 @@ export async function recordVendorPayment(
         kind: 'vendor_payment_made',
         input: {
           vendorId: v.vendorId,
-          bankAccountId: v.bankAccountId,
+          mode: v.mode,
+          bankAccountId: v.bankAccountId ?? null,
+          counterpartyBankAccountId: v.counterpartyBankAccountId ?? null,
           amountPaise: v.totalPaise,
           source: v.source,
+          tdsPaise: v.tdsPaise,
+          tdsSection: v.tdsSection ?? null,
+          gstPaise: v.gstPaise,
           billAllocations: [], // real rows written via bill_allocations below
           paymentDocumentId: documentId,
           externalRef,
@@ -214,11 +233,18 @@ async function assembleVoucherData(
     .orderBy(asc(entityAddresses.kind));
   const addr = addresses.find((a) => a.kind === 'registered') ?? addresses[0] ?? null;
 
-  const [bank] = await db
-    .select({ displayName: bankAccounts.displayName, accountLast4: bankAccounts.accountLast4 })
-    .from(bankAccounts)
-    .where(eq(bankAccounts.id, v.bankAccountId))
-    .limit(1);
+  const bank = v.bankAccountId
+    ? (
+        await db
+          .select({
+            displayName: bankAccounts.displayName,
+            accountLast4: bankAccounts.accountLast4,
+          })
+          .from(bankAccounts)
+          .where(eq(bankAccounts.id, v.bankAccountId))
+          .limit(1)
+      )[0]
+    : undefined;
 
   // Map any explicit allocations to bill document numbers for the voucher body.
   const allocations: PaymentVoucherPdfData['allocations'] = [];
@@ -263,7 +289,8 @@ async function assembleVoucherData(
     voucherNumber,
     paymentDate: v.paymentDate,
     amountPaise: v.totalPaise,
-    paidFromLabel: bank ? `${bank.displayName} ••${bank.accountLast4}` : null,
+    paidFromLabel:
+      v.mode === 'cash' ? 'Cash' : bank ? `${bank.displayName} ••${bank.accountLast4}` : null,
     allocations,
     unappliedPaise: v.totalPaise - appliedPaise,
     notes: v.notes ?? null,

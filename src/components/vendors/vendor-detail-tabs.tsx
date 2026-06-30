@@ -26,7 +26,7 @@ export function VendorDetailTabs({ vendor }: { vendor: Vendor }) {
   const tabs: UrlTab[] = [
     { value: 'overview', label: 'Overview' },
     { value: 'bills', label: 'Bills' },
-    { value: 'payments', label: 'Payments' },
+    { value: 'transactions', label: 'Transactions' },
     { value: 'ledger', label: 'Ledger' },
     { value: 'documents', label: 'Documents', count: vendor.documentsCount },
     { value: 'contracts', label: 'Contracts', count: vendor.contractsCount },
@@ -37,7 +37,7 @@ export function VendorDetailTabs({ vendor }: { vendor: Vendor }) {
       {{
         overview: <OverviewTab vendor={vendor} />,
         bills: <VendorBillsSection vendorId={vendor.id} vendorName={vendor.name} />,
-        payments: <VendorPaymentsSection vendorId={vendor.id} vendorName={vendor.name} />,
+        transactions: <VendorPaymentsSection vendorId={vendor.id} vendorName={vendor.name} />,
         ledger: <LedgerTab vendor={vendor} />,
         documents: (
           <DocumentsSection entityType="vendor" entityId={vendor.id} entityName={vendor.name} />

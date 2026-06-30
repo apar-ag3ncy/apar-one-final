@@ -15,6 +15,7 @@ import {
   listAgencyBankAccounts,
   type AgencyBankAccountRow,
 } from '@/lib/server/billing/agency-banks';
+import { listBankAccounts, type BankAccountRow } from '@/lib/server/entities/bank-accounts';
 import {
   getVendorPayablesByProject,
   listOpenBillsForVendor,
@@ -29,9 +30,10 @@ import {
 type DueState = { rows: readonly PayableByProjectRow[]; totalPaise: bigint };
 
 /**
- * Vendor "Payments" tab. Records money PAID to the vendor against open bills
- * (posts a `vendor_payment_made` ledger txn via recordVendorPayment) and shows
- * a project-grouped "Due to pay" summary above the payments list.
+ * Vendor "Transactions" tab — records money PAID to the vendor (our bank or
+ * cash ↔ the vendor's bank), with TDS/GST, against the vendor's open
+ * `vendor_bill` transactions. Posts vendor_payment_made and shows a
+ * project-grouped "Due to pay" summary.
  */
 export function VendorPaymentsSection({
   vendorId,
@@ -56,7 +58,7 @@ export function VendorPaymentsSection({
       setDue(d);
       setError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not load payments');
+      setError(e instanceof Error ? e.message : 'Could not load transactions');
     }
   }
 
@@ -70,7 +72,7 @@ export function VendorPaymentsSection({
         setError(null);
       })
       .catch((e) => {
-        if (!cancelled) setError(e instanceof Error ? e.message : 'Could not load payments');
+        if (!cancelled) setError(e instanceof Error ? e.message : 'Could not load transactions');
       });
     return () => {
       cancelled = true;
@@ -78,7 +80,7 @@ export function VendorPaymentsSection({
   }, [vendorId]);
 
   if (error) {
-    return <EmptyState icon={WalletIcon} title="Could not load payments" description={error} />;
+    return <EmptyState icon={WalletIcon} title="Could not load transactions" description={error} />;
   }
   if (payments === null || due === null) {
     return <Skeleton className="h-40 w-full" />;
@@ -91,7 +93,7 @@ export function VendorPaymentsSection({
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle className="text-base">
-            Payments made{' '}
+            Money paid{' '}
             <span className="text-muted-foreground text-xs font-normal">({payments.length})</span>
           </CardTitle>
           <Button size="sm" onClick={() => setFormOpen(true)}>
@@ -103,8 +105,8 @@ export function VendorPaymentsSection({
           {payments.length === 0 ? (
             <EmptyState
               icon={BanknoteIcon}
-              title="No payments recorded yet"
-              description={`Record a payment made to ${vendorName}, allocate it to the open bills it settles, and it posts straight to the ledger.`}
+              title="No money recorded yet"
+              description={`Record money paid to ${vendorName} — pick the bank accounts (or cash), the amount, any TDS/GST, and the bills it settles.`}
             />
           ) : (
             <ul className="divide-y">
@@ -189,6 +191,472 @@ export function VendorPaymentsSection({
     </div>
   );
 }
+
+function DueToPayCard({ due }: { due: DueState }) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">Due to pay</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="text-3xl font-semibold tabular-nums">{formatINR(due.totalPaise)}</div>
+        <p className="text-muted-foreground mt-1 text-xs">
+          Outstanding across this vendor&apos;s recorded bills, by project.
+        </p>
+        {due.rows.length > 0 ? (
+          <ul className="mt-4 flex flex-col gap-2">
+            {due.rows.map((row) => (
+              <li
+                key={row.projectId ?? 'none'}
+                className="flex items-center justify-between gap-3 text-sm"
+              >
+                <span>{row.projectName ?? 'Unassigned'}</span>
+                <span className="font-mono tabular-nums">{formatINR(row.outstandingPaise)}</span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="text-muted-foreground mt-3 text-sm italic">Nothing outstanding.</p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Record vendor payment dialog                                                */
+/* -------------------------------------------------------------------------- */
+
+function todayISO(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function normaliseRupee(s: string): string {
+  return s.replace(/[,\s]/g, '').trim();
+}
+
+function parsePaise(s: string): bigint {
+  const t = normaliseRupee(s);
+  if (!t) return 0n;
+  return rupeesToPaise(t);
+}
+
+function RecordVendorPaymentDialog({
+  open,
+  onOpenChange,
+  vendorId,
+  vendorName,
+  onRecorded,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  vendorId: string;
+  vendorName: string;
+  onRecorded: () => void;
+}) {
+  const [ourBanks, setOurBanks] = useState<readonly AgencyBankAccountRow[]>([]);
+  const [vendorBanks, setVendorBanks] = useState<readonly BankAccountRow[]>([]);
+  const [bills, setBills] = useState<readonly OpenBillRow[]>([]);
+  const [mode, setMode] = useState<'bank' | 'cash'>('bank');
+  const [bankAccountId, setBankAccountId] = useState('');
+  const [counterpartyBankAccountId, setCounterpartyBankAccountId] = useState('');
+  const [paymentDate, setPaymentDate] = useState(todayISO());
+  const [amountRupees, setAmountRupees] = useState('');
+  const [tdsRupees, setTdsRupees] = useState('');
+  const [tdsSection, setTdsSection] = useState('');
+  const [gstRupees, setGstRupees] = useState('');
+  const [allocs, setAllocs] = useState<Record<string, string>>({});
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      setMode('bank');
+      setBankAccountId('');
+      setCounterpartyBankAccountId('');
+      setPaymentDate(todayISO());
+      setAmountRupees('');
+      setTdsRupees('');
+      setTdsSection('');
+      setGstRupees('');
+      setAllocs({});
+    });
+    listAgencyBankAccounts()
+      .then((b) => {
+        if (cancelled) return;
+        setOurBanks(b);
+        if (b[0]) setBankAccountId(b[0].id);
+      })
+      .catch(() => !cancelled && setOurBanks([]));
+    listBankAccounts({ entityType: 'vendor', entityId: vendorId })
+      .then((b) => !cancelled && setVendorBanks(b))
+      .catch(() => !cancelled && setVendorBanks([]));
+    listOpenBillsForVendor(vendorId)
+      .then((bl) => !cancelled && setBills(bl))
+      .catch(() => !cancelled && setBills([]));
+    return () => {
+      cancelled = true;
+    };
+  }, [open, vendorId]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !submitting) onOpenChange(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open, submitting, onOpenChange]);
+
+  if (!open) return null;
+
+  let netHint: bigint | null = null;
+  try {
+    netHint = parsePaise(amountRupees) - parsePaise(tdsRupees);
+  } catch {
+    netHint = null;
+  }
+
+  async function submit() {
+    if (mode === 'bank' && !bankAccountId) {
+      toast.error('Pick the bank account the money was paid from.');
+      return;
+    }
+    let totalPaise: bigint;
+    let tdsPaise: bigint;
+    let gstPaise: bigint;
+    try {
+      totalPaise = parsePaise(amountRupees);
+      tdsPaise = parsePaise(tdsRupees);
+      gstPaise = parsePaise(gstRupees);
+    } catch {
+      toast.error('Enter valid amounts.');
+      return;
+    }
+    if (totalPaise <= 0n) {
+      toast.error('Amount must be positive.');
+      return;
+    }
+
+    let allocations: Array<{ billTxnId: string; amountPaise: bigint }> = [];
+    try {
+      allocations = Object.entries(allocs)
+        .filter(([, val]) => val.trim())
+        .map(([billTxnId, val]) => {
+          const paise = parsePaise(val);
+          if (paise <= 0n) throw new Error('Allocation amounts must be positive.');
+          return { billTxnId, amountPaise: paise };
+        });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Invalid allocation amount.');
+      return;
+    }
+    if (allocations.reduce((a, x) => a + x.amountPaise, 0n) > totalPaise) {
+      toast.error('Allocations exceed the amount paid.');
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const result = await recordVendorPayment({
+        vendorId,
+        mode,
+        bankAccountId: mode === 'bank' ? bankAccountId : null,
+        counterpartyBankAccountId:
+          mode === 'bank' && counterpartyBankAccountId ? counterpartyBankAccountId : null,
+        paymentDate,
+        totalPaise,
+        tdsPaise,
+        tdsSection: tdsSection.trim() || null,
+        gstPaise,
+        allocations,
+      });
+      toast.success(
+        `Payment posted (${result.voucherNumber}) — ${formatINR(result.allocatedPaise)} applied.`,
+      );
+      onRecorded();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not record the payment.');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div
+      className="os-modal-overlay"
+      style={modalOverlayStyle}
+      onMouseDown={() => {
+        if (!submitting) onOpenChange(false);
+      }}
+    >
+      <div className="os-modal" style={modalBoxStyle} onMouseDown={(e) => e.stopPropagation()}>
+        <div className="os-modal-head" style={modalHeadStyle}>
+          <div className="font-display" style={{ fontSize: 18 }}>
+            Record money paid — {vendorName}
+          </div>
+          <button
+            type="button"
+            className="btn"
+            onClick={() => onOpenChange(false)}
+            disabled={submitting}
+            aria-label="Close"
+          >
+            ×
+          </button>
+        </div>
+
+        <div
+          style={{
+            flex: 1,
+            minHeight: 0,
+            padding: 18,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 14,
+            overflowY: 'auto',
+          }}
+        >
+          <div style={{ display: 'flex', gap: 8 }}>
+            {(['bank', 'cash'] as const).map((m) => (
+              <button
+                key={m}
+                type="button"
+                onClick={() => setMode(m)}
+                disabled={submitting}
+                style={{
+                  flex: 1,
+                  padding: '8px 10px',
+                  borderRadius: 7,
+                  fontSize: 13,
+                  cursor: 'pointer',
+                  border: `1px solid ${mode === m ? 'var(--apar-red, #E63A1F)' : 'var(--border, #e5e7eb)'}`,
+                  background: mode === m ? 'rgba(230,58,31,0.08)' : 'transparent',
+                  color: 'inherit',
+                }}
+              >
+                {m === 'bank' ? 'Bank transfer' : 'Cash'}
+              </button>
+            ))}
+          </div>
+
+          {mode === 'bank' ? (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+              <div className="os-field">
+                <span className="os-field-label">From our bank account</span>
+                <select
+                  value={bankAccountId}
+                  onChange={(e) => setBankAccountId(e.target.value)}
+                  disabled={submitting}
+                  style={osInputStyle}
+                >
+                  <option value="">
+                    {ourBanks.length === 0
+                      ? 'No bank accounts — add one in Settings'
+                      : 'Pick a bank'}
+                  </option>
+                  {ourBanks.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.label} ••{b.accountLast4}
+                      {b.isActive ? '' : ' (inactive)'}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="os-field">
+                <span className="os-field-label">To vendor&apos;s bank (optional)</span>
+                <select
+                  value={counterpartyBankAccountId}
+                  onChange={(e) => setCounterpartyBankAccountId(e.target.value)}
+                  disabled={submitting}
+                  style={osInputStyle}
+                >
+                  <option value="">
+                    {vendorBanks.length === 0 ? 'No vendor bank on file' : '— Not specified —'}
+                  </option>
+                  {vendorBanks.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.bankName} ••{b.accountLast4}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          ) : (
+            <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0 }}>
+              Cash payment — posts from Cash on Hand (1110).
+            </p>
+          )}
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+            <div className="os-field">
+              <label htmlFor="vp-date" className="os-field-label">
+                Date
+              </label>
+              <input
+                id="vp-date"
+                type="date"
+                value={paymentDate}
+                onChange={(e) => setPaymentDate(e.target.value)}
+                disabled={submitting}
+                style={osInputStyle}
+              />
+            </div>
+            <div className="os-field">
+              <label htmlFor="vp-amt" className="os-field-label">
+                Amount ₹ (gross)
+              </label>
+              <input
+                id="vp-amt"
+                type="text"
+                inputMode="decimal"
+                placeholder="0.00"
+                value={amountRupees}
+                onChange={(e) => setAmountRupees(e.target.value)}
+                disabled={submitting}
+                style={osInputStyle}
+              />
+            </div>
+            <div className="os-field">
+              <label htmlFor="vp-gst" className="os-field-label">
+                GST ₹ (incl., noted)
+              </label>
+              <input
+                id="vp-gst"
+                type="text"
+                inputMode="decimal"
+                placeholder="0.00"
+                value={gstRupees}
+                onChange={(e) => setGstRupees(e.target.value)}
+                disabled={submitting}
+                style={osInputStyle}
+              />
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div className="os-field">
+              <label htmlFor="vp-tds" className="os-field-label">
+                TDS we withheld ₹
+              </label>
+              <input
+                id="vp-tds"
+                type="text"
+                inputMode="decimal"
+                placeholder="0.00"
+                value={tdsRupees}
+                onChange={(e) => setTdsRupees(e.target.value)}
+                disabled={submitting}
+                style={osInputStyle}
+              />
+            </div>
+            <div className="os-field">
+              <label htmlFor="vp-tds-sec" className="os-field-label">
+                TDS section (optional)
+              </label>
+              <input
+                id="vp-tds-sec"
+                type="text"
+                placeholder="e.g. 194C"
+                value={tdsSection}
+                onChange={(e) => setTdsSection(e.target.value)}
+                disabled={submitting}
+                style={osInputStyle}
+              />
+            </div>
+          </div>
+
+          {netHint !== null && netHint >= 0n && parsePaise(tdsRupees) > 0n ? (
+            <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0 }}>
+              Net cash paid: <strong>{formatINR(netHint)}</strong> (amount − TDS). The full gross
+              clears the bill; TDS posts to TDS Payable.
+            </p>
+          ) : null}
+
+          <div className="os-field">
+            <span className="os-field-label">
+              Allocate to bills{' '}
+              <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>
+                (blank = auto oldest-first)
+              </span>
+            </span>
+            {bills.length === 0 ? (
+              <p className="os-field-hint">
+                No open bills for this vendor — create one in the Bills tab to link it.
+              </p>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {bills.map((b) => (
+                  <div
+                    key={b.billTxnId}
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: '1fr 130px',
+                      gap: 8,
+                      alignItems: 'center',
+                    }}
+                  >
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontFamily: 'var(--font-mono, monospace)' }}>
+                        {b.documentNumber}
+                      </div>
+                      <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                        {b.projectName ?? 'No project'} · due {formatINR(b.outstandingPaise)}
+                      </div>
+                    </div>
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      placeholder="₹ applied"
+                      value={allocs[b.billTxnId] ?? ''}
+                      onChange={(e) =>
+                        setAllocs((prev) => ({ ...prev, [b.billTxnId]: e.target.value }))
+                      }
+                      disabled={submitting}
+                      style={osInputStyle}
+                    />
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div
+          style={{
+            display: 'flex',
+            gap: 8,
+            justifyContent: 'flex-end',
+            padding: '12px 18px 14px',
+            borderTop: '1px solid var(--border, #e5e7eb)',
+          }}
+        >
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => onOpenChange(false)}
+            disabled={submitting}
+          >
+            Cancel
+          </Button>
+          <Button
+            size="sm"
+            onClick={submit}
+            disabled={submitting || (mode === 'bank' && !bankAccountId)}
+          >
+            {submitting ? 'Recording…' : 'Record & post'}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Reverse payment dialog                                                      */
+/* -------------------------------------------------------------------------- */
 
 function ReversePaymentDialog({
   target,
@@ -293,355 +761,6 @@ function ReversePaymentDialog({
   );
 }
 
-function DueToPayCard({ due }: { due: DueState }) {
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-base">Due to pay</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <div className="text-3xl font-semibold tabular-nums">{formatINR(due.totalPaise)}</div>
-        <p className="text-muted-foreground mt-1 text-xs">
-          Outstanding across this vendor&apos;s recorded bills, by project.
-        </p>
-        {due.rows.length > 0 ? (
-          <ul className="mt-4 flex flex-col gap-2">
-            {due.rows.map((row) => (
-              <li
-                key={row.projectId ?? 'none'}
-                className="flex items-center justify-between gap-3 text-sm"
-              >
-                <span>{row.projectName ?? 'Unassigned'}</span>
-                <span className="font-mono tabular-nums">{formatINR(row.outstandingPaise)}</span>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="text-muted-foreground mt-3 text-sm italic">Nothing outstanding.</p>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
-/* -------------------------------------------------------------------------- */
-/* Record vendor payment dialog                                                */
-/* -------------------------------------------------------------------------- */
-
-function todayISO(): string {
-  return new Date().toISOString().slice(0, 10);
-}
-
-function normaliseRupee(s: string): string {
-  return s.replace(/[,\s]/g, '').trim();
-}
-
-function RecordVendorPaymentDialog({
-  open,
-  onOpenChange,
-  vendorId,
-  vendorName,
-  onRecorded,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  vendorId: string;
-  vendorName: string;
-  onRecorded: () => void;
-}) {
-  const [banks, setBanks] = useState<readonly AgencyBankAccountRow[]>([]);
-  const [bills, setBills] = useState<readonly OpenBillRow[]>([]);
-  const [bankAccountId, setBankAccountId] = useState('');
-  const [paymentDate, setPaymentDate] = useState(todayISO());
-  const [amountRupees, setAmountRupees] = useState('');
-  const [notes, setNotes] = useState('');
-  // Per-bill manual allocation amounts (rupee strings keyed by billTxnId).
-  const [allocs, setAllocs] = useState<Record<string, string>>({});
-  const [submitting, setSubmitting] = useState(false);
-
-  useEffect(() => {
-    if (!open) return;
-    let cancelled = false;
-    queueMicrotask(() => {
-      if (cancelled) return;
-      setBankAccountId('');
-      setPaymentDate(todayISO());
-      setAmountRupees('');
-      setNotes('');
-      setAllocs({});
-    });
-    listAgencyBankAccounts()
-      .then((b) => {
-        if (cancelled) return;
-        setBanks(b);
-        if (b[0]) setBankAccountId(b[0].id);
-      })
-      .catch(() => {
-        if (!cancelled) setBanks([]);
-      });
-    listOpenBillsForVendor(vendorId)
-      .then((bl) => {
-        if (!cancelled) setBills(bl);
-      })
-      .catch(() => {
-        if (!cancelled) setBills([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [open, vendorId]);
-
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && !submitting) onOpenChange(false);
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [open, submitting, onOpenChange]);
-
-  if (!open) return null;
-
-  const manualAllocCount = Object.values(allocs).filter((s) => s.trim()).length;
-
-  async function submit() {
-    if (!bankAccountId) {
-      toast.error('Pick the bank account the money left from.');
-      return;
-    }
-    let totalPaise: bigint;
-    try {
-      totalPaise = rupeesToPaise(normaliseRupee(amountRupees || '0'));
-    } catch {
-      toast.error('Enter a valid amount.');
-      return;
-    }
-    if (totalPaise <= 0n) {
-      toast.error('Amount must be positive.');
-      return;
-    }
-
-    let allocations: Array<{ billTxnId: string; amountPaise: bigint }> = [];
-    try {
-      allocations = Object.entries(allocs)
-        .filter(([, val]) => val.trim())
-        .map(([billTxnId, val]) => {
-          const paise = rupeesToPaise(normaliseRupee(val));
-          if (paise <= 0n) throw new Error('Allocation amounts must be positive.');
-          return { billTxnId, amountPaise: paise };
-        });
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Invalid allocation amount.');
-      return;
-    }
-    const allocSum = allocations.reduce((acc, a) => acc + a.amountPaise, 0n);
-    if (allocSum > totalPaise) {
-      toast.error('Allocations exceed the amount paid.');
-      return;
-    }
-
-    setSubmitting(true);
-    try {
-      const result = await recordVendorPayment({
-        vendorId,
-        bankAccountId,
-        paymentDate,
-        totalPaise,
-        notes: notes.trim() || null,
-        allocations,
-      });
-      toast.success(
-        `Payment posted (${result.voucherNumber}) — ${formatINR(result.allocatedPaise)} applied.`,
-      );
-      onRecorded();
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Could not record the payment.');
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  return (
-    <div
-      className="os-modal-overlay"
-      style={modalOverlayStyle}
-      onMouseDown={() => {
-        if (!submitting) onOpenChange(false);
-      }}
-    >
-      <div className="os-modal" style={modalBoxStyle} onMouseDown={(e) => e.stopPropagation()}>
-        <div className="os-modal-head" style={modalHeadStyle}>
-          <div className="font-display" style={{ fontSize: 18 }}>
-            Record payment made — {vendorName}
-          </div>
-          <button
-            type="button"
-            className="btn"
-            onClick={() => onOpenChange(false)}
-            disabled={submitting}
-            aria-label="Close"
-          >
-            ×
-          </button>
-        </div>
-
-        <div
-          style={{
-            flex: 1,
-            minHeight: 0,
-            padding: 18,
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 14,
-            overflowY: 'auto',
-          }}
-        >
-          <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0, lineHeight: 1.5 }}>
-            Posts a payment-made entry (Dr payables / Cr bank) and generates a payment voucher.
-            Allocate it to the open bills it settles, or leave the amounts blank to auto-apply
-            oldest-first.
-          </p>
-
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            <div className="os-field">
-              <span className="os-field-label">From bank account</span>
-              <select
-                value={bankAccountId}
-                onChange={(e) => setBankAccountId(e.target.value)}
-                disabled={submitting}
-                style={osInputStyle}
-              >
-                <option value="">
-                  {banks.length === 0 ? 'No bank accounts found' : 'Pick a bank'}
-                </option>
-                {banks.map((b) => (
-                  <option key={b.id} value={b.id}>
-                    {b.label} ••{b.accountLast4}
-                    {b.isActive ? '' : ' (inactive)'}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="os-field">
-              <label htmlFor="vp-amt" className="os-field-label">
-                Amount ₹
-              </label>
-              <input
-                id="vp-amt"
-                type="text"
-                inputMode="decimal"
-                placeholder="0.00"
-                value={amountRupees}
-                onChange={(e) => setAmountRupees(e.target.value)}
-                disabled={submitting}
-                style={osInputStyle}
-              />
-            </div>
-          </div>
-
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 12 }}>
-            <div className="os-field">
-              <label htmlFor="vp-date" className="os-field-label">
-                Payment date
-              </label>
-              <input
-                id="vp-date"
-                type="date"
-                value={paymentDate}
-                onChange={(e) => setPaymentDate(e.target.value)}
-                disabled={submitting}
-                style={osInputStyle}
-              />
-            </div>
-            <div className="os-field">
-              <label htmlFor="vp-notes" className="os-field-label">
-                Notes (optional)
-              </label>
-              <input
-                id="vp-notes"
-                type="text"
-                placeholder="UTR / cheque no. / memo"
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                disabled={submitting}
-                style={osInputStyle}
-              />
-            </div>
-          </div>
-
-          <div className="os-field">
-            <span className="os-field-label">
-              Allocate to bills{' '}
-              <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>
-                ({manualAllocCount > 0 ? `${manualAllocCount} selected` : 'blank = auto FIFO'})
-              </span>
-            </span>
-            {bills.length === 0 ? (
-              <p className="os-field-hint">No open bills for this vendor.</p>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                {bills.map((b) => (
-                  <div
-                    key={b.billTxnId}
-                    style={{
-                      display: 'grid',
-                      gridTemplateColumns: '1fr 130px',
-                      gap: 8,
-                      alignItems: 'center',
-                    }}
-                  >
-                    <div style={{ minWidth: 0 }}>
-                      <div style={{ fontSize: 13, fontFamily: 'var(--font-mono, monospace)' }}>
-                        {b.documentNumber}
-                      </div>
-                      <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                        {b.projectName ?? 'No project'} · due {formatINR(b.outstandingPaise)}
-                      </div>
-                    </div>
-                    <input
-                      type="text"
-                      inputMode="decimal"
-                      placeholder="₹ applied"
-                      value={allocs[b.billTxnId] ?? ''}
-                      onChange={(e) =>
-                        setAllocs((prev) => ({ ...prev, [b.billTxnId]: e.target.value }))
-                      }
-                      disabled={submitting}
-                      style={osInputStyle}
-                    />
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-
-        <div
-          style={{
-            display: 'flex',
-            gap: 8,
-            justifyContent: 'flex-end',
-            padding: '12px 18px 14px',
-            borderTop: '1px solid var(--border, #e5e7eb)',
-          }}
-        >
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => onOpenChange(false)}
-            disabled={submitting}
-          >
-            Cancel
-          </Button>
-          <Button size="sm" onClick={submit} disabled={submitting || !bankAccountId}>
-            {submitting ? 'Recording…' : 'Record & post'}
-          </Button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function formatDate(d: string): string {
   return new Date(d).toLocaleDateString('en-IN', {
     day: '2-digit',
@@ -650,10 +769,7 @@ function formatDate(d: string): string {
   });
 }
 
-// These dialogs render in the (app) dashboard, which does not load the OS
-// shell's os.css (`.os-root .os-modal*`). Style the modal chrome inline with
-// globals/shadcn tokens (+ literal fallbacks) so it presents as a proper
-// centered overlay regardless of route group.
+// (app) route doesn't load the OS shell's os.css; style the modal chrome inline.
 const modalOverlayStyle: React.CSSProperties = {
   position: 'fixed',
   inset: 0,

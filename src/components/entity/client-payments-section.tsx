@@ -15,34 +15,25 @@ import {
   listAgencyBankAccounts,
   type AgencyBankAccountRow,
 } from '@/lib/server/billing/agency-banks';
+import { listBankAccounts, type BankAccountRow } from '@/lib/server/entities/bank-accounts';
 import {
   getClientReceivablesByProject,
   listClientReceipts,
   listOpenInvoicesForClient,
-  recordManualReceipt,
+  recordClientReceipt,
+  reverseClientReceipt,
   type ClientReceiptRow,
   type OpenInvoiceRow,
   type ReceivableByProjectRow,
-} from '@/lib/server/billing/receipts';
-
-const STATUS_TONE: Record<string, 'neutral' | 'success'> = {
-  posted: 'success',
-  unposted: 'neutral',
-};
-
-const METHOD_LABEL: Record<string, string> = {
-  bank_transfer: 'Bank transfer',
-  upi: 'UPI',
-  cheque: 'Cheque',
-  card: 'Card',
-};
+} from '@/lib/server/billing/client-receipts';
 
 type DueState = { rows: readonly ReceivableByProjectRow[]; totalPaise: bigint };
 
 /**
- * Client "Payments" tab. Records money RECEIVED from the client against open
- * invoices (posts a `client_payment_received` ledger txn via recordManualReceipt)
- * and shows a project-grouped "Due to collect" summary above the receipts list.
+ * Client "Transactions" tab — records money RECEIVED from the client (our bank
+ * or cash ↔ the client's bank), with TDS/GST, against the client's open
+ * `client_invoice` ledger transactions. Posts client_payment_received and shows
+ * a project-grouped "Due to collect" summary.
  */
 export function ClientPaymentsSection({
   clientId,
@@ -55,6 +46,7 @@ export function ClientPaymentsSection({
   const [due, setDue] = useState<DueState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [formOpen, setFormOpen] = useState(false);
+  const [reversing, setReversing] = useState<{ id: string; amount: bigint } | null>(null);
 
   async function reload() {
     try {
@@ -66,7 +58,7 @@ export function ClientPaymentsSection({
       setDue(d);
       setError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not load payments');
+      setError(e instanceof Error ? e.message : 'Could not load transactions');
     }
   }
 
@@ -80,7 +72,7 @@ export function ClientPaymentsSection({
         setError(null);
       })
       .catch((e) => {
-        if (!cancelled) setError(e instanceof Error ? e.message : 'Could not load payments');
+        if (!cancelled) setError(e instanceof Error ? e.message : 'Could not load transactions');
       });
     return () => {
       cancelled = true;
@@ -88,7 +80,7 @@ export function ClientPaymentsSection({
   }, [clientId]);
 
   if (error) {
-    return <EmptyState icon={WalletIcon} title="Could not load payments" description={error} />;
+    return <EmptyState icon={WalletIcon} title="Could not load transactions" description={error} />;
   }
   if (receipts === null || due === null) {
     return <Skeleton className="h-40 w-full" />;
@@ -101,39 +93,34 @@ export function ClientPaymentsSection({
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle className="text-base">
-            Payments received{' '}
+            Money received{' '}
             <span className="text-muted-foreground text-xs font-normal">({receipts.length})</span>
           </CardTitle>
           <Button size="sm" onClick={() => setFormOpen(true)}>
             <PlusIcon className="mr-1.5 size-4" aria-hidden />
-            Record payment
+            Record receipt
           </Button>
         </CardHeader>
         <CardContent className="p-0">
           {receipts.length === 0 ? (
             <EmptyState
               icon={ReceiptIcon}
-              title="No payments recorded yet"
-              description={`Record a payment received from ${clientName}, allocate it to the open invoices it settles, and it posts straight to the ledger.`}
+              title="No money recorded yet"
+              description={`Record money received from ${clientName} — pick the bank accounts (or cash), the amount, any TDS/GST, and the invoices it settles.`}
             />
           ) : (
             <ul className="divide-y">
               {receipts.map((r) => (
-                <li key={r.id} className="flex flex-col gap-1.5 px-4 py-3">
+                <li key={r.transactionId} className="flex flex-col gap-1.5 px-4 py-3">
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex min-w-0 flex-1 flex-col gap-1">
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-muted-foreground font-mono text-xs">
-                          {r.receiptNumber}
-                        </span>
+                        <span className="text-sm font-medium">Receipt</span>
                         <StatusBadge
-                          tone={STATUS_TONE[r.status] ?? 'neutral'}
-                          label={r.status === 'posted' ? 'posted' : 'unposted'}
+                          tone={r.status === 'posted' ? 'success' : 'neutral'}
+                          label={r.status}
                           dot={false}
                         />
-                        <span className="text-muted-foreground text-xs">
-                          {METHOD_LABEL[r.method] ?? r.method}
-                        </span>
                       </div>
                       {r.allocations.length > 0 ? (
                         <ul className="text-muted-foreground flex flex-col gap-0.5 text-xs">
@@ -144,6 +131,11 @@ export function ClientPaymentsSection({
                               <span>{a.projectName ?? 'No project'}</span>
                               <span>·</span>
                               <span className="tabular-nums">{formatINR(a.allocatedPaise)}</span>
+                              {a.remainingOnInvoicePaise > 0n ? (
+                                <span className="tabular-nums">
+                                  ({formatINR(a.remainingOnInvoicePaise)} left)
+                                </span>
+                              ) : null}
                             </li>
                           ))}
                         </ul>
@@ -153,15 +145,20 @@ export function ClientPaymentsSection({
                     </div>
                     <div className="flex shrink-0 flex-col items-end gap-1">
                       <div className="font-mono text-sm tabular-nums">
-                        {formatINR(r.totalPaise)}
+                        {formatINR(r.amountPaise)}
                       </div>
-                      <div className="text-muted-foreground text-xs">
-                        {formatDate(r.receiptDate)}
-                      </div>
-                      {r.tdsPaise > 0n ? (
-                        <div className="text-muted-foreground text-xs">
-                          TDS {formatINR(r.tdsPaise)}
-                        </div>
+                      <div className="text-muted-foreground text-xs">{formatDate(r.txnDate)}</div>
+                      {r.status === 'posted' ? (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-7 px-2"
+                          onClick={() =>
+                            setReversing({ id: r.transactionId, amount: r.amountPaise })
+                          }
+                        >
+                          Reverse
+                        </Button>
                       ) : null}
                     </div>
                   </div>
@@ -179,6 +176,15 @@ export function ClientPaymentsSection({
         clientName={clientName}
         onRecorded={() => {
           setFormOpen(false);
+          void reload();
+        }}
+      />
+
+      <ReverseReceiptDialog
+        target={reversing}
+        onOpenChange={(o) => !o && setReversing(null)}
+        onReversed={() => {
+          setReversing(null);
           void reload();
         }}
       />
@@ -229,15 +235,12 @@ function normaliseRupee(s: string): string {
   return s.replace(/[,\s]/g, '').trim();
 }
 
-const RECEIPT_METHODS: Array<{
-  value: 'bank_transfer' | 'upi' | 'cheque' | 'card';
-  label: string;
-}> = [
-  { value: 'bank_transfer', label: 'Bank transfer' },
-  { value: 'upi', label: 'UPI' },
-  { value: 'cheque', label: 'Cheque' },
-  { value: 'card', label: 'Card' },
-];
+/** Parse a rupee string to paise; returns 0n for blank. Throws on garbage. */
+function parsePaise(s: string): bigint {
+  const t = normaliseRupee(s);
+  if (!t) return 0n;
+  return rupeesToPaise(t);
+}
 
 function RecordReceiptDialog({
   open,
@@ -252,16 +255,17 @@ function RecordReceiptDialog({
   clientName: string;
   onRecorded: () => void;
 }) {
-  const [banks, setBanks] = useState<readonly AgencyBankAccountRow[]>([]);
+  const [ourBanks, setOurBanks] = useState<readonly AgencyBankAccountRow[]>([]);
+  const [clientBanks, setClientBanks] = useState<readonly BankAccountRow[]>([]);
   const [invoices, setInvoices] = useState<readonly OpenInvoiceRow[]>([]);
+  const [mode, setMode] = useState<'bank' | 'cash'>('bank');
   const [bankAccountId, setBankAccountId] = useState('');
+  const [counterpartyBankAccountId, setCounterpartyBankAccountId] = useState('');
   const [paymentDate, setPaymentDate] = useState(todayISO());
   const [amountRupees, setAmountRupees] = useState('');
-  const [method, setMethod] = useState<'bank_transfer' | 'upi' | 'cheque' | 'card'>(
-    'bank_transfer',
-  );
   const [tdsRupees, setTdsRupees] = useState('');
-  // Per-invoice manual allocation amounts (rupee strings keyed by invoiceId).
+  const [tdsSection, setTdsSection] = useState('');
+  const [gstRupees, setGstRupees] = useState('');
   const [allocs, setAllocs] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
 
@@ -270,36 +274,34 @@ function RecordReceiptDialog({
     let cancelled = false;
     queueMicrotask(() => {
       if (cancelled) return;
+      setMode('bank');
       setBankAccountId('');
+      setCounterpartyBankAccountId('');
       setPaymentDate(todayISO());
       setAmountRupees('');
-      setMethod('bank_transfer');
       setTdsRupees('');
+      setTdsSection('');
+      setGstRupees('');
       setAllocs({});
     });
     listAgencyBankAccounts()
       .then((b) => {
         if (cancelled) return;
-        setBanks(b);
-        // Pre-select the first (active-first) account.
+        setOurBanks(b);
         if (b[0]) setBankAccountId(b[0].id);
       })
-      .catch(() => {
-        if (!cancelled) setBanks([]);
-      });
+      .catch(() => !cancelled && setOurBanks([]));
+    listBankAccounts({ entityType: 'client', entityId: clientId })
+      .then((b) => !cancelled && setClientBanks(b))
+      .catch(() => !cancelled && setClientBanks([]));
     listOpenInvoicesForClient(clientId)
-      .then((inv) => {
-        if (!cancelled) setInvoices(inv);
-      })
-      .catch(() => {
-        if (!cancelled) setInvoices([]);
-      });
+      .then((inv) => !cancelled && setInvoices(inv))
+      .catch(() => !cancelled && setInvoices([]));
     return () => {
       cancelled = true;
     };
   }, [open, clientId]);
 
-  // Esc to close.
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
@@ -311,18 +313,27 @@ function RecordReceiptDialog({
 
   if (!open) return null;
 
-  const manualAllocCount = Object.values(allocs).filter((s) => s.trim()).length;
+  let netHint: bigint | null = null;
+  try {
+    netHint = parsePaise(amountRupees) - parsePaise(tdsRupees);
+  } catch {
+    netHint = null;
+  }
 
   async function submit() {
-    if (!bankAccountId) {
-      toast.error('Pick the bank account the money landed in.');
+    if (mode === 'bank' && !bankAccountId) {
+      toast.error('Pick the bank account the money was received into.');
       return;
     }
     let totalPaise: bigint;
+    let tdsPaise: bigint;
+    let gstPaise: bigint;
     try {
-      totalPaise = rupeesToPaise(normaliseRupee(amountRupees || '0'));
+      totalPaise = parsePaise(amountRupees);
+      tdsPaise = parsePaise(tdsRupees);
+      gstPaise = parsePaise(gstRupees);
     } catch {
-      toast.error('Enter a valid amount.');
+      toast.error('Enter valid amounts.');
       return;
     }
     if (totalPaise <= 0n) {
@@ -330,46 +341,37 @@ function RecordReceiptDialog({
       return;
     }
 
-    // Build explicit allocations from any non-empty per-invoice inputs. If none
-    // are filled, pass [] so the server FIFO-allocates oldest-first.
-    let allocations: Array<{ invoiceId: string; allocatedPaise: bigint }> = [];
+    let allocations: Array<{ invoiceTxnId: string; amountPaise: bigint }> = [];
     try {
       allocations = Object.entries(allocs)
         .filter(([, val]) => val.trim())
-        .map(([invoiceId, val]) => {
-          const paise = rupeesToPaise(normaliseRupee(val));
+        .map(([invoiceTxnId, val]) => {
+          const paise = parsePaise(val);
           if (paise <= 0n) throw new Error('Allocation amounts must be positive.');
-          return { invoiceId, allocatedPaise: paise };
+          return { invoiceTxnId, amountPaise: paise };
         });
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Invalid allocation amount.');
       return;
     }
-    const allocSum = allocations.reduce((acc, a) => acc + a.allocatedPaise, 0n);
-    if (allocSum > totalPaise) {
+    if (allocations.reduce((a, x) => a + x.amountPaise, 0n) > totalPaise) {
       toast.error('Allocations exceed the amount received.');
       return;
     }
 
-    let tdsPaise = 0n;
-    if (tdsRupees.trim()) {
-      try {
-        tdsPaise = rupeesToPaise(normaliseRupee(tdsRupees));
-      } catch {
-        toast.error('Enter a valid TDS amount.');
-        return;
-      }
-    }
-
     setSubmitting(true);
     try {
-      const result = await recordManualReceipt({
+      const result = await recordClientReceipt({
         clientId,
-        bankAccountId,
-        receiptDate: paymentDate,
+        mode,
+        bankAccountId: mode === 'bank' ? bankAccountId : null,
+        counterpartyBankAccountId:
+          mode === 'bank' && counterpartyBankAccountId ? counterpartyBankAccountId : null,
+        paymentDate,
         totalPaise,
-        method,
-        capturedTdsAmountPaise: tdsPaise,
+        tdsPaise,
+        tdsSection: tdsSection.trim() || null,
+        gstPaise,
         allocations,
       });
       toast.success(
@@ -377,7 +379,7 @@ function RecordReceiptDialog({
       );
       onRecorded();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Could not record the payment.');
+      toast.error(e instanceof Error ? e.message : 'Could not record the receipt.');
     } finally {
       setSubmitting(false);
     }
@@ -394,7 +396,7 @@ function RecordReceiptDialog({
       <div className="os-modal" style={modalBoxStyle} onMouseDown={(e) => e.stopPropagation()}>
         <div className="os-modal-head" style={modalHeadStyle}>
           <div className="font-display" style={{ fontSize: 18 }}>
-            Record payment received — {clientName}
+            Record money received — {clientName}
           </div>
           <button
             type="button"
@@ -418,53 +420,82 @@ function RecordReceiptDialog({
             overflowY: 'auto',
           }}
         >
-          <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0, lineHeight: 1.5 }}>
-            Posts a payment-received entry (Dr bank / Cr receivables) and generates a receipt
-            voucher. Allocate it to the open invoices it settles, or leave the amounts blank to
-            auto-apply oldest-first.
-          </p>
-
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            <div className="os-field">
-              <span className="os-field-label">Into bank account</span>
-              <select
-                value={bankAccountId}
-                onChange={(e) => setBankAccountId(e.target.value)}
+          {/* Mode toggle */}
+          <div style={{ display: 'flex', gap: 8 }}>
+            {(['bank', 'cash'] as const).map((m) => (
+              <button
+                key={m}
+                type="button"
+                onClick={() => setMode(m)}
                 disabled={submitting}
-                style={osInputStyle}
+                style={{
+                  flex: 1,
+                  padding: '8px 10px',
+                  borderRadius: 7,
+                  fontSize: 13,
+                  cursor: 'pointer',
+                  border: `1px solid ${mode === m ? 'var(--apar-red, #E63A1F)' : 'var(--border, #e5e7eb)'}`,
+                  background: mode === m ? 'rgba(230,58,31,0.08)' : 'transparent',
+                  color: 'inherit',
+                }}
               >
-                <option value="">
-                  {banks.length === 0 ? 'No bank accounts found' : 'Pick a bank'}
-                </option>
-                {banks.map((b) => (
-                  <option key={b.id} value={b.id}>
-                    {b.label} ••{b.accountLast4}
-                    {b.isActive ? '' : ' (inactive)'}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="os-field">
-              <span className="os-field-label">Method</span>
-              <select
-                value={method}
-                onChange={(e) => setMethod(e.target.value as typeof method)}
-                disabled={submitting}
-                style={osInputStyle}
-              >
-                {RECEIPT_METHODS.map((m) => (
-                  <option key={m.value} value={m.value}>
-                    {m.label}
-                  </option>
-                ))}
-              </select>
-            </div>
+                {m === 'bank' ? 'Bank transfer' : 'Cash'}
+              </button>
+            ))}
           </div>
+
+          {mode === 'bank' ? (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+              <div className="os-field">
+                <span className="os-field-label">Into our bank account</span>
+                <select
+                  value={bankAccountId}
+                  onChange={(e) => setBankAccountId(e.target.value)}
+                  disabled={submitting}
+                  style={osInputStyle}
+                >
+                  <option value="">
+                    {ourBanks.length === 0
+                      ? 'No bank accounts — add one in Settings'
+                      : 'Pick a bank'}
+                  </option>
+                  {ourBanks.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.label} ••{b.accountLast4}
+                      {b.isActive ? '' : ' (inactive)'}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="os-field">
+                <span className="os-field-label">From client&apos;s bank (optional)</span>
+                <select
+                  value={counterpartyBankAccountId}
+                  onChange={(e) => setCounterpartyBankAccountId(e.target.value)}
+                  disabled={submitting}
+                  style={osInputStyle}
+                >
+                  <option value="">
+                    {clientBanks.length === 0 ? 'No client bank on file' : '— Not specified —'}
+                  </option>
+                  {clientBanks.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.bankName} ••{b.accountLast4}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          ) : (
+            <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0 }}>
+              Cash receipt — posts to Cash on Hand (1110).
+            </p>
+          )}
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
             <div className="os-field">
               <label htmlFor="rcpt-date" className="os-field-label">
-                Payment date
+                Date
               </label>
               <input
                 id="rcpt-date"
@@ -477,7 +508,7 @@ function RecordReceiptDialog({
             </div>
             <div className="os-field">
               <label htmlFor="rcpt-amt" className="os-field-label">
-                Amount ₹
+                Amount ₹ (gross)
               </label>
               <input
                 id="rcpt-amt"
@@ -491,8 +522,26 @@ function RecordReceiptDialog({
               />
             </div>
             <div className="os-field">
+              <label htmlFor="rcpt-gst" className="os-field-label">
+                GST ₹ (incl., noted)
+              </label>
+              <input
+                id="rcpt-gst"
+                type="text"
+                inputMode="decimal"
+                placeholder="0.00"
+                value={gstRupees}
+                onChange={(e) => setGstRupees(e.target.value)}
+                disabled={submitting}
+                style={osInputStyle}
+              />
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div className="os-field">
               <label htmlFor="rcpt-tds" className="os-field-label">
-                TDS ₹ (optional)
+                TDS withheld by client ₹
               </label>
               <input
                 id="rcpt-tds"
@@ -505,22 +554,45 @@ function RecordReceiptDialog({
                 style={osInputStyle}
               />
             </div>
+            <div className="os-field">
+              <label htmlFor="rcpt-tds-sec" className="os-field-label">
+                TDS section (optional)
+              </label>
+              <input
+                id="rcpt-tds-sec"
+                type="text"
+                placeholder="e.g. 194J"
+                value={tdsSection}
+                onChange={(e) => setTdsSection(e.target.value)}
+                disabled={submitting}
+                style={osInputStyle}
+              />
+            </div>
           </div>
+
+          {netHint !== null && netHint >= 0n && parsePaise(tdsRupees) > 0n ? (
+            <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0 }}>
+              Net cash received: <strong>{formatINR(netHint)}</strong> (amount − TDS). The full
+              gross clears the invoice; TDS posts to TDS Receivable.
+            </p>
+          ) : null}
 
           <div className="os-field">
             <span className="os-field-label">
               Allocate to invoices{' '}
               <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>
-                ({manualAllocCount > 0 ? `${manualAllocCount} selected` : 'blank = auto FIFO'})
+                (blank = auto oldest-first)
               </span>
             </span>
             {invoices.length === 0 ? (
-              <p className="os-field-hint">No open invoices for this client.</p>
+              <p className="os-field-hint">
+                No open invoices for this client — create one in the Invoices tab to link it.
+              </p>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                 {invoices.map((inv) => (
                   <div
-                    key={inv.invoiceId}
+                    key={inv.invoiceTxnId}
                     style={{
                       display: 'grid',
                       gridTemplateColumns: '1fr 130px',
@@ -540,9 +612,9 @@ function RecordReceiptDialog({
                       type="text"
                       inputMode="decimal"
                       placeholder="₹ applied"
-                      value={allocs[inv.invoiceId] ?? ''}
+                      value={allocs[inv.invoiceTxnId] ?? ''}
                       onChange={(e) =>
-                        setAllocs((prev) => ({ ...prev, [inv.invoiceId]: e.target.value }))
+                        setAllocs((prev) => ({ ...prev, [inv.invoiceTxnId]: e.target.value }))
                       }
                       disabled={submitting}
                       style={osInputStyle}
@@ -571,8 +643,119 @@ function RecordReceiptDialog({
           >
             Cancel
           </Button>
-          <Button size="sm" onClick={submit} disabled={submitting || !bankAccountId}>
+          <Button
+            size="sm"
+            onClick={submit}
+            disabled={submitting || (mode === 'bank' && !bankAccountId)}
+          >
             {submitting ? 'Recording…' : 'Record & post'}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Reverse receipt dialog                                                      */
+/* -------------------------------------------------------------------------- */
+
+function ReverseReceiptDialog({
+  target,
+  onOpenChange,
+  onReversed,
+}: {
+  target: { id: string; amount: bigint } | null;
+  onOpenChange: (open: boolean) => void;
+  onReversed: () => void;
+}) {
+  const [reason, setReason] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (target) queueMicrotask(() => setReason(''));
+  }, [target]);
+
+  if (!target) return null;
+
+  async function submit() {
+    const r = reason.trim();
+    if (r.length < 10) {
+      toast.error('Enter a reason of at least 10 characters.');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      await reverseClientReceipt(target!.id, r);
+      toast.success('Receipt reversed.');
+      onReversed();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not reverse the receipt.');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div
+      className="os-modal-overlay"
+      style={modalOverlayStyle}
+      onMouseDown={() => {
+        if (!submitting) onOpenChange(false);
+      }}
+    >
+      <div
+        className="os-modal"
+        style={{ ...modalBoxStyle, width: 460 }}
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <div className="os-modal-head" style={modalHeadStyle}>
+          <div className="font-display" style={{ fontSize: 18 }}>
+            Reverse receipt ({formatINR(target.amount)})
+          </div>
+          <button
+            type="button"
+            className="btn"
+            onClick={() => onOpenChange(false)}
+            disabled={submitting}
+            aria-label="Close"
+          >
+            ×
+          </button>
+        </div>
+        <div style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0, lineHeight: 1.5 }}>
+            Posts an offsetting entry and marks this receipt reversed (the ledger is append-only —
+            nothing is deleted). Give a reason (≥10 characters).
+          </p>
+          <textarea
+            rows={3}
+            placeholder="e.g. Duplicate / mis-recorded receipt"
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            disabled={submitting}
+            style={{ ...osInputStyle, resize: 'vertical', minHeight: 64 }}
+          />
+        </div>
+        <div
+          style={{
+            display: 'flex',
+            gap: 8,
+            justifyContent: 'flex-end',
+            padding: '12px 18px 14px',
+            borderTop: '1px solid var(--border, #e5e7eb)',
+          }}
+        >
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => onOpenChange(false)}
+            disabled={submitting}
+          >
+            Cancel
+          </Button>
+          <Button variant="destructive" size="sm" onClick={submit} disabled={submitting}>
+            {submitting ? 'Reversing…' : 'Reverse receipt'}
           </Button>
         </div>
       </div>
@@ -588,10 +771,7 @@ function formatDate(d: string): string {
   });
 }
 
-// These dialogs render in the (app) dashboard, which does not load the OS
-// shell's os.css (`.os-root .os-modal*`). Style the modal chrome inline with
-// globals/shadcn tokens (+ literal fallbacks) so it presents as a proper
-// centered overlay regardless of route group.
+// (app) route doesn't load the OS shell's os.css; style the modal chrome inline.
 const modalOverlayStyle: React.CSSProperties = {
   position: 'fixed',
   inset: 0,

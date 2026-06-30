@@ -90,8 +90,8 @@ export function ClientDetailTabs({
     { value: 'bank-tax', label: 'Bank & Tax' },
     { value: 'documents', label: 'Documents', count: client.documentsCount },
     { value: 'projects', label: 'Projects', count: projects.length },
+    { value: 'invoices', label: 'Invoices' },
     { value: 'transactions', label: 'Transactions' },
-    { value: 'payments', label: 'Payments' },
     { value: 'expenses-on-behalf', label: 'Expenses on behalf' },
     { value: 'ledger', label: 'Ledger' },
     { value: 'custom', label: 'Custom' },
@@ -121,8 +121,8 @@ export function ClientDetailTabs({
         projects: (
           <ProjectsTab client={client} projects={projects} employees={employees} users={users} />
         ),
-        transactions: <ClientTransactionsSection clientId={client.id} clientName={client.name} />,
-        payments: <ClientPaymentsSection clientId={client.id} clientName={client.name} />,
+        invoices: <ClientTransactionsSection clientId={client.id} clientName={client.name} />,
+        transactions: <ClientPaymentsSection clientId={client.id} clientName={client.name} />,
         'expenses-on-behalf': (
           <ClientExpensesOnBehalfSection clientId={client.id} clientName={client.name} />
         ),
