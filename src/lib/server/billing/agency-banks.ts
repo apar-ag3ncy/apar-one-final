@@ -2,7 +2,7 @@
 
 import { randomUUID } from 'node:crypto';
 
-import { and, asc, desc, eq, like } from 'drizzle-orm';
+import { and, asc, desc, eq, isNull, like } from 'drizzle-orm';
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 
@@ -177,6 +177,10 @@ async function findActiveOpeningJv(bankAccountId: string): Promise<string | null
       and(
         like(transactions.externalRef, `obe:${bankAccountId}:%`),
         eq(transactions.status, 'posted'),
+        // Exclude reversal contra-entries: their externalRef is
+        // `obe:<id>:<ts>:REV:<ts>` (matches the LIKE) and they stay
+        // status='posted', so without this we could reverse a reversal.
+        isNull(transactions.reversesId),
       ),
     )
     .orderBy(desc(transactions.createdAt))

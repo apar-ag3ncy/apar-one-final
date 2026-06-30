@@ -1,6 +1,6 @@
 'use server';
 
-import { and, asc, eq, gte, inArray, lte, ne } from 'drizzle-orm';
+import { and, asc, eq, gte, inArray, isNull, lte, ne } from 'drizzle-orm';
 
 import { db } from '@/lib/db/client';
 import { accounts, postings, transactions } from '@/lib/db/schema';
@@ -106,11 +106,16 @@ async function fetchSubledgerLines(
   if (opts.to) conds.push(lte(transactions.txnDate, opts.to));
   // Show drafts AND posted transactions — operators need to see what's
   // recorded even before posting, otherwise "I just entered the rent
-  // but the ledger is empty" reads as a bug. Reversed entries are
-  // excluded because they pair with their original and visually double
-  // the running balance. Caller can opt back in via includeReversed.
+  // but the ledger is empty" reads as a bug. A reversal nets out as a
+  // PAIR: the original flips to status='reversed' while the contra entry
+  // stays status='posted' with reverses_id set. Excluding only the
+  // 'reversed' original would leave the contra behind and skew the
+  // running balance, so drop BOTH sides (matching reports.ts:
+  // `status='posted' AND reverses_id IS NULL`). Caller opts back in via
+  // includeReversed.
   if (!opts.includeReversed) {
     conds.push(ne(transactions.status, 'reversed'));
+    conds.push(isNull(transactions.reversesId));
   }
 
   const rows = await db
