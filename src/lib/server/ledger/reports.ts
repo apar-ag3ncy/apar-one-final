@@ -183,12 +183,13 @@ export type ApAgingRow = {
 };
 
 /**
- * AR Aging — outstanding receivables per client by bucket. Uses the
- * `1200 Trade Receivables` control account balance, less any
- * `2180 Client Advances Received` net offset.
+ * AR Aging — outstanding receivables per client by bucket, **aged by invoice
+ * due date** (falling back to the document date when no due date is set).
  *
- * Simplified v1: bucketed by `txn_date` of the invoice posting (not
- * due date). Add `due_date` to invoices later when that field exists.
+ * Invoice-centric (mirrors AP aging's bill-centric model): each open invoice's
+ * outstanding = captured total − receipt allocations − advance allocations.
+ * The 0–30 bucket also holds not-yet-due amounts; 31–60 / 61–90 / 90+ are the
+ * overdue bands measured from the due date.
  */
 export async function getArAging(
   args: { asOfDate: string },
@@ -203,34 +204,33 @@ export async function getArAging(
     bucket90plus: string;
     total_outstanding: string;
   }>(sql`
-    WITH ar_postings AS (
+    WITH invoice_balance AS (
       SELECT
-        p.subledger_entity_id AS client_id,
-        (${args.asOfDate}::date - t.txn_date)::int AS age_days,
-        CASE WHEN p.side = 'debit'  THEN p.amount_paise
-             WHEN p.side = 'credit' THEN -p.amount_paise END AS signed_amount
-      FROM postings p
-      JOIN transactions t ON t.id = p.transaction_id
-      JOIN accounts a ON a.id = p.account_id
-      WHERE a.code = '1200'
-        AND p.subledger_entity_type = 'client'
-        AND t.status = 'posted'
-        AND t.reverses_id IS NULL
-        AND t.txn_date <= ${args.asOfDate}::date
+        i.client_id,
+        (${args.asOfDate}::date - COALESCE(i.due_date, i.document_date))::int AS age_days,
+        (
+          i.captured_total_paise
+          - COALESCE((SELECT SUM(pa.allocated_paise) FROM payment_allocations pa WHERE pa.invoice_id = i.id), 0)
+          - COALESCE((SELECT SUM(aa.allocated_paise) FROM advance_allocations aa WHERE aa.invoice_id = i.id), 0)
+        )::bigint AS outstanding
+      FROM invoices i
+      WHERE i.deleted_at IS NULL
+        AND i.state IN ('sent', 'partially_paid')
+        AND i.document_date <= ${args.asOfDate}::date
     )
     SELECT
       c.id AS client_id,
       c.name AS client_name,
-      COALESCE(SUM(signed_amount) FILTER (WHERE age_days BETWEEN 0 AND 30), 0)  AS bucket0to30,
-      COALESCE(SUM(signed_amount) FILTER (WHERE age_days BETWEEN 31 AND 60), 0) AS bucket31to60,
-      COALESCE(SUM(signed_amount) FILTER (WHERE age_days BETWEEN 61 AND 90), 0) AS bucket61to90,
-      COALESCE(SUM(signed_amount) FILTER (WHERE age_days > 90), 0)              AS bucket90plus,
-      COALESCE(SUM(signed_amount), 0)                                           AS total_outstanding
+      COALESCE(SUM(outstanding) FILTER (WHERE age_days <= 30), 0)             AS bucket0to30,
+      COALESCE(SUM(outstanding) FILTER (WHERE age_days BETWEEN 31 AND 60), 0) AS bucket31to60,
+      COALESCE(SUM(outstanding) FILTER (WHERE age_days BETWEEN 61 AND 90), 0) AS bucket61to90,
+      COALESCE(SUM(outstanding) FILTER (WHERE age_days > 90), 0)              AS bucket90plus,
+      COALESCE(SUM(outstanding), 0)                                          AS total_outstanding
     FROM clients c
-    LEFT JOIN ar_postings p ON p.client_id = c.id
+    LEFT JOIN invoice_balance b ON b.client_id = c.id
     WHERE c.is_archived = false
     GROUP BY c.id, c.name
-    HAVING COALESCE(SUM(signed_amount), 0) <> 0
+    HAVING COALESCE(SUM(outstanding), 0) > 0
     ORDER BY total_outstanding DESC
   `);
   return Array.from(
