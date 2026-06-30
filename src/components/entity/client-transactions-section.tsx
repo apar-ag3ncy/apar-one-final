@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { PencilIcon, PlusIcon, SendIcon, Trash2Icon } from 'lucide-react';
+import { PencilIcon, SendIcon, Trash2Icon } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
@@ -107,17 +107,13 @@ export function ClientTransactionsSection({
             Transactions{' '}
             <span className="text-muted-foreground text-xs font-normal">({rows.length})</span>
           </CardTitle>
-          <Button size="sm" onClick={() => setFormOpen(true)}>
-            <PlusIcon className="mr-1.5 size-4" aria-hidden />
-            New invoice
-          </Button>
         </CardHeader>
         <CardContent className="p-0">
           {rows.length === 0 ? (
             <EmptyState
               icon={ReceiptIcon}
               title="No transactions yet"
-              description={`Issue an invoice to ${clientName}, record a payment, or post an expense-on-behalf via the Expenses tab.`}
+              description={`Posted transactions for ${clientName} appear here. Create invoices from the Invoices tab, record payments from the Payments tab, or post expenses on behalf from the Expenses tab.`}
             />
           ) : (
             <ul className="divide-y">

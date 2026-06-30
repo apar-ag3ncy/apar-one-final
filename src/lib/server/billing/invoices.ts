@@ -623,6 +623,10 @@ export async function listInvoices(
   requireCapability(ctx, 'create_invoice');
 
   const conds = [];
+  // Hide discarded drafts (soft-deleted). Every other billing read filters
+  // this; listInvoices was the lone exception, which let discarded drafts
+  // linger in the list.
+  conds.push(isNull(invoices.deletedAt));
   if (filters.clientId) conds.push(eq(invoices.clientId, filters.clientId));
   if (filters.projectId) conds.push(eq(invoices.projectId, filters.projectId));
   if (filters.states && filters.states.length > 0)
