@@ -155,23 +155,18 @@ export async function listAgencyBankAccountsDetailed(): Promise<AgencyBankAccoun
 /**
  * The partner the opening capital is attributed to (3100 is sub-ledgered by
  * partner_user_id). Single-partner agencies have exactly one; if there are
- * several we pick the earliest-created. Throws when none exists so the caller
- * surfaces a clear message rather than a control-account trigger error.
+ * several we pick the earliest-created. Returns null when no partner user
+ * exists — the caller then posts the opening balance against 3900 Opening
+ * Balance Equity (a non-control account) instead, so it still posts and tallies.
  */
-async function resolvePartnerUserId(): Promise<string> {
+async function resolvePartnerUserId(): Promise<string | null> {
   const [partner] = await db
     .select({ id: users.id })
     .from(users)
     .where(and(eq(users.role, 'partner'), isNull(users.deletedAt)))
     .orderBy(asc(users.createdAt))
     .limit(1);
-  if (!partner) {
-    throw new AppError(
-      'validation',
-      'No partner user exists to attribute the opening balance to. Add a partner before setting an opening balance.',
-    );
-  }
-  return partner.id;
+  return partner?.id ?? null;
 }
 
 export async function createAgencyBankAccount(
@@ -267,21 +262,52 @@ export async function createAgencyBankAccount(
       try {
         const partnerUserId = await resolvePartnerUserId();
         const positive = v.openingBalancePaise > 0n;
-        const draft = await createDraftTransaction(ctx, {
-          kind: positive ? 'partner_capital' : 'partner_drawing',
-          // `kind` here is overridden by the router (partner_capital → 'capital',
-          // partner_drawing → 'drawing'); we pass the matching value to satisfy
-          // the template's input type.
-          input: {
-            kind: positive ? 'capital' : 'drawing',
-            partnerUserId,
-            bankAccountId,
-            amountPaise: positive ? v.openingBalancePaise : -v.openingBalancePaise,
-            externalRef: `opening_balance:${bankAccountId}`,
-            txnDate: v.openingBalanceDate,
-            notes: `Opening balance for ${v.displayName}`,
-          },
-        });
+        const amountPaise = positive ? v.openingBalancePaise : -v.openingBalancePaise;
+        const externalRef = `opening_balance:${bankAccountId}`;
+        const reason = `Opening balance for ${v.displayName}`;
+        const draft = partnerUserId
+          ? // Preferred: attribute the opening cash to partner capital (Cr 3100).
+            await createDraftTransaction(ctx, {
+              kind: positive ? 'partner_capital' : 'partner_drawing',
+              // `kind` here is overridden by the router (partner_capital → 'capital',
+              // partner_drawing → 'drawing'); we pass the matching value to satisfy
+              // the template's input type.
+              input: {
+                kind: positive ? 'capital' : 'drawing',
+                partnerUserId,
+                bankAccountId,
+                amountPaise,
+                externalRef,
+                txnDate: v.openingBalanceDate,
+                notes: reason,
+              },
+            })
+          : // No partner user on file → post against 3900 Opening Balance Equity
+            // (non-control) via a journal so the opening still posts and tallies.
+            // Dr 1120 / Cr 3900 for a positive balance; mirrored for an overdraft.
+            await createDraftTransaction(ctx, {
+              kind: 'journal',
+              input: {
+                externalRef,
+                txnDate: v.openingBalanceDate,
+                journalReason: reason,
+                legs: [
+                  {
+                    accountCode: '1120',
+                    side: positive ? ('debit' as const) : ('credit' as const),
+                    amountPaise,
+                    subledger: { entityType: 'office' as const, entityId: bankAccountId },
+                  },
+                  {
+                    accountCode: '3900',
+                    side: positive ? ('credit' as const) : ('debit' as const),
+                    amountPaise,
+                  },
+                ],
+                isOpeningBalance: true,
+                notes: reason,
+              },
+            });
         await postTransaction(ctx, { transactionId: draft.transactionId });
         openingPosted = true;
       } catch (e) {
