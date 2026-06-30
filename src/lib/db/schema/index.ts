@@ -103,5 +103,8 @@ export * from './reminder_schedules';
 // Recurring invoice / retainer schedules
 export * from './recurring_invoice_schedules';
 
+// Fixed-asset register + depreciation
+export * from './fixed_assets';
+
 // Settings → Vault (password-protected credential store)
 export * from './vault';
