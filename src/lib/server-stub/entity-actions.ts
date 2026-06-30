@@ -242,6 +242,33 @@ export async function listVendors(): Promise<readonly Vendor[]> {
       pan: vendors.pan,
       notes: vendors.notes,
       documentsCount: sql<number>`(select count(*)::int from entity_documents where entity_type = 'vendor' and entity_id = ${vendors.id})`,
+      // Outstanding payable = the vendor's 2110 balance (credit − debit), over
+      // live postings only (posted, excluding reversal entries — matching the
+      // trial-balance filter so reversed pairs net to zero).
+      outstandingPaise: sql<string>`COALESCE((
+        SELECT SUM(CASE WHEN p.side = 'credit' THEN p.amount_paise ELSE -p.amount_paise END)
+        FROM postings p
+        JOIN transactions t ON t.id = p.transaction_id AND t.status = 'posted' AND t.reverses_id IS NULL
+        JOIN accounts a ON a.id = p.account_id AND a.code = '2110'
+        WHERE p.subledger_entity_type = 'vendor' AND p.subledger_entity_id = ${vendors.id}
+      ), 0)`,
+      lastTxnAt: sql<string | null>`(
+        SELECT MAX(t.txn_date)
+        FROM transactions t
+        JOIN postings p ON p.transaction_id = t.id
+        WHERE t.status = 'posted' AND p.subledger_entity_type = 'vendor' AND p.subledger_entity_id = ${vendors.id}
+      )`,
+      // Best-effort TDS section: the section captured on this vendor's most
+      // recent bill (lives in posting metadata on the TDS-payable leg).
+      lastTdsSection: sql<string | null>`(
+        SELECT p2.metadata->>'tds_section'
+        FROM transactions t2
+        JOIN postings pap ON pap.transaction_id = t2.id AND pap.subledger_entity_type = 'vendor' AND pap.subledger_entity_id = ${vendors.id}
+        JOIN postings p2 ON p2.transaction_id = t2.id AND (p2.metadata->>'tds_section') IS NOT NULL
+        WHERE t2.kind = 'vendor_bill' AND t2.status = 'posted'
+        ORDER BY t2.txn_date DESC, t2.created_at DESC
+        LIMIT 1
+      )`,
     })
     .from(vendors)
     .where(isNull(vendors.deletedAt))
@@ -256,17 +283,31 @@ export async function listVendors(): Promise<readonly Vendor[]> {
       isArchived: r.isArchived,
       gstin: r.gstin,
       pan: r.pan,
-      tdsSection: 'none' as TdsSection,
+      tdsSection: mapTdsSection(r.lastTdsSection),
       contactName: null,
       contactPhone: null,
       city: '',
-      outstandingPaise: 0n,
-      lastTxnAt: null,
+      outstandingPaise: BigInt(r.outstandingPaise ?? '0'),
+      lastTxnAt: r.lastTxnAt ? new Date(`${r.lastTxnAt}T00:00:00Z`) : null,
       documentsCount: r.documentsCount,
       contractsCount: 0,
       notes: r.notes,
     }),
   );
+}
+
+/** Map a captured bill TDS-section code (e.g. 'TDS_194J', 'TDS_194C_1') to the
+ *  UI's TdsSection union. Salary (192) and anything unrecognised → 'none'. */
+function mapTdsSection(raw: string | null): TdsSection {
+  if (!raw) return 'none';
+  const r = raw.toUpperCase();
+  if (r.includes('194C')) return '194C';
+  if (r.includes('194J')) return '194J';
+  if (r.includes('194H')) return '194H';
+  if (r.includes('194I')) return '194I';
+  if (r.includes('194Q')) return '194Q';
+  if (r.includes('194O')) return '194O';
+  return 'none';
 }
 
 export async function getVendor(id: string): Promise<Vendor | null> {

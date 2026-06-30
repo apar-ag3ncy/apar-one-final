@@ -89,9 +89,9 @@ const TILES: readonly Tile[] = [
     icon: LandmarkIcon,
   },
   {
-    href: '/ledger/new/salary-run',
+    href: '/payroll/salary-runs',
     title: 'Salary run',
-    description: 'Monthly payroll. See Phase 4.5 Payroll UI.',
+    description: 'Monthly payroll runs, managed under Payroll.',
     icon: FileTextIcon,
   },
 ];

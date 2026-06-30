@@ -1,6 +1,6 @@
 'use client';
 
-import { FlagIcon, ListChecksIcon, UsersRoundIcon } from 'lucide-react';
+import { UsersRoundIcon } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { EmptyState } from '@/components/shared/empty-state';
 import { formatINR } from '@/components/shared/format-inr';
@@ -35,16 +35,6 @@ export function ProjectDetailTabs({
   const tabs: UrlTab[] = [
     { value: 'overview', label: 'Overview' },
     { value: 'team', label: 'Team' },
-    {
-      value: 'deliverables',
-      label: 'Deliverables',
-      count: `${project.deliverablesDone}/${project.deliverablesTotal}`,
-    },
-    {
-      value: 'milestones',
-      label: 'Milestones',
-      count: `${project.milestonesDone}/${project.milestonesTotal}`,
-    },
     { value: 'transactions', label: 'Transactions', count: feed.transactions.length },
     { value: 'documents', label: 'Documents', count: project.documentsCount },
     { value: 'activity', label: 'Activity' },
@@ -54,8 +44,6 @@ export function ProjectDetailTabs({
       {{
         overview: <OverviewTab project={project} />,
         team: <TeamTab project={project} />,
-        deliverables: <DeliverablesTab project={project} />,
-        milestones: <MilestonesTab project={project} />,
         transactions: <TransactionsTab project={project} feed={feed} />,
         documents: <DocumentsTab project={project} />,
         activity: <ActivityTab />,
@@ -128,26 +116,6 @@ function TeamTab({ project }: { project: Project }) {
       icon={UsersRoundIcon}
       title="Team list not wired yet"
       description={`Project team (lead: ${project.leadName}) renders here once Backend ships the project_team join table.`}
-    />
-  );
-}
-
-function DeliverablesTab({ project }: { project: Project }) {
-  return (
-    <EmptyState
-      icon={ListChecksIcon}
-      title={`${project.deliverablesDone} of ${project.deliverablesTotal} deliverables done`}
-      description="Kanban + list toggle lands in Phase 2 (P2.03). Drag-between-status updates the row."
-    />
-  );
-}
-
-function MilestonesTab({ project }: { project: Project }) {
-  return (
-    <EmptyState
-      icon={FlagIcon}
-      title={`${project.milestonesDone} of ${project.milestonesTotal} milestones complete`}
-      description="Milestone timeline lands in Phase 2 (P2.03)."
     />
   );
 }

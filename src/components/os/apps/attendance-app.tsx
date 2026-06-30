@@ -468,8 +468,8 @@ export function AttendanceApp() {
                   return (
                     <th
                       key={d}
-                      className={`att-col-head${isToday ? 'is-today' : ''}${
-                        isSelected ? 'is-selected' : ''
+                      className={`att-col-head${isToday ? ' is-today' : ''}${
+                        isSelected ? ' is-selected' : ''
                       }`}
                       style={{
                         color:
@@ -539,8 +539,8 @@ export function AttendanceApp() {
                       <td
                         key={d}
                         className={`att-cell ${isOverride ? 'is-override' : 'is-default'}${
-                          isOpen ? 'is-open' : ''
-                        }${isToday ? 'is-today-col' : ''}${isSelected ? 'is-selected-col' : ''}`}
+                          isOpen ? ' is-open' : ''
+                        }${isToday ? ' is-today-col' : ''}${isSelected ? ' is-selected-col' : ''}`}
                         onClick={(e) =>
                           openPicker(e, r.employeeId, r.fullName, iso, status, isOverride)
                         }
