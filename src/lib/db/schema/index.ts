@@ -100,5 +100,8 @@ export * from './billing_views';
 // Reminder schedules (Phase 9)
 export * from './reminder_schedules';
 
+// Recurring invoice / retainer schedules
+export * from './recurring_invoice_schedules';
+
 // Settings → Vault (password-protected credential store)
 export * from './vault';

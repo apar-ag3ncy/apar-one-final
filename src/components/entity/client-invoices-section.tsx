@@ -7,6 +7,7 @@ import {
   PaletteIcon,
   PencilIcon,
   PlusIcon,
+  RepeatIcon,
   StarIcon,
   Trash2Icon,
   UploadIcon,
@@ -30,6 +31,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/shared/empty-state';
 import { StatusBadge, type StatusTone } from '@/components/shared/status-badge';
 import { InvoiceComposerDialog } from '@/components/entity/billing/invoice-composer';
+import { RecurringInvoicesManager } from '@/components/entity/billing/recurring-invoices-manager';
 import { useCurrentUser } from '@/lib/client/use-current-user';
 import { formatINR } from '@/lib/money';
 import {
@@ -77,6 +79,7 @@ export function ClientInvoicesSection({ clientId, clientName }: ClientInvoicesSe
   const { hasCapability } = useCurrentUser();
   const canCompose = hasCapability('create_invoice');
   const canManageThemes = hasCapability('manage_invoice_themes');
+  const canManageRecurring = hasCapability('manage_recurring');
 
   const [rows, setRows] = useState<readonly InvoiceRow[] | null>(null);
   const [themes, setThemes] = useState<InvoiceThemeSummary[]>([]);
@@ -87,6 +90,7 @@ export function ClientInvoicesSection({ clientId, clientName }: ClientInvoicesSe
   const [composerOpen, setComposerOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [manageOpen, setManageOpen] = useState(false);
+  const [recurringOpen, setRecurringOpen] = useState(false);
 
   const reloadInvoices = useCallback(async () => {
     const data = await listInvoices({ clientId });
@@ -186,6 +190,12 @@ export function ClientInvoicesSection({ clientId, clientName }: ClientInvoicesSe
             <span className="text-muted-foreground text-xs font-normal">({rows.length})</span>
           </CardTitle>
           <div className="flex items-center gap-2">
+            {canManageRecurring ? (
+              <Button size="sm" variant="outline" onClick={() => setRecurringOpen(true)}>
+                <RepeatIcon className="mr-1.5 size-4" aria-hidden />
+                Recurring
+              </Button>
+            ) : null}
             {canManageThemes ? (
               <Button size="sm" variant="outline" onClick={() => setManageOpen(true)}>
                 <PaletteIcon className="mr-1.5 size-4" aria-hidden />
@@ -306,6 +316,18 @@ export function ClientInvoicesSection({ clientId, clientName }: ClientInvoicesSe
           onOpenChange={setManageOpen}
           themes={themes}
           onChanged={() => void reloadThemes()}
+        />
+      ) : null}
+
+      {canManageRecurring ? (
+        <RecurringInvoicesManager
+          open={recurringOpen}
+          onOpenChange={setRecurringOpen}
+          clientId={clientId}
+          clientName={clientName}
+          bankAccounts={bankAccounts}
+          themes={themes}
+          onGenerated={() => void reloadInvoices()}
         />
       ) : null}
     </>

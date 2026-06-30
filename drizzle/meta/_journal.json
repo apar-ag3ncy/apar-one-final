@@ -351,6 +351,13 @@
       "when": 1780600007008,
       "tag": "0049_opening_balance_equity",
       "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1780600007009,
+      "tag": "0050_recurring_invoices",
+      "breakpoints": true
     }
   ]
 }
