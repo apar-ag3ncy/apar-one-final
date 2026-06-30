@@ -82,6 +82,7 @@ function rollUp(
 async function fetchSubledgerLines(
   filter:
     | { kind: 'subledger'; entityType: 'client' | 'vendor'; entityId: string }
+    | { kind: 'bankAccount'; bankAccountId: string }
     | { kind: 'accountCodes'; codes: readonly string[] },
   opts: { from?: string; to?: string; includeReversed?: boolean },
 ): Promise<RawLine[]> {
@@ -89,6 +90,13 @@ async function fetchSubledgerLines(
   if (filter.kind === 'subledger') {
     conds.push(eq(postings.subledgerEntityType, filter.entityType));
     conds.push(eq(postings.subledgerEntityId, filter.entityId));
+  } else if (filter.kind === 'bankAccount') {
+    // Bank-account sub-ledger lives on 1120 keyed by bank_accounts.id. The
+    // postings carry subledger_entity_type='office' (a placeholder — users.id /
+    // bank_accounts.id aren't in the entity_type enum), so pin the account code
+    // to 1120 and match the bank id; that pair is unique to this account.
+    conds.push(eq(accounts.code, '1120'));
+    conds.push(eq(postings.subledgerEntityId, filter.bankAccountId));
   } else {
     conds.push(inArray(accounts.code, filter.codes as string[]));
   }
@@ -205,6 +213,29 @@ export async function getOfficeStatement(args: {
   await getActorContext();
   const lines = await fetchSubledgerLines(
     { kind: 'accountCodes', codes: ['1110', '1120'] },
+    { from: args.from, to: args.to, includeReversed: args.includeReversed },
+  );
+  return rollUp(lines, (side) => (side === 'debit' ? 1n : -1n));
+}
+
+/**
+ * **Bank book** — every posting on ONE agency bank account (its 1120
+ * sub-ledger), in date order, with the running balance. Closing balance is
+ * that account's current cash position.
+ *
+ * The opening balance is just the first posting (a `partner_capital` /
+ * `partner_drawing` entry dated the as-of date), so it falls out of the same
+ * roll-up — no special-casing. Asset convention: debit adds, credit subtracts.
+ */
+export async function getBankBook(args: {
+  bankAccountId: string;
+  from?: string;
+  to?: string;
+  includeReversed?: boolean;
+}): Promise<Statement> {
+  await getActorContext();
+  const lines = await fetchSubledgerLines(
+    { kind: 'bankAccount', bankAccountId: args.bankAccountId },
     { from: args.from, to: args.to, includeReversed: args.includeReversed },
   );
   return rollUp(lines, (side) => (side === 'debit' ? 1n : -1n));

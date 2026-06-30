@@ -18,9 +18,10 @@ import { bankAccountTypeEnum } from './entity_bank_accounts';
  * FK is the GL account; `display_name` is the human label.
  *
  * Opening balance: captured as `opening_balance_paise` at
- * `opening_balance_date`. The opening JV (a `journal` kind transaction
- * dated 1-Apr-2026 per the prompt's fresh-start decision) posts
- * `Dr 1120(sub) / Cr 3100 Partner Capital` for each bank's opening.
+ * `opening_balance_date`. Setting it posts a `partner_capital` transaction
+ * (`Dr 1120(sub) / Cr 3100 Partner Capital`) dated the as-of date — a negative
+ * opening (overdraft) posts the mirror `partner_drawing`. See
+ * `lib/server/banking/agency-accounts.ts`.
  */
 export const bankAccounts = pgTable(
   'bank_accounts',
