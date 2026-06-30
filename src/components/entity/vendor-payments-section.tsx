@@ -25,6 +25,10 @@ import {
   type PayableByProjectRow,
   type VendorPaymentRow,
 } from '@/lib/server/billing/vendor-payments';
+import {
+  VendorAdvanceDialog,
+  VendorDebitNoteDialog,
+} from '@/components/entity/vendor-adjustments-dialogs';
 
 type DueState = { rows: readonly PayableByProjectRow[]; totalPaise: bigint };
 
@@ -45,6 +49,8 @@ export function VendorPaymentsSection({
   const [error, setError] = useState<string | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [reversing, setReversing] = useState<{ id: string; amount: bigint } | null>(null);
+  const [advanceOpen, setAdvanceOpen] = useState(false);
+  const [debitOpen, setDebitOpen] = useState(false);
 
   async function reload() {
     try {
@@ -88,16 +94,39 @@ export function VendorPaymentsSection({
     <div className="flex flex-col gap-4">
       <DueToPayCard due={due} />
 
+      <VendorAdvanceDialog
+        open={advanceOpen}
+        onOpenChange={setAdvanceOpen}
+        vendorId={vendorId}
+        vendorName={vendorName}
+        onDone={() => void reload()}
+      />
+      <VendorDebitNoteDialog
+        open={debitOpen}
+        onOpenChange={setDebitOpen}
+        vendorId={vendorId}
+        vendorName={vendorName}
+        onDone={() => void reload()}
+      />
+
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle className="text-base">
             Payments made{' '}
             <span className="text-muted-foreground text-xs font-normal">({payments.length})</span>
           </CardTitle>
-          <Button size="sm" onClick={() => setFormOpen(true)}>
-            <PlusIcon className="mr-1.5 size-4" aria-hidden />
-            Record payment
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button size="sm" variant="outline" onClick={() => setAdvanceOpen(true)}>
+              Advance
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => setDebitOpen(true)}>
+              Debit note
+            </Button>
+            <Button size="sm" onClick={() => setFormOpen(true)}>
+              <PlusIcon className="mr-1.5 size-4" aria-hidden />
+              Record payment
+            </Button>
+          </div>
         </CardHeader>
         <CardContent className="p-0">
           {payments.length === 0 ? (
