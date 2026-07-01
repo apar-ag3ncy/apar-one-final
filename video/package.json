@@ -6,9 +6,9 @@
   "scripts": {
     "dev": "remotion studio",
     "studio": "remotion studio",
-    "render": "remotion render OsIntro out/apar-os-intro.mp4 --codec=h264",
-    "render:hd": "remotion render OsIntro out/apar-os-intro.mp4 --codec=h264 --crf=18",
-    "still": "remotion still OsIntro out/poster.png --frame=90",
+    "render": "remotion render OsIntro out/apar-os-intro-4k.mp4 --codec=h264 --scale=2 --crf=18",
+    "render:1080": "remotion render OsIntro out/apar-os-intro.mp4 --codec=h264 --crf=18",
+    "still": "remotion still OsIntro out/poster.png --frame=460 --scale=2",
     "upgrade": "remotion upgrade"
   },
   "dependencies": {

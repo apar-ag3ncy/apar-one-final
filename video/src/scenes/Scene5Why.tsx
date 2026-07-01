@@ -9,6 +9,7 @@ import {
 import { Background } from "../components/Background";
 import { theme } from "../theme";
 import { interFamily } from "../fonts";
+import { OsIcon, OS_APPS } from "../components/OsIcons";
 
 /**
  * Scene 5 — the payoff. A headline and three differentiator cards that
@@ -60,7 +61,7 @@ export const Scene5Why: React.FC = () => {
             opacity: head,
             transform: `translateY(${(1 - head) * 20}px)`,
             textAlign: "center",
-            marginBottom: 64,
+            marginBottom: 40,
           }}
         >
           <div
@@ -86,6 +87,51 @@ export const Scene5Why: React.FC = () => {
           >
             The best books your firm has ever kept.
           </h2>
+        </div>
+
+        {/* real Apar OS app icons */}
+        <div
+          style={{
+            display: "flex",
+            gap: 14,
+            marginBottom: 52,
+          }}
+        >
+          {OS_APPS.map((app, i) => {
+            const start = 10 + i * 4;
+            const pop = spring({
+              frame: frame - start,
+              fps,
+              config: { damping: 180 },
+            });
+            return (
+              <div
+                key={app.id}
+                style={{
+                  width: 56,
+                  height: 56,
+                  borderRadius: 14,
+                  background:
+                    app.id === "admin_console"
+                      ? theme.color.brand
+                      : "rgba(255,255,255,0.94)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  opacity: pop,
+                  transform: `translateY(${(1 - pop) * 24}px) scale(${pop})`,
+                  boxShadow: "0 10px 24px rgba(0,0,0,0.4)",
+                }}
+              >
+                <OsIcon
+                  name={app.icon}
+                  size={28}
+                  stroke={1.7}
+                  color={app.id === "admin_console" ? "#fff" : theme.color.brand}
+                />
+              </div>
+            );
+          })}
         </div>
 
         <div style={{ display: "flex", gap: 30, width: "100%", maxWidth: 1400 }}>

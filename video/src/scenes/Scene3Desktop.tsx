@@ -6,104 +6,104 @@ import {
   useCurrentFrame,
   useVideoConfig,
 } from "remotion";
-import { Background } from "../components/Background";
-import { MenuBar, Dock, Window } from "../components/OsChrome";
-import { StatementTable } from "../components/Mockups";
+import { KenBurns } from "../components/KenBurns";
 import { theme } from "../theme";
 import { interFamily } from "../fonts";
+import { hexToRgba } from "../components/Background";
 
 /**
- * Scene 3 — the desktop reveal. Menu bar drops in, a Statement of Account
- * window springs up, the dock rises. Sells the "it's an operating system"
- * idea literally.
+ * Scene 3 — the desktop reveal. The real Apar OS desktop (dark, captured from
+ * production) powers on and pulls back to reveal the full workspace + dock,
+ * driving home the literal "operating system for your books" idea.
  */
 export const Scene3Desktop: React.FC = () => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
 
-  const menu = spring({ frame, fps, config: { damping: 200 } });
-  const win = spring({ frame: frame - 14, fps, config: { damping: 180 } });
-  const winScale = interpolate(win, [0, 1], [0.9, 1]);
-  const rows = interpolate(frame, [44, 130], [0, 1], {
-    extrapolateLeft: "clamp",
-    extrapolateRight: "clamp",
-  });
-  const dock = spring({ frame: frame - 34, fps, config: { damping: 200 } });
-  const caption = spring({ frame: frame - 74, fps, config: { damping: 200 } });
-  const outro = interpolate(frame, [270, 300], [1, 0], {
+  const powerOn = spring({ frame, fps, config: { damping: 200 } });
+  const eyebrow = spring({ frame: frame - 16, fps, config: { damping: 200 } });
+  const headline = spring({ frame: frame - 24, fps, config: { damping: 200 } });
+  const caption = spring({ frame: frame - 40, fps, config: { damping: 200 } });
+  const outro = interpolate(frame, [272, 300], [1, 0], {
     extrapolateLeft: "clamp",
   });
 
   return (
-    <AbsoluteFill style={{ fontFamily: interFamily }}>
-      <Background glowIntensity={0.4} grid />
-      <AbsoluteFill style={{ opacity: outro }}>
-        {/* menu bar */}
-        <div style={{ transform: `translateY(${(menu - 1) * 40}px)`, opacity: menu }}>
-          <MenuBar />
-        </div>
+    <AbsoluteFill
+      style={{ fontFamily: interFamily, backgroundColor: theme.color.bgDeep }}
+    >
+      <AbsoluteFill style={{ opacity: powerOn * outro }}>
+        {/* real desktop, gently pulling back to reveal the whole OS + dock */}
+        <KenBurns
+          src="os/desktop-dark.png"
+          durationInFrames={300}
+          fromScale={1.1}
+          toScale={1.0}
+          focalX={50}
+          focalY={44}
+        />
 
-        {/* window */}
+        {/* top scrim only — keeps the dock at the bottom fully visible */}
         <AbsoluteFill
           style={{
-            justifyContent: "center",
+            background: `linear-gradient(180deg, ${hexToRgba(
+              theme.color.bgDeep,
+              0.94,
+            )} 0%, ${hexToRgba(theme.color.bgDeep, 0.6)} 20%, transparent 42%)`,
+          }}
+        />
+
+        {/* headline block, pinned to the top */}
+        <AbsoluteFill
+          style={{
+            justifyContent: "flex-start",
             alignItems: "center",
-            paddingBottom: 80,
+            paddingTop: 64,
           }}
         >
-          <div
-            style={{
-              opacity: win,
-              transform: `scale(${winScale}) translateY(${(1 - win) * 40}px)`,
-            }}
-          >
-            <Window
-              title="Statement of Account — Nykaa"
-              subtitle="Chronological ledger · running balance · FY 25-26"
-              width={1180}
+          <div style={{ textAlign: "center" }}>
+            <div
+              style={{
+                opacity: eyebrow,
+                transform: `translateY(${(1 - eyebrow) * -12}px)`,
+                fontSize: 20,
+                fontWeight: 800,
+                letterSpacing: 5,
+                textTransform: "uppercase",
+                color: theme.color.brand,
+                marginBottom: 14,
+              }}
             >
-              <StatementTable reveal={rows} />
-            </Window>
-          </div>
-        </AbsoluteFill>
-
-        {/* caption */}
-        <AbsoluteFill
-          style={{
-            justifyContent: "flex-end",
-            alignItems: "center",
-            paddingBottom: 132,
-          }}
-        >
-          <div
-            style={{
-              opacity: caption,
-              transform: `translateY(${(1 - caption) * 20}px)`,
-              fontSize: 34,
-              fontWeight: 700,
-              color: theme.color.text,
-              textShadow: "0 4px 24px rgba(0,0,0,0.8)",
-            }}
-          >
-            One workspace.{" "}
-            <span style={{ color: theme.color.textMuted, fontWeight: 500 }}>
-              Every ledger, statement & report.
-            </span>
-          </div>
-        </AbsoluteFill>
-
-        {/* dock */}
-        <AbsoluteFill
-          style={{ justifyContent: "flex-end", alignItems: "center" }}
-        >
-          <div
-            style={{
-              marginBottom: 26,
-              opacity: dock,
-              transform: `translateY(${(1 - dock) * 80}px)`,
-            }}
-          >
-            <Dock activeIndex={3} />
+              Introducing the OS
+            </div>
+            <div
+              style={{
+                opacity: headline,
+                transform: `translateY(${(1 - headline) * -14}px)`,
+                fontSize: 56,
+                fontWeight: 800,
+                color: theme.color.text,
+                textShadow: "0 6px 30px rgba(0,0,0,0.7)",
+              }}
+            >
+              Your books, as an operating system.
+            </div>
+            <div
+              style={{
+                opacity: caption,
+                transform: `translateY(${(1 - caption) * -10}px)`,
+                marginTop: 18,
+                fontSize: 27,
+                fontWeight: 500,
+                color: theme.color.textMuted,
+                textShadow: "0 2px 20px rgba(0,0,0,0.8)",
+              }}
+            >
+              One workspace ·{" "}
+              <span style={{ color: theme.color.text }}>
+                every ledger, statement & report
+              </span>
+            </div>
           </div>
         </AbsoluteFill>
       </AbsoluteFill>

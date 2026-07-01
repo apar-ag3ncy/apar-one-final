@@ -4,9 +4,28 @@ A self-contained [Remotion](https://remotion.dev) project that renders a 60-seco
 SaaS launch video for the Apar One **OS** module. It has its **own** `package.json`
 and dependencies so it never touches the Next.js app's build.
 
-- **Composition:** `OsIntro` — 1920×1080, 30fps, 1800 frames (60s)
+- **Composition:** `OsIntro` — authored at 1920×1080, 30fps, 1800 frames (60s)
+- **Output:** rendered at `--scale=2` → **true 3840×2160 (4K)**, H.264. All text,
+  UI and logo are vector so they stay razor-sharp at 4K.
 - **Brand:** color `#ee3a24`, wordmark from `../public/brand/apar-orange.svg`
+- **Real product:** the desktop reveal and every feature beat use **real 4K
+  screenshots of the live OS** (`public/os/*.png`, captured from production in
+  dark mode) and the **real OS app icons** (ported verbatim in
+  `src/components/OsIcons.tsx`).
 - **Soundtrack:** `public/soundtrack.mp3` (60s instrumental)
+
+## Regenerating the OS screenshots
+
+`public/os/*.png` are captured from production at 3840×2160 (viewport 1920×1080
+@ 2× DPI). To refresh them, run the dev/prod capture script (Playwright):
+
+```bash
+# from repo root; BASE defaults to the prod URL
+node video/scripts/capture-os.mjs
+```
+
+Reports read the production DB, so capture against prod (or a Vercel preview),
+not local dev.
 
 ## Story beats (`src/OsIntro.tsx`)
 
