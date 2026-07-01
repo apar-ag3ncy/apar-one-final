@@ -17,7 +17,7 @@ import { getActorContext } from '@/lib/server/actor';
  *                                       → no clean doc number → null (caller
  *                                         falls back to the human description)
  */
-export function resolveDocumentNumber(reference: string): string | null {
+function resolveDocumentNumber(reference: string): string | null {
   const parts = reference.split(':');
   const prefix = parts[0];
   switch (prefix) {
