@@ -116,7 +116,7 @@ export function ClientLedgerWindow({ clientId }: { clientId: string }) {
         <StatementOfAccount
           statement={statement}
           noun="ledger entries"
-          balanceMeaning="Positive = client owes us (Trade Receivables 1200)"
+          balanceMeaning="Positive = client owes us (Trade Receivables 1200); negative (green) = client credit balance held with us"
           rangeLabel={`${fromDate} → ${toDate}`}
           exportName={`client-ledger-${exportSlug(clientName || clientId)}-${fromDate}_to_${toDate}`}
           onSelectTransaction={(txnId) =>

@@ -59,8 +59,8 @@ export function StatementWindow() {
   const entityName = options.find((o) => o.id === selectedId)?.name ?? '';
   const balanceMeaning =
     side === 'client'
-      ? 'Positive = client owes us (Trade Receivables 1200)'
-      : 'Positive = we owe the vendor (Trade Payables 2110)';
+      ? 'Positive = client owes us (Trade Receivables 1200); negative (green) = client credit balance held with us'
+      : 'Positive = we owe the vendor (Trade Payables 2110); negative (green) = advance sitting with the vendor';
 
   const listsLoaded = clients != null && vendors != null;
 

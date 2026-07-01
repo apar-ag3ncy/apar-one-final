@@ -200,6 +200,7 @@ export function ClientPaymentsSection({
                             onClick={() =>
                               setReversing({ id: r.transactionId, amount: r.amountPaise })
                             }
+                            aria-label="Reverse receipt"
                           >
                             Reverse
                           </Button>
@@ -250,9 +251,9 @@ function CreditAvailableCard({
   clientName: string;
 }) {
   return (
-    <Card className="border-emerald-500/40 bg-emerald-500/5">
+    <Card className="border-emerald-500/40 bg-emerald-500/10 dark:border-emerald-500/50">
       <CardHeader className="flex flex-row items-center gap-2">
-        <WalletIcon className="size-4 text-emerald-600" aria-hidden />
+        <WalletIcon className="size-4 text-emerald-600 dark:text-emerald-400" aria-hidden />
         <CardTitle className="text-base text-emerald-700 dark:text-emerald-400">
           Credit balance available
         </CardTitle>
