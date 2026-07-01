@@ -1,0 +1,27 @@
+{
+  "name": "apar-os-intro-video",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Remotion project for the Apar OS 60-second SaaS intro video",
+  "scripts": {
+    "dev": "remotion studio",
+    "studio": "remotion studio",
+    "render": "remotion render OsIntro out/apar-os-intro.mp4 --codec=h264",
+    "render:hd": "remotion render OsIntro out/apar-os-intro.mp4 --codec=h264 --crf=18",
+    "still": "remotion still OsIntro out/poster.png --frame=90",
+    "upgrade": "remotion upgrade"
+  },
+  "dependencies": {
+    "@remotion/google-fonts": "4.0.484",
+    "@remotion/shapes": "4.0.484",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "remotion": "4.0.484"
+  },
+  "devDependencies": {
+    "@remotion/cli": "4.0.484",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "typescript": "^5.6.0"
+  }
+}
