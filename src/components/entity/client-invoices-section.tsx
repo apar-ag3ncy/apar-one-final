@@ -26,6 +26,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/shared/empty-state';
 import { StatusBadge, type StatusTone } from '@/components/shared/status-badge';
@@ -33,10 +34,12 @@ import { InvoiceComposerDialog } from '@/components/entity/billing/invoice-compo
 import { useCurrentUser } from '@/lib/client/use-current-user';
 import { formatINR } from '@/lib/money';
 import {
+  deleteDraftInvoice,
   getClientBillingReadiness,
   listInvoices,
   type ClientBillingReadiness,
 } from '@/lib/server/billing/invoices';
+import { voidInvoice } from '@/lib/server/billing/invoice-transitions';
 import {
   deleteInvoiceTheme,
   listInvoiceThemes,
@@ -77,6 +80,7 @@ export function ClientInvoicesSection({ clientId, clientName }: ClientInvoicesSe
   const { hasCapability } = useCurrentUser();
   const canCompose = hasCapability('create_invoice');
   const canManageThemes = hasCapability('manage_invoice_themes');
+  const canDelete = hasCapability('void_invoice');
 
   const [rows, setRows] = useState<readonly InvoiceRow[] | null>(null);
   const [themes, setThemes] = useState<InvoiceThemeSummary[]>([]);
@@ -87,6 +91,7 @@ export function ClientInvoicesSection({ clientId, clientName }: ClientInvoicesSe
   const [composerOpen, setComposerOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [manageOpen, setManageOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<InvoiceRow | null>(null);
 
   const reloadInvoices = useCallback(async () => {
     const data = await listInvoices({ clientId });
@@ -244,6 +249,9 @@ export function ClientInvoicesSection({ clientId, clientName }: ClientInvoicesSe
                           label={STATE_LABEL[inv.state]}
                           dot={false}
                         />
+                        {inv.documentType === 'proforma' ? (
+                          <StatusBadge tone="neutral" label="Proforma" dot={false} />
+                        ) : null}
                       </div>
                       <div className="text-muted-foreground mt-0.5 text-xs">
                         {formatINR(inv.capturedTotalPaise)}
@@ -272,6 +280,24 @@ export function ClientInvoicesSection({ clientId, clientName }: ClientInvoicesSe
                         aria-label="Download invoice PDF"
                       >
                         <DownloadIcon className="size-4" aria-hidden />
+                      </Button>
+                    ) : null}
+                    {canDelete && inv.state !== 'void' ? (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => setDeleteTarget(inv)}
+                        disabled={inv.state === 'paid'}
+                        title={
+                          inv.state === 'paid'
+                            ? 'Paid invoices can’t be deleted — issue a credit note.'
+                            : inv.state === 'draft'
+                              ? 'Delete draft invoice'
+                              : 'Delete (voids the invoice & reverses its ledger entry)'
+                        }
+                        aria-label="Delete invoice"
+                      >
+                        <Trash2Icon className="text-destructive size-4" aria-hidden />
                       </Button>
                     ) : null}
                   </div>
@@ -308,7 +334,115 @@ export function ClientInvoicesSection({ clientId, clientName }: ClientInvoicesSe
           onChanged={() => void reloadThemes()}
         />
       ) : null}
+
+      <DeleteInvoiceDialog
+        target={deleteTarget}
+        onOpenChange={(o) => !o && setDeleteTarget(null)}
+        onDone={() => {
+          setDeleteTarget(null);
+          void reloadInvoices();
+          void reloadReadiness();
+        }}
+      />
     </>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Delete / void invoice dialog                                               */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * One affordance that adapts to the invoice's state:
+ *  - draft (incl. proforma drafts) → hard-delete via deleteDraftInvoice.
+ *  - sent / partially_paid → the invoice is posted to the append-only ledger, so
+ *    "delete" voids it (voidInvoice reverses the ledger entry); a reason is
+ *    required. paid invoices are blocked upstream (button disabled).
+ */
+function DeleteInvoiceDialog({
+  target,
+  onOpenChange,
+  onDone,
+}: {
+  target: InvoiceRow | null;
+  onOpenChange: (open: boolean) => void;
+  onDone: () => void;
+}) {
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (target) queueMicrotask(() => setReason(''));
+  }, [target]);
+
+  if (!target) return null;
+  const isDraft = target.state === 'draft';
+
+  async function submit() {
+    if (!isDraft && reason.trim().length < 10) {
+      toast.error('Enter a reason of at least 10 characters.');
+      return;
+    }
+    setBusy(true);
+    try {
+      if (isDraft) {
+        await deleteDraftInvoice(target!.id);
+        toast.success(`Deleted ${target!.documentNumber}.`);
+      } else {
+        await voidInvoice(target!.id, reason.trim());
+        toast.success(`Voided ${target!.documentNumber} and reversed its ledger entry.`);
+      }
+      onDone();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not delete the invoice.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Dialog open={target !== null} onOpenChange={(v) => !busy && onOpenChange(v)}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>{isDraft ? 'Delete draft invoice?' : 'Delete invoice?'}</DialogTitle>
+          <DialogDescription>
+            {isDraft ? (
+              <>
+                This permanently deletes <strong>{target.documentNumber}</strong>
+                {target.documentType === 'proforma' ? ' (proforma)' : ''} and its line items. This
+                can’t be undone.
+              </>
+            ) : (
+              <>
+                <strong>{target.documentNumber}</strong> is{' '}
+                <strong>{target.state.replace('_', ' ')}</strong> and posted to the ledger, so it
+                can’t be hard-deleted. Deleting it will <strong>void</strong> the invoice and
+                reverse its ledger entry (the ledger is append-only). Give a reason.
+              </>
+            )}
+          </DialogDescription>
+        </DialogHeader>
+
+        {!isDraft ? (
+          <Textarea
+            rows={3}
+            placeholder="e.g. Superseded by the final tax invoice"
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            disabled={busy}
+          />
+        ) : null}
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>
+            Cancel
+          </Button>
+          <Button variant="destructive" onClick={submit} disabled={busy}>
+            {busy ? (isDraft ? 'Deleting…' : 'Voiding…') : isDraft ? 'Delete' : 'Void & delete'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

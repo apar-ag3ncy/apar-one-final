@@ -3,6 +3,7 @@
 import { and, asc, desc, eq, gte, ilike, inArray, isNull, lte, sql } from 'drizzle-orm';
 import { z } from 'zod';
 
+import { logAudit } from '@/lib/audit';
 import { fyStartForDate, todayIstIso } from '@/lib/billing/fy';
 import { db, type DbClient } from '@/lib/db/client';
 import { clients, entityAddresses, invoiceLines, invoices, projects } from '@/lib/db/schema';
@@ -662,4 +663,50 @@ export async function getInvoiceComposerDefaults(): Promise<{
   const settings = await loadBillingSettings();
   const today = todayIstIso();
   return { today, fyStart: fyStartForDate(today, settings.fyStartMonth) };
+}
+
+/**
+ * Hard-delete a DRAFT invoice (proforma or tax). A draft carries no ledger
+ * entry, so it can be removed outright — `invoice_lines` cascade. Non-draft
+ * invoices are append-only: the DB trigger `tg_block_delete_non_draft_invoices`
+ * blocks the delete, and they must be VOIDED instead (invoice-transitions.ts
+ * `voidInvoice`, which reverses the posted ledger transaction). We guard on the
+ * state here so the caller gets a clean message rather than the raw trigger
+ * error, and to fail fast before touching anything.
+ */
+export async function deleteDraftInvoice(id: string): Promise<{ id: string }> {
+  const ctx = await getActorContext();
+  requireCapability(ctx, 'create_invoice');
+  const invoiceId = z.string().uuid().parse(id);
+
+  const [inv] = await db.select().from(invoices).where(eq(invoices.id, invoiceId)).limit(1);
+  if (!inv) throw new AppError('not_found', `invoice ${invoiceId} not found`);
+  if (inv.state !== 'draft') {
+    throw new AppError(
+      'validation',
+      `Only draft invoices can be deleted. Invoice ${inv.documentNumber} is ${inv.state} — void it instead.`,
+    );
+  }
+
+  await db.transaction(async (tx) => {
+    // invoice_lines has ON DELETE CASCADE; delete explicitly for clarity.
+    await tx.delete(invoiceLines).where(eq(invoiceLines.invoiceId, invoiceId));
+    await tx.delete(invoices).where(eq(invoices.id, invoiceId));
+    await logAudit(
+      {
+        actorId: ctx.userId,
+        entityType: 'invoice',
+        entityId: invoiceId,
+        action: 'delete',
+        changes: {
+          document_number: inv.documentNumber,
+          document_type: inv.documentType,
+          state: inv.state,
+        },
+      },
+      tx as unknown as typeof db,
+    );
+  });
+
+  return { id: invoiceId };
 }
