@@ -63,6 +63,7 @@ export function StatementClient({
       'Date',
       'Document no.',
       'Party',
+      'Bank / cash account',
       'Particulars',
       'Kind',
       'Debit',
@@ -73,6 +74,7 @@ export function StatementClient({
       Date: r.date,
       'Document no.': r.documentNumber ?? r.reference,
       Party: r.counterpartyName ?? '',
+      'Bank / cash account': r.bankAccountLabel ?? '',
       Particulars: r.memo ?? '',
       Kind: r.kind,
       Debit: paiseToRupees(r.debitPaise),
@@ -190,6 +192,11 @@ export function StatementClient({
                       </div>
                       {r.memo && r.documentNumber ? (
                         <div className="text-muted-foreground truncate text-xs">{r.memo}</div>
+                      ) : null}
+                      {r.bankAccountLabel ? (
+                        <div className="text-muted-foreground truncate font-mono text-xs">
+                          via {r.bankAccountLabel}
+                        </div>
                       ) : null}
                     </TableCell>
                     <TableCell className="text-sm">{r.counterpartyName ?? '—'}</TableCell>

@@ -71,6 +71,9 @@ export type StatementLine = {
   documentNumber: string | null;
   /** Client / vendor / employee this line relates to, or null (e.g. pure office JVs). */
   counterpartyName: string | null;
+  /** Our bank/cash account the money moved through, "Display name (••1234)" /
+   * "Cash", or null for txns with no cash leg (invoices, bills, JVs). */
+  bankAccountLabel: string | null;
   kind: string;
   status: 'draft' | 'pending_approval' | 'posted' | 'reversed' | 'void';
   description: string | null;
@@ -95,6 +98,7 @@ type RawLine = {
   reference: string;
   documentNumber: string | null;
   counterpartyName: string | null;
+  bankAccountLabel: string | null;
   kind: string;
   status: 'draft' | 'pending_approval' | 'posted' | 'reversed' | 'void';
   description: string | null;
@@ -198,6 +202,21 @@ async function fetchSubledgerLines(
       counterpartyName: sql<
         string | null
       >`COALESCE(${clients.name}, ${vendors.name}, ${employees.fullName})`,
+      // The cash leg of this transaction, resolved to a human label: our
+      // bank account "Display name (••1234)" (1120, sub-ledgered to
+      // bank_accounts.id) or "Cash" (1110). Null when the txn moves no
+      // cash — invoices, bills, pure JVs.
+      bankAccountLabel: sql<string | null>`(
+        SELECT CASE
+          WHEN a2.code = '1110' THEN 'Cash'
+          WHEN a2.code = '1120' THEN ba.display_name || ' (••' || ba.account_last4 || ')'
+        END
+        FROM postings p2
+        JOIN accounts a2 ON a2.id = p2.account_id
+        LEFT JOIN bank_accounts ba ON ba.id = p2.subledger_entity_id
+        WHERE p2.transaction_id = ${transactions.id} AND a2.code IN ('1110', '1120')
+        LIMIT 1
+      )`,
       accountCode: accounts.code,
       accountName: accounts.name,
       side: postings.side,
@@ -221,6 +240,7 @@ async function fetchSubledgerLines(
     reference: r.reference,
     documentNumber: resolveDocumentNumber(r.reference),
     counterpartyName: r.counterpartyName,
+    bankAccountLabel: r.bankAccountLabel,
     kind: r.kind,
     status: r.status,
     description: r.description,

@@ -50,6 +50,7 @@ export function StatementOfAccount({
       'Date',
       'Document no.',
       'Party',
+      'Bank / cash account',
       'Particulars',
       'Kind',
       'Account code',
@@ -63,6 +64,7 @@ export function StatementOfAccount({
       Date: l.txnDate.slice(0, 10),
       'Document no.': l.documentNumber ?? l.reference,
       Party: l.counterpartyName ?? '',
+      'Bank / cash account': l.bankAccountLabel ?? '',
       Particulars: l.description ?? '',
       Kind: l.kind.replace(/_/g, ' '),
       'Account code': l.accountCode,
@@ -268,6 +270,18 @@ function StatementRow({
           {line.counterpartyName ? `${line.counterpartyName} · ` : ''}
           {line.kind.replace(/_/g, ' ')}
         </div>
+        {line.bankAccountLabel ? (
+          <div
+            style={{
+              fontSize: 10.5,
+              color: 'var(--text-muted)',
+              fontFamily: 'var(--font-jetbrains-mono, monospace)',
+              marginTop: 1,
+            }}
+          >
+            via {line.bankAccountLabel}
+          </div>
+        ) : null}
       </td>
       <td>
         <div style={{ fontSize: 12, fontWeight: 500 }}>{line.accountName}</div>
