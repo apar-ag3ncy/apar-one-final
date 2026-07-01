@@ -44,6 +44,9 @@ function triggerDownload(blob: Blob, filename: string): void {
  * @param format   'pdf' | 'xlsx'
  * @param sheetName worksheet name for XLSX (Excel caps this at 31 chars); also
  *                  used as the PDF title
+ * @param opts.columnFormats optional Excel number-format code per column label,
+ *                  e.g. `{ Balance: '+#,##0.00;-#,##0.00;0.00' }` to force a
+ *                  leading +/- sign while keeping the cell numeric (XLSX only).
  */
 export function exportRows(
   rows: ReadonlyArray<Record<string, string | number>>,
@@ -51,6 +54,7 @@ export function exportRows(
   filename: string,
   format: ExportFormat,
   sheetName = 'Sheet1',
+  opts: { columnFormats?: Record<string, string> } = {},
 ): void {
   if (format === 'pdf') {
     // Code-split @react-pdf/renderer; render off the click. Self-contained
@@ -71,6 +75,21 @@ export function exportRows(
   const sheet = XLSX.utils.json_to_sheet(rows as Record<string, unknown>[], {
     header: headers as string[],
   });
+
+  // Apply per-column number formats (e.g. a signed Balance). json_to_sheet
+  // writes numeric cells as {t:'n'}; setting `.z` makes Excel render the sign
+  // without turning the value into text (so it still sums).
+  if (opts.columnFormats) {
+    for (const [label, fmt] of Object.entries(opts.columnFormats)) {
+      const colIdx = headers.indexOf(label);
+      if (colIdx < 0) continue;
+      for (let r = 1; r <= rows.length; r++) {
+        const addr = XLSX.utils.encode_cell({ c: colIdx, r });
+        const cell = sheet[addr] as { t?: string; z?: string } | undefined;
+        if (cell && cell.t === 'n') cell.z = fmt;
+      }
+    }
+  }
 
   const book = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(book, sheet, sheetName.slice(0, 31));

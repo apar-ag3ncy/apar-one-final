@@ -6,15 +6,27 @@
 // dynamic `import()` inside `exportRows` / the DataTable exporters, never a
 // static import.
 
-import { Document, Page, StyleSheet, Text, View, pdf } from '@react-pdf/renderer';
+import { Document, Image, Page, StyleSheet, Text, View, pdf } from '@react-pdf/renderer';
 import * as React from 'react';
+
+import { APAR_ORANGE_MARK_DATA_URI } from '@/lib/brand/apar-orange-mark';
 
 /** A cell value the table can render. Callers coerce richer types to these. */
 export type PdfCell = string | number;
 
 const styles = StyleSheet.create({
   page: { paddingVertical: 28, paddingHorizontal: 26, fontSize: 8, color: '#1a1a1a' },
-  title: { fontSize: 13, marginBottom: 10, fontFamily: 'Helvetica-Bold' },
+  brandBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+    paddingBottom: 8,
+    borderBottomWidth: 0.75,
+    borderBottomColor: '#e2662a',
+  },
+  brandMark: { height: 26, maxWidth: 130, objectFit: 'contain' },
+  title: { fontSize: 13, fontFamily: 'Helvetica-Bold', textAlign: 'right' },
   table: { borderTopWidth: 0.5, borderLeftWidth: 0.5, borderColor: '#c8c8c8' },
   row: { flexDirection: 'row' },
   headerRow: { backgroundColor: '#eef0f2' },
@@ -68,7 +80,11 @@ function TableDoc({
   return (
     <Document>
       <Page size="A4" orientation={landscape ? 'landscape' : 'portrait'} style={styles.page}>
-        {title ? <Text style={styles.title}>{title}</Text> : null}
+        <View style={styles.brandBar}>
+          {/* eslint-disable-next-line jsx-a11y/alt-text */}
+          <Image src={APAR_ORANGE_MARK_DATA_URI} style={styles.brandMark} />
+          {title ? <Text style={styles.title}>{title}</Text> : null}
+        </View>
         <View style={styles.table}>
           <View style={[styles.row, styles.headerRow]} fixed>
             {headers.map((h, i) => (
@@ -101,7 +117,7 @@ function TableDoc({
           ))}
         </View>
         <View style={styles.footer} fixed>
-          <Text>{title ?? 'Export'}</Text>
+          <Text>Apar — {title ?? 'Export'}</Text>
           <Text render={({ pageNumber, totalPages }) => `Page ${pageNumber} of ${totalPages}`} />
         </View>
       </Page>

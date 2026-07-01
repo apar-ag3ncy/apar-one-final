@@ -194,6 +194,8 @@ export async function getStatementOfAccount(args: {
   return stmt.lines.map((l) => ({
     date: l.txnDate,
     reference: l.reference,
+    documentNumber: l.documentNumber,
+    counterpartyName: l.counterpartyName,
     kind: l.kind as TransactionKind,
     memo: l.description,
     debitPaise: l.side === 'debit' ? l.amountPaise : 0n,
@@ -211,6 +213,8 @@ export async function getOfficeStatementForUi(args: {
   return stmt.lines.map((l) => ({
     date: l.txnDate,
     reference: l.reference,
+    documentNumber: l.documentNumber,
+    counterpartyName: l.counterpartyName,
     kind: l.kind as TransactionKind,
     memo: l.description,
     debitPaise: l.side === 'debit' ? l.amountPaise : 0n,

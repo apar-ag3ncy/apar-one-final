@@ -48,29 +48,35 @@ export function StatementOfAccount({
   function handleExport(format: ExportFormat) {
     const headers = [
       'Date',
-      'Reference',
+      'Document no.',
+      'Party',
+      'Particulars',
       'Kind',
       'Account code',
       'Account',
       'Status',
-      'Memo',
       'Debit',
       'Credit',
       'Balance',
     ];
     const data: Record<string, string | number>[] = lines.map((l) => ({
       Date: l.txnDate.slice(0, 10),
-      Reference: l.reference,
+      'Document no.': l.documentNumber ?? l.reference,
+      Party: l.counterpartyName ?? '',
+      Particulars: l.description ?? '',
       Kind: l.kind.replace(/_/g, ' '),
       'Account code': l.accountCode,
       Account: l.accountName,
       Status: l.status,
-      Memo: l.description ?? '',
       Debit: l.side === 'debit' ? paiseToRupees(l.amountPaise) : 0,
       Credit: l.side === 'credit' ? paiseToRupees(l.amountPaise) : 0,
+      // Signed running balance: positive = per the ledger's balance convention
+      // (see balanceMeaning). The +/- number format keeps it numeric in Excel.
       Balance: paiseToRupees(l.runningBalancePaise),
     }));
-    exportRows(data, headers, exportName ?? 'ledger', format, 'Ledger');
+    exportRows(data, headers, exportName ?? 'ledger', format, 'Ledger', {
+      columnFormats: { Balance: '+#,##0.00;-#,##0.00;0.00' },
+    });
   }
 
   return (
@@ -175,7 +181,7 @@ export function StatementOfAccount({
           <thead>
             <tr>
               <th>Date</th>
-              <th>Reference</th>
+              <th>Particulars</th>
               <th>Account</th>
               <th style={{ textAlign: 'right' }}>Debit</th>
               <th style={{ textAlign: 'right' }}>Credit</th>
@@ -206,6 +212,9 @@ function StatementRow({
 }) {
   const debit = line.side === 'debit' ? line.amountPaise : 0n;
   const credit = line.side === 'credit' ? line.amountPaise : 0n;
+  // Particulars headline: prefer the parsed document number, then the human
+  // description, then the raw reference as a last resort.
+  const primary = line.documentNumber ?? line.description ?? line.reference;
   const clickable = !!onSelectTransaction;
   const dateLabel = new Date(line.txnDate).toLocaleDateString('en-IN', {
     day: '2-digit',
@@ -227,14 +236,16 @@ function StatementRow({
       <td>
         <div
           style={{
-            fontFamily: 'var(--font-jetbrains-mono, monospace)',
-            fontSize: 11.5,
+            fontSize: 12,
+            fontWeight: 500,
             display: 'flex',
             alignItems: 'center',
             gap: 6,
           }}
         >
-          {line.reference}
+          <span style={{ fontFamily: 'var(--font-jetbrains-mono, monospace)', fontSize: 11.5 }}>
+            {primary}
+          </span>
           {isDraft ? (
             <span
               style={{
@@ -245,7 +256,7 @@ function StatementRow({
                 color: 'var(--apar-amber, #d08a1e)',
                 textTransform: 'uppercase',
                 letterSpacing: '0.06em',
-                fontFamily: 'inherit',
+                fontFamily: 'var(--font-jetbrains-mono, monospace)',
                 fontWeight: 600,
               }}
             >
@@ -254,6 +265,7 @@ function StatementRow({
           ) : null}
         </div>
         <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+          {line.counterpartyName ? `${line.counterpartyName} · ` : ''}
           {line.kind.replace(/_/g, ' ')}
         </div>
       </td>

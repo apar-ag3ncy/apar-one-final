@@ -59,17 +59,36 @@ export function StatementClient({
   }
 
   function handleExport(format: ExportFormat) {
-    const headers = ['Date', 'Reference', 'Kind', 'Memo', 'Debit', 'Credit', 'Running balance'];
+    const headers = [
+      'Date',
+      'Document no.',
+      'Party',
+      'Particulars',
+      'Kind',
+      'Debit',
+      'Credit',
+      'Balance',
+    ];
     const data: Record<string, string | number>[] = rows.map((r) => ({
       Date: r.date,
-      Reference: r.reference,
+      'Document no.': r.documentNumber ?? r.reference,
+      Party: r.counterpartyName ?? '',
+      Particulars: r.memo ?? '',
       Kind: r.kind,
-      Memo: r.memo ?? '',
       Debit: paiseToRupees(r.debitPaise),
       Credit: paiseToRupees(r.creditPaise),
-      'Running balance': paiseToRupees(r.runningBalancePaise),
+      Balance: paiseToRupees(r.runningBalancePaise),
     }));
-    exportRows(data, headers, `statement-${side}-${id}-${fromDate}-${toDate}`, format, 'Statement');
+    exportRows(
+      data,
+      headers,
+      `statement-${side}-${id}-${fromDate}-${toDate}`,
+      format,
+      'Statement',
+      {
+        columnFormats: { Balance: '+#,##0.00;-#,##0.00;0.00' },
+      },
+    );
   }
 
   const options = side === 'client' ? clients : vendors;
@@ -149,12 +168,12 @@ export function StatementClient({
               <TableHeader>
                 <TableRow className="bg-muted/40 hover:bg-muted/40">
                   <TableHead>Date</TableHead>
-                  <TableHead>Reference</TableHead>
+                  <TableHead>Particulars</TableHead>
+                  <TableHead>Party</TableHead>
                   <TableHead>Kind</TableHead>
-                  <TableHead>Memo</TableHead>
                   <TableHead className="text-right">Debit</TableHead>
                   <TableHead className="text-right">Credit</TableHead>
-                  <TableHead className="text-right">Running</TableHead>
+                  <TableHead className="text-right">Balance</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -165,11 +184,16 @@ export function StatementClient({
                     <TableCell className="text-muted-foreground text-xs whitespace-nowrap">
                       {r.date}
                     </TableCell>
-                    <TableCell className="font-mono text-sm">{r.reference}</TableCell>
-                    <TableCell className="text-muted-foreground text-xs">{r.kind}</TableCell>
-                    <TableCell className="text-muted-foreground max-w-xs truncate text-sm">
-                      {r.memo ?? '—'}
+                    <TableCell className="max-w-xs text-sm">
+                      <div className="truncate font-mono">
+                        {r.documentNumber ?? r.memo ?? r.reference}
+                      </div>
+                      {r.memo && r.documentNumber ? (
+                        <div className="text-muted-foreground truncate text-xs">{r.memo}</div>
+                      ) : null}
                     </TableCell>
+                    <TableCell className="text-sm">{r.counterpartyName ?? '—'}</TableCell>
+                    <TableCell className="text-muted-foreground text-xs">{r.kind}</TableCell>
                     <TableCell className="text-right font-mono text-sm tabular-nums">
                       {r.debitPaise > 0n ? formatINR(r.debitPaise) : '—'}
                     </TableCell>

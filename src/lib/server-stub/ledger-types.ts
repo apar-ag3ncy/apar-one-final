@@ -69,6 +69,10 @@ export type TrialBalanceRow = {
 export type StatementRow = {
   date: string;
   reference: string;
+  /** Human document number parsed from `reference` (e.g. "INV 1"), or null. */
+  documentNumber: string | null;
+  /** Client / vendor / employee this row relates to, or null. */
+  counterpartyName: string | null;
   kind: TransactionKind;
   memo: string | null;
   debitPaise: bigint;

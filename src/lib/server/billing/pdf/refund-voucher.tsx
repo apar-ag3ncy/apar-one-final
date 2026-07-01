@@ -1,8 +1,9 @@
 import 'server-only';
 
-import { Document, Page, StyleSheet, Text, View, renderToBuffer } from '@react-pdf/renderer';
+import { Document, Image, Page, StyleSheet, Text, View, renderToBuffer } from '@react-pdf/renderer';
 import * as React from 'react';
 
+import { APAR_ORANGE_MARK_DATA_URI } from '@/lib/brand/apar-orange-mark';
 import { formatINR } from '@/lib/money';
 
 /**
@@ -150,6 +151,11 @@ export function RefundVoucherDocument({ data }: { data: RefundVoucherPdfData }):
         </Text>
         <View style={styles.headerRow}>
           <View style={styles.supplierBlock}>
+            {/* eslint-disable-next-line jsx-a11y/alt-text */}
+            <Image
+              src={APAR_ORANGE_MARK_DATA_URI}
+              style={{ height: 34, maxWidth: 170, marginBottom: 6, objectFit: 'contain' }}
+            />
             <Text style={styles.supplierName}>{data.supplier.name}</Text>
             <Text>{data.supplier.address}</Text>
             {data.supplier.gstin ? <Text>GSTIN: {data.supplier.gstin}</Text> : null}

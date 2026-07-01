@@ -1,10 +1,43 @@
 'use server';
 
-import { and, asc, eq, gte, inArray, isNull, lte, ne, notInArray } from 'drizzle-orm';
+import { and, asc, eq, gte, inArray, isNull, lte, ne, notInArray, sql } from 'drizzle-orm';
 
 import { db } from '@/lib/db/client';
-import { accounts, postings, transactions } from '@/lib/db/schema';
+import { accounts, clients, employees, postings, transactions, vendors } from '@/lib/db/schema';
 import { getActorContext } from '@/lib/server/actor';
+
+/**
+ * Turn a transaction's opaque `external_ref` into a human document number for
+ * the ledger "Particulars" column. Refs are `<prefix>:<...>`:
+ *   - `client_invoice:1`                → INV 1
+ *   - `vendor_bill:<vendorId>:1231`     → 1231 (the vendor's own bill number)
+ *   - `credit_note:CN-3` / `receipt:RV-2` / `advance:AV-4` / `refund_voucher:RF-1`
+ *                                       → the suffix (already a doc number)
+ *   - `crcpt:<clientId>:<ts>` / `vpv:<vendorId>:<ts>` / `obe:…` / `closing:…`
+ *                                       → no clean doc number → null (caller
+ *                                         falls back to the human description)
+ */
+export function resolveDocumentNumber(reference: string): string | null {
+  const parts = reference.split(':');
+  const prefix = parts[0];
+  switch (prefix) {
+    case 'client_invoice':
+      return parts[1] ? `INV ${parts[1]}` : null;
+    case 'vendor_bill':
+      // vendor_bill:<vendorId>:<their invoice no> — the number is everything
+      // after the vendor id (may itself contain colons).
+      return parts.length >= 3 ? parts.slice(2).join(':') : null;
+    case 'credit_note':
+    case 'receipt':
+    case 'advance':
+    case 'refund_voucher':
+      return parts.slice(1).join(':') || null;
+    default:
+      // crcpt / vpv / obe / closing / journal / advance_adjustment: the suffix
+      // is an id + timestamp, not a document number.
+      return null;
+  }
+}
 
 /**
  * Statement-of-account / ledger views per LEDGER-SPEC §5.2.
@@ -29,6 +62,10 @@ export type StatementLine = {
   txnId: string;
   txnDate: string;
   reference: string;
+  /** Human document number parsed from `reference` (e.g. "INV 1", "1231"), or null. */
+  documentNumber: string | null;
+  /** Client / vendor / employee this line relates to, or null (e.g. pure office JVs). */
+  counterpartyName: string | null;
   kind: string;
   status: 'draft' | 'pending_approval' | 'posted' | 'reversed' | 'void';
   description: string | null;
@@ -51,6 +88,8 @@ type RawLine = {
   txnId: string;
   txnDate: string;
   reference: string;
+  documentNumber: string | null;
+  counterpartyName: string | null;
   kind: string;
   status: 'draft' | 'pending_approval' | 'posted' | 'reversed' | 'void';
   description: string | null;
@@ -148,6 +187,12 @@ async function fetchSubledgerLines(
       kind: transactions.kind,
       status: transactions.status,
       description: transactions.description,
+      // The counterparty is attributed on the transaction header
+      // (related_entity_id). uuids are globally unique, so an unconditional
+      // left-join against each entity table is safe — at most one matches.
+      counterpartyName: sql<
+        string | null
+      >`COALESCE(${clients.name}, ${vendors.name}, ${employees.fullName})`,
       accountCode: accounts.code,
       accountName: accounts.name,
       side: postings.side,
@@ -156,6 +201,9 @@ async function fetchSubledgerLines(
     .from(postings)
     .innerJoin(transactions, eq(transactions.id, postings.transactionId))
     .innerJoin(accounts, eq(accounts.id, postings.accountId))
+    .leftJoin(clients, eq(clients.id, transactions.relatedEntityId))
+    .leftJoin(vendors, eq(vendors.id, transactions.relatedEntityId))
+    .leftJoin(employees, eq(employees.id, transactions.relatedEntityId))
     .where(and(...conds))
     // Use txn_date as primary sort; tie-break on createdAt for stable
     // ordering when multiple postings share a date.
@@ -166,6 +214,8 @@ async function fetchSubledgerLines(
     txnId: r.txnId,
     txnDate: r.txnDate,
     reference: r.reference,
+    documentNumber: resolveDocumentNumber(r.reference),
+    counterpartyName: r.counterpartyName,
     kind: r.kind,
     status: r.status,
     description: r.description,
