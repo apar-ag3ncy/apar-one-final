@@ -21,8 +21,13 @@ function resolveDocumentNumber(reference: string): string | null {
   const parts = reference.split(':');
   const prefix = parts[0];
   switch (prefix) {
-    case 'client_invoice':
-      return parts[1] ? `INV ${parts[1]}` : null;
+    case 'client_invoice': {
+      const n = parts.slice(1).join(':');
+      if (!n) return null;
+      // Full doc numbers (e.g. "INV/2026-27/0001") already read as invoices;
+      // only bare sequence numbers get an "INV " prefix for clarity.
+      return /[a-zA-Z]/.test(n) ? n : `INV ${n}`;
+    }
     case 'vendor_bill':
       // vendor_bill:<vendorId>:<their invoice no> — the number is everything
       // after the vendor id (may itself contain colons).
