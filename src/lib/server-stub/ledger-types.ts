@@ -73,6 +73,8 @@ export type StatementRow = {
   documentNumber: string | null;
   /** Client / vendor / employee this row relates to, or null. */
   counterpartyName: string | null;
+  /** Our bank/cash account the money moved through, "Name (••1234)" / "Cash", or null. */
+  bankAccountLabel: string | null;
   kind: TransactionKind;
   memo: string | null;
   debitPaise: bigint;
