@@ -1,6 +1,6 @@
 'use server';
 
-import { and, asc, eq, gte, inArray, isNull, lte, ne } from 'drizzle-orm';
+import { and, asc, eq, gte, inArray, isNull, lte, ne, notInArray } from 'drizzle-orm';
 
 import { db } from '@/lib/db/client';
 import { accounts, postings, transactions } from '@/lib/db/schema';
@@ -83,13 +83,23 @@ async function fetchSubledgerLines(
   filter:
     | { kind: 'subledger'; entityType: 'client' | 'vendor'; entityId: string }
     | { kind: 'accountCodes'; codes: readonly string[] }
-    | { kind: 'bankAccount'; bankAccountId: string },
+    | { kind: 'bankAccount'; bankAccountId: string }
+    | { kind: 'incurredByEmployee'; employeeId: string },
   opts: { from?: string; to?: string; includeReversed?: boolean },
 ): Promise<RawLine[]> {
   const conds = [] as Array<ReturnType<typeof eq>>;
   if (filter.kind === 'subledger') {
     conds.push(eq(postings.subledgerEntityType, filter.entityType));
     conds.push(eq(postings.subledgerEntityId, filter.entityId));
+  } else if (filter.kind === 'incurredByEmployee') {
+    // Salaries/bonuses/reimbursements post to non-control accounts (6100, …)
+    // that carry no posting sub-ledger — the employee is attributed on the
+    // transaction HEADER via incurred_by_employee_id. Filter on that, and drop
+    // the office cash/bank clearing legs (1110/1120) so the running total reads
+    // as cumulative pay to this employee, not a nets-to-zero double entry
+    // (mirrors how the client/vendor statements show only the entity-side leg).
+    conds.push(eq(transactions.incurredByEmployeeId, filter.employeeId));
+    conds.push(notInArray(accounts.code, ['1110', '1120']));
   } else if (filter.kind === 'bankAccount') {
     // Each agency bank is a sub-ledger entry on 1120 Bank Accounts, carried
     // as subledger (office, bankAccountId) — exactly how clientPaymentReceived
@@ -200,6 +210,32 @@ export async function getVendorStatement(args: {
     { from: args.from, to: args.to, includeReversed: args.includeReversed },
   );
   return rollUp(lines, (side) => (side === 'credit' ? 1n : -1n));
+}
+
+/**
+ * **Per-Employee Statement** — the employee's own ledger. Every posting on a
+ * transaction attributed to this employee via `incurred_by_employee_id`
+ * (salary_disbursement Dr 6100, plus any bonus / reimbursement / advance
+ * attributed the same way), minus the office cash/bank clearing legs.
+ *
+ * Balance convention: positive = cumulative amount paid to the employee. The
+ * 6100 Salaries & Wages leg is a debit (expense), so debit-side postings add to
+ * the running total and a reversal's credit subtracts — the headline reads as
+ * "total we've paid this person". Mirrors getClientStatement / getVendorStatement
+ * so the Employee window's Ledger tab reuses the same StatementOfAccount view.
+ */
+export async function getEmployeeStatement(args: {
+  employeeId: string;
+  from?: string;
+  to?: string;
+  includeReversed?: boolean;
+}): Promise<Statement> {
+  await getActorContext();
+  const lines = await fetchSubledgerLines(
+    { kind: 'incurredByEmployee', employeeId: args.employeeId },
+    { from: args.from, to: args.to, includeReversed: args.includeReversed },
+  );
+  return rollUp(lines, (side) => (side === 'debit' ? 1n : -1n));
 }
 
 /**

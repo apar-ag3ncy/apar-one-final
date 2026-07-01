@@ -24,10 +24,12 @@ import { ActivityFeed } from '@/components/entity/activity-feed';
 import { EntityRef } from '@/components/entity/entity-ref';
 import { CustomValuesSection } from '@/components/entity/custom-values-section';
 import { EntitySettingsSection } from '@/components/entity/entity-settings-section';
+import { StatementOfAccount } from '@/components/entity/statement-of-account';
 import { useRealtimeActivity } from '@/lib/client/use-realtime-activity';
 import { getEntityActivity } from '@/lib/server/entities/activity';
 import { listContacts, type ContactRow } from '@/lib/server/entities/contacts';
 import { getEmployeeSummary, type EmployeeSummary } from '@/lib/server/entities/employee-summary';
+import { getEmployeeStatement, type Statement } from '@/lib/server/ledger/statements';
 import { listEmployees } from '@/lib/server-stub/entity-actions';
 import { Icon } from '../icons';
 import { EmployeeProfileEditor } from '../apps';
@@ -118,6 +120,7 @@ export function EmployeeWindow({ employeeId, onClose }: EmployeeWindowProps) {
     { value: 'addresses', label: 'Addresses' },
     { value: 'bank-tax', label: 'Bank & Tax' },
     { value: 'compensation', label: 'Compensation' },
+    { value: 'ledger', label: 'Ledger' },
     { value: 'documents', label: 'Documents' },
     { value: 'projects', label: 'Projects led', count: projectsLed.length },
     { value: 'attendance', label: 'Attendance & leaves' },
@@ -193,6 +196,7 @@ export function EmployeeWindow({ employeeId, onClose }: EmployeeWindowProps) {
         {tab === 'compensation' ? (
           <CompensationSection employeeId={employee.id} employeeName={employee.fullName} />
         ) : null}
+        {tab === 'ledger' ? <EmployeeLedgerBody employeeId={employee.id} /> : null}
         {tab === 'documents' ? (
           <DocumentsSection
             entityType="employee"
@@ -514,6 +518,54 @@ function ActivityBody({ employeeId }: { employeeId: string }) {
   });
   return (
     <ActivityFeed events={events} isLive={isLive} onNavigate={navigateBesideFocused} showHeader />
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Ledger tab — the employee's own statement of account                        */
+/* -------------------------------------------------------------------------- */
+
+function EmployeeLedgerBody({ employeeId }: { employeeId: string }) {
+  const [statement, setStatement] = useState<Statement | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      setStatement(null);
+      setError(null);
+    });
+    getEmployeeStatement({ employeeId })
+      .then((s) => {
+        if (!cancelled) setStatement(s);
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) setError(e instanceof Error ? e.message : 'Failed to load ledger');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [employeeId]);
+
+  if (error) {
+    return <p style={{ fontSize: 13, color: 'var(--text-error, #c33)', margin: 0 }}>{error}</p>;
+  }
+  return (
+    <StatementOfAccount
+      statement={statement}
+      noun="ledger entries"
+      balanceMeaning="Total paid to this employee (Salaries & Wages 6100)"
+      exportName={`employee-ledger-${employeeId}`}
+      onSelectTransaction={(txnId) =>
+        osActions.openWindow({
+          app: 'transactions',
+          entityId: txnId,
+          title: 'Transaction',
+          position: 'beside-focused',
+        })
+      }
+    />
   );
 }
 
