@@ -98,8 +98,6 @@ export function ClientPaymentsSection({
     <div className="flex flex-col gap-4">
       <DueToCollectCard due={due} />
 
-      <InvoiceDuesCard invoices={invoices} />
-
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle className="text-base">
@@ -178,6 +176,8 @@ export function ClientPaymentsSection({
           )}
         </CardContent>
       </Card>
+
+      <InvoiceDuesCard invoices={invoices} />
 
       <RecordReceiptDialog
         open={formOpen}

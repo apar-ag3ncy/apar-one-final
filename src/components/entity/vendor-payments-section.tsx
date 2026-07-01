@@ -98,8 +98,6 @@ export function VendorPaymentsSection({
     <div className="flex flex-col gap-4">
       <DueToPayCard due={due} />
 
-      <BillDuesCard bills={bills} />
-
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle className="text-base">
@@ -178,6 +176,8 @@ export function VendorPaymentsSection({
           )}
         </CardContent>
       </Card>
+
+      <BillDuesCard bills={bills} />
 
       <RecordVendorPaymentDialog
         open={formOpen}
