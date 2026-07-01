@@ -383,6 +383,8 @@ export type ClientReceiptRow = {
   txnDate: string;
   status: string;
   amountPaise: bigint;
+  /** The stored receipt-voucher PDF (the txn's source document) — for view/download. */
+  sourceDocumentId: string | null;
   allocations: ClientReceiptAllocationRow[];
 };
 
@@ -396,12 +398,14 @@ export async function listClientReceipts(clientId: string): Promise<readonly Cli
     txn_date: string;
     status: string;
     amount: string;
+    source_document_id: string | null;
   }>(sql`
     SELECT
       t.id::text AS id,
       t.external_ref,
       t.txn_date::text AS txn_date,
       t.status::text AS status,
+      t.source_document_id::text AS source_document_id,
       COALESCE((
         SELECT SUM(p.amount_paise) FROM postings p
         WHERE p.transaction_id = t.id AND p.side = 'debit'
@@ -466,6 +470,7 @@ export async function listClientReceipts(clientId: string): Promise<readonly Cli
     txnDate: p.txn_date,
     status: p.status,
     amountPaise: BigInt(p.amount ?? '0'),
+    sourceDocumentId: p.source_document_id,
     allocations: allocByPayment.get(p.id) ?? [],
   }));
 }
@@ -545,10 +550,14 @@ export type ReceivableByProjectRow = {
   outstandingPaise: bigint;
 };
 
-/** "Due to collect" grouped by project — outstanding receivable per project. */
-export async function getClientReceivablesByProject(
-  clientId: string,
-): Promise<{ rows: readonly ReceivableByProjectRow[]; totalPaise: bigint }> {
+/** "Due to collect" grouped by project — outstanding receivable per project,
+ * plus `creditPaise`: the amount by which this client has OVERPAID us (net
+ * Trade Receivables in credit), i.e. balance available with us. */
+export async function getClientReceivablesByProject(clientId: string): Promise<{
+  rows: readonly ReceivableByProjectRow[];
+  totalPaise: bigint;
+  creditPaise: bigint;
+}> {
   await getActorContext();
   const parsed = z.string().uuid().parse(clientId);
 
@@ -591,5 +600,25 @@ export async function getClientReceivablesByProject(
     outstandingPaise: BigInt(r.outstanding ?? '0'),
   }));
   const totalPaise = mapped.reduce((acc, r) => acc + r.outstandingPaise, 0n);
-  return { rows: mapped, totalPaise };
+
+  // Net Trade Receivables (1200) position for the client, from the ledger:
+  // Σ credits (payments/credit notes) − Σ debits (invoices). Positive = they've
+  // paid more than billed → that surplus is a credit balance available with us.
+  const creditRows = await db.execute<{ net_credit: string }>(sql`
+    SELECT COALESCE(SUM(
+      CASE WHEN p.side = 'credit' THEN p.amount_paise ELSE -p.amount_paise END
+    ), 0)::text AS net_credit
+    FROM postings p
+    JOIN accounts a ON a.id = p.account_id
+    JOIN transactions t ON t.id = p.transaction_id
+    WHERE a.code = '1200'
+      AND p.subledger_entity_type = 'client'
+      AND p.subledger_entity_id = ${parsed}
+      AND t.status = 'posted'
+      AND t.reverses_id IS NULL
+  `);
+  const netCredit = BigInt((Array.isArray(creditRows) ? creditRows : [])[0]?.net_credit ?? '0');
+  const creditPaise = netCredit > 0n ? netCredit : 0n;
+
+  return { rows: mapped, totalPaise, creditPaise };
 }

@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { PlusIcon, ReceiptIcon, WalletIcon } from 'lucide-react';
+import { DownloadIcon, PlusIcon, ReceiptIcon, WalletIcon } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
@@ -11,6 +11,7 @@ import { EmptyState } from '@/components/shared/empty-state';
 import { StatusBadge } from '@/components/shared/status-badge';
 import { formatINR } from '@/components/shared/format-inr';
 import { rupeesToPaise } from '@/lib/money';
+import { getDocumentSignedUrl } from '@/lib/server/entities/documents';
 import {
   listAgencyBankAccounts,
   type AgencyBankAccountRow,
@@ -27,7 +28,13 @@ import {
   type ReceivableByProjectRow,
 } from '@/lib/server/billing/client-receipts';
 
-type DueState = { rows: readonly ReceivableByProjectRow[]; totalPaise: bigint };
+type DueState = {
+  rows: readonly ReceivableByProjectRow[];
+  totalPaise: bigint;
+  // Surplus the client has paid over what we've billed — sits with us as a
+  // credit balance available to set against future invoices (or refund).
+  creditPaise: bigint;
+};
 
 /**
  * Client "Transactions" tab — records money RECEIVED from the client (our bank
@@ -87,6 +94,19 @@ export function ClientPaymentsSection({
     };
   }, [clientId]);
 
+  async function downloadReceipt(row: ClientReceiptRow) {
+    if (!row.sourceDocumentId) {
+      toast.error('No receipt voucher stored for this payment.');
+      return;
+    }
+    try {
+      const { url } = await getDocumentSignedUrl(row.sourceDocumentId);
+      window.open(url, '_blank', 'noopener,noreferrer');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not open the receipt.');
+    }
+  }
+
   if (error) {
     return <EmptyState icon={WalletIcon} title="Could not load transactions" description={error} />;
   }
@@ -96,6 +116,10 @@ export function ClientPaymentsSection({
 
   return (
     <div className="flex flex-col gap-4">
+      {due.creditPaise > 0n ? (
+        <CreditAvailableCard creditPaise={due.creditPaise} clientName={clientName} />
+      ) : null}
+
       <DueToCollectCard due={due} />
 
       <Card>
@@ -156,18 +180,31 @@ export function ClientPaymentsSection({
                         {formatINR(r.amountPaise)}
                       </div>
                       <div className="text-muted-foreground text-xs">{formatDate(r.txnDate)}</div>
-                      {r.status === 'posted' ? (
+                      <div className="flex items-center gap-1.5">
                         <Button
                           variant="outline"
                           size="sm"
                           className="h-7 px-2"
-                          onClick={() =>
-                            setReversing({ id: r.transactionId, amount: r.amountPaise })
-                          }
+                          onClick={() => void downloadReceipt(r)}
+                          disabled={!r.sourceDocumentId}
+                          aria-label="Download receipt voucher"
                         >
-                          Reverse
+                          <DownloadIcon className="mr-1 size-3.5" aria-hidden />
+                          Receipt
                         </Button>
-                      ) : null}
+                        {r.status === 'posted' ? (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-7 px-2"
+                            onClick={() =>
+                              setReversing({ id: r.transactionId, amount: r.amountPaise })
+                            }
+                          >
+                            Reverse
+                          </Button>
+                        ) : null}
+                      </div>
                     </div>
                   </div>
                 </li>
@@ -199,6 +236,37 @@ export function ClientPaymentsSection({
         }}
       />
     </div>
+  );
+}
+
+/** Shown when the client has paid us more than we've billed — the surplus is a
+ * credit balance sitting with us, available to set against their next invoice
+ * (or to refund). Mirrors the "Due to collect" card, opposite direction. */
+function CreditAvailableCard({
+  creditPaise,
+  clientName,
+}: {
+  creditPaise: bigint;
+  clientName: string;
+}) {
+  return (
+    <Card className="border-emerald-500/40 bg-emerald-500/5">
+      <CardHeader className="flex flex-row items-center gap-2">
+        <WalletIcon className="size-4 text-emerald-600" aria-hidden />
+        <CardTitle className="text-base text-emerald-700 dark:text-emerald-400">
+          Credit balance available
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="text-3xl font-semibold text-emerald-700 tabular-nums dark:text-emerald-400">
+          {formatINR(creditPaise)}
+        </div>
+        <p className="text-muted-foreground mt-1 text-xs">
+          {clientName} has paid more than we&apos;ve billed. This surplus is held in our accounts
+          and can be applied to their next invoice or refunded.
+        </p>
+      </CardContent>
+    </Card>
   );
 }
 
