@@ -81,7 +81,17 @@ function rollUp(
 
 async function fetchSubledgerLines(
   filter:
-    | { kind: 'subledger'; entityType: 'client' | 'vendor'; entityId: string }
+    | {
+        kind: 'subledger';
+        entityType: 'client' | 'vendor';
+        entityId: string;
+        /** Restrict to these account codes. Client/vendor invoices ALSO sub-ledger
+         * their revenue/cost leg (4100/5100) to the entity, which would net into
+         * the "what they owe" balance — pass only the receivable/payable +
+         * advance/reimbursable accounts so the statement reads as a true
+         * statement of account. */
+        accountCodes?: readonly string[];
+      }
     | { kind: 'accountCodes'; codes: readonly string[] }
     | { kind: 'bankAccount'; bankAccountId: string }
     | { kind: 'incurredByEmployee'; employeeId: string },
@@ -91,6 +101,7 @@ async function fetchSubledgerLines(
   if (filter.kind === 'subledger') {
     conds.push(eq(postings.subledgerEntityType, filter.entityType));
     conds.push(eq(postings.subledgerEntityId, filter.entityId));
+    if (filter.accountCodes) conds.push(inArray(accounts.code, filter.accountCodes));
   } else if (filter.kind === 'incurredByEmployee') {
     // Salaries/bonuses/reimbursements post to non-control accounts (6100, …)
     // that carry no posting sub-ledger — the employee is attributed on the
@@ -184,7 +195,16 @@ export async function getClientStatement(args: {
 }): Promise<Statement> {
   await getActorContext();
   const lines = await fetchSubledgerLines(
-    { kind: 'subledger', entityType: 'client', entityId: args.clientId },
+    {
+      kind: 'subledger',
+      entityType: 'client',
+      entityId: args.clientId,
+      // Receivable-side accounts only: Trade Receivables (1200), Reimbursable
+      // Expenses on Behalf (1240), Client Advances Received (2180). The invoice's
+      // Service Revenue (4100) leg is also client-sub-ledgered but is P&L, not a
+      // receivable — including it wrongly netted revenue into the balance.
+      accountCodes: ['1200', '1240', '2180'],
+    },
     { from: args.from, to: args.to, includeReversed: args.includeReversed },
   );
   return rollUp(lines, (side) => (side === 'debit' ? 1n : -1n));
@@ -206,7 +226,15 @@ export async function getVendorStatement(args: {
 }): Promise<Statement> {
   await getActorContext();
   const lines = await fetchSubledgerLines(
-    { kind: 'subledger', entityType: 'vendor', entityId: args.vendorId },
+    {
+      kind: 'subledger',
+      entityType: 'vendor',
+      entityId: args.vendorId,
+      // Payable-side accounts only: Trade Payables (2110) + Advances to Vendors
+      // (1220). The bill's Vendor Costs (5100) leg is also vendor-sub-ledgered
+      // but is P&L, not a payable — excluded so the balance is what we owe.
+      accountCodes: ['2110', '1220'],
+    },
     { from: args.from, to: args.to, includeReversed: args.includeReversed },
   );
   return rollUp(lines, (side) => (side === 'credit' ? 1n : -1n));
@@ -289,6 +317,45 @@ export async function getOfficeUtilitiesStatement(args: {
     { from: args.from, to: args.to, includeReversed: args.includeReversed },
   );
   return rollUp(lines, (side) => (side === 'debit' ? 1n : -1n));
+}
+
+/**
+ * **TDS Receivable book** — every posting on 1260 TDS Receivable: TDS that
+ * CLIENTS withheld from their payments to us (a Dr on each receipt with TDS).
+ * It's an asset — we set it off against our income-tax liability — so debits
+ * add to the running total and a credit (claim / refund / reversal) subtracts.
+ * Closing balance = TDS credit still to be reconciled with the tax department.
+ */
+export async function getTdsReceivableStatement(args: {
+  from?: string;
+  to?: string;
+  includeReversed?: boolean;
+}): Promise<Statement> {
+  await getActorContext();
+  const lines = await fetchSubledgerLines(
+    { kind: 'accountCodes', codes: ['1260'] },
+    { from: args.from, to: args.to, includeReversed: args.includeReversed },
+  );
+  return rollUp(lines, (side) => (side === 'debit' ? 1n : -1n));
+}
+
+/**
+ * **TDS Payable book** — every posting on 2130 TDS Payable: TDS we WITHHELD from
+ * vendor bills/payments and owe the tax department. It's a liability, so credits
+ * (TDS withheld) add to the running total and a debit (remittance) subtracts.
+ * Closing balance = TDS collected-not-yet-remitted.
+ */
+export async function getTdsPayableStatement(args: {
+  from?: string;
+  to?: string;
+  includeReversed?: boolean;
+}): Promise<Statement> {
+  await getActorContext();
+  const lines = await fetchSubledgerLines(
+    { kind: 'accountCodes', codes: ['2130'] },
+    { from: args.from, to: args.to, includeReversed: args.includeReversed },
+  );
+  return rollUp(lines, (side) => (side === 'credit' ? 1n : -1n));
 }
 
 export type BankBook = Statement & {

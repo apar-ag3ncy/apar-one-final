@@ -15,7 +15,7 @@
 //   vendor:<uuid>       → VendorLedgerWindow
 
 import { useEffect, useMemo, useState } from 'react';
-import { BanknoteIcon, BoltIcon, BuildingIcon, TruckIcon } from 'lucide-react';
+import { BanknoteIcon, BoltIcon, BuildingIcon, ReceiptIcon, TruckIcon } from 'lucide-react';
 
 import { osActions } from '@/lib/os/store';
 import { listClients, listVendors } from '@/lib/server-stub/entity-actions';
@@ -86,7 +86,7 @@ export function LedgerWindow(_props: LedgerWindowProps = {}) {
         <h2>Ledgers</h2>
         <span className="sub">
           {clients && vendors
-            ? `${clients.length} clients · ${vendors.length} vendors · 2 office books`
+            ? `${clients.length} clients · ${vendors.length} vendors · 3 office books`
             : '—'}
         </span>
         <div className="grow" />
@@ -125,6 +125,12 @@ export function LedgerWindow(_props: LedgerWindowProps = {}) {
               title="Office utilities"
               subtitle="Account 6200 · rent + electricity + internet + water"
               onClick={() => openLedger('office-utilities', 'Office utilities ledger')}
+            />
+            <Row
+              icon={<ReceiptIcon style={iconStyle} aria-hidden />}
+              title="TDS book"
+              subtitle="Accounts 1260 + 2130 · TDS withheld by clients / from vendors"
+              onClick={() => openLedger('tds', 'TDS book')}
             />
           </Section>
 

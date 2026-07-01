@@ -54,6 +54,7 @@ import { StatementWindow } from './apps/statement-window';
 import { CashFlowWindow } from './apps/cash-flow-window';
 import { OfficeLedgerWindow } from './apps/office-ledger-window';
 import { OfficeUtilitiesWindow } from './apps/office-utilities-window';
+import { TdsBookWindow } from './apps/tds-book-window';
 import { SalaryBookWindow } from './apps/salary-book-window';
 import { ClientLedgerWindow } from './apps/client-ledger-window';
 import { VendorLedgerWindow } from './apps/vendor-ledger-window';
@@ -692,6 +693,9 @@ function Desktop({ signOut }: { signOut: () => void }) {
               }
               if (eid === 'salary-book') {
                 return <SalaryBookWindow />;
+              }
+              if (eid === 'tds') {
+                return <TdsBookWindow />;
               }
               if (eid && eid.startsWith('client:')) {
                 return <ClientLedgerWindow clientId={eid.slice('client:'.length)} />;
