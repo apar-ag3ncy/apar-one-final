@@ -7,10 +7,12 @@
 import { useEffect, useState, type ReactNode } from 'react';
 
 import { ContactsSection } from '@/components/entity/contacts-section';
+import { BankAccountsSection } from '@/components/entity/bank-accounts-section';
 import { EntitySettingsSection } from '@/components/entity/entity-settings-section';
 import { VendorEditDialog } from './vendor-edit-dialog';
 import { DocumentsSection } from '@/components/entity/documents-section';
 import { VendorBillsSection } from '@/components/entity/vendor-bills-section';
+import { VendorPaymentsSection } from '@/components/entity/vendor-payments-section';
 import { ActivityFeed } from '@/components/entity/activity-feed';
 import { StatementOfAccount } from '@/components/entity/statement-of-account';
 import { useRealtimeActivity } from '@/lib/client/use-realtime-activity';
@@ -30,8 +32,10 @@ export type VendorWindowProps = {
 type VendorTab =
   | 'overview'
   | 'contacts'
+  | 'bank'
   | 'documents'
   | 'bills'
+  | 'transactions'
   | 'ledger'
   | 'activity'
   | 'settings';
@@ -39,8 +43,10 @@ type VendorTab =
 const TAB_LABELS: Record<VendorTab, string> = {
   overview: 'Overview',
   contacts: 'Contacts',
+  bank: 'Bank accounts',
   documents: 'Documents',
   bills: 'Bills',
+  transactions: 'Transactions',
   ledger: 'Ledger',
   activity: 'Activity',
   settings: 'Settings',
@@ -98,8 +104,10 @@ export function VendorWindow({ vendorId, onClose }: VendorWindowProps) {
   const tabs: readonly VendorTab[] = [
     'overview',
     'contacts',
+    'bank',
     'documents',
     'bills',
+    'transactions',
     'ledger',
     'activity',
     'settings',
@@ -128,6 +136,9 @@ export function VendorWindow({ vendorId, onClose }: VendorWindowProps) {
             initial={contacts}
           />
         ) : null}
+        {tab === 'bank' ? (
+          <BankAccountsSection entityType="vendor" entityId={vendor.id} entityName={vendor.name} />
+        ) : null}
         {tab === 'documents' ? (
           <DocumentsSection
             entityType="vendor"
@@ -138,6 +149,9 @@ export function VendorWindow({ vendorId, onClose }: VendorWindowProps) {
         ) : null}
         {tab === 'bills' ? (
           <VendorBillsSection vendorId={vendor.id} vendorName={vendor.name} />
+        ) : null}
+        {tab === 'transactions' ? (
+          <VendorPaymentsSection vendorId={vendor.id} vendorName={vendor.name} />
         ) : null}
         {tab === 'ledger' ? <VendorLedgerBody vendorId={vendor.id} /> : null}
         {tab === 'activity' ? <ActivityBody vendorId={vendor.id} /> : null}

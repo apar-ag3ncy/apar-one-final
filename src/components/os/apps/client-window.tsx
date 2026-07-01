@@ -10,11 +10,12 @@ import { useEffect, useState, type ReactNode } from 'react';
 
 import { ContactsSection } from '@/components/entity/contacts-section';
 import { AddressesSection } from '@/components/entity/addresses-section';
+import { BankAccountsSection } from '@/components/entity/bank-accounts-section';
 import { EntitySettingsSection } from '@/components/entity/entity-settings-section';
 import { ClientEditDialog } from './client-edit-dialog';
 import { DocumentsSection } from '@/components/entity/documents-section';
 import { ClientInvoicesSection } from '@/components/entity/client-invoices-section';
-import { ClientTransactionsSection } from '@/components/entity/client-transactions-section';
+import { ClientPaymentsSection } from '@/components/entity/client-payments-section';
 import { ClientExpensesOnBehalfSection } from '@/components/entity/vendor-bills-section';
 import { ActivityFeed } from '@/components/entity/activity-feed';
 import { StatementOfAccount } from '@/components/entity/statement-of-account';
@@ -47,6 +48,7 @@ type ClientTab =
   | 'overview'
   | 'contacts'
   | 'addresses'
+  | 'bank'
   | 'projects'
   | 'documents'
   | 'invoices'
@@ -60,6 +62,7 @@ const TAB_LABELS: Record<ClientTab, string> = {
   overview: 'Overview',
   contacts: 'Contacts',
   addresses: 'Addresses',
+  bank: 'Bank accounts',
   projects: 'Projects',
   documents: 'Documents',
   invoices: 'Invoices',
@@ -156,6 +159,7 @@ export function ClientWindow({ clientId, onClose }: ClientWindowProps) {
     'overview',
     'contacts',
     'addresses',
+    'bank',
     'projects',
     'documents',
     'invoices',
@@ -195,6 +199,9 @@ export function ClientWindow({ clientId, onClose }: ClientWindowProps) {
         {tab === 'addresses' ? (
           <AddressesSection entityType="client" entityId={client.id} entityName={client.name} />
         ) : null}
+        {tab === 'bank' ? (
+          <BankAccountsSection entityType="client" entityId={client.id} entityName={client.name} />
+        ) : null}
         {tab === 'projects' ? (
           <ProjectsBody
             client={client}
@@ -216,7 +223,7 @@ export function ClientWindow({ clientId, onClose }: ClientWindowProps) {
           <ClientInvoicesSection clientId={client.id} clientName={client.name} />
         ) : null}
         {tab === 'transactions' ? (
-          <ClientTransactionsSection clientId={client.id} clientName={client.name} />
+          <ClientPaymentsSection clientId={client.id} clientName={client.name} />
         ) : null}
         {tab === 'expenses' ? (
           <ClientExpensesOnBehalfSection clientId={client.id} clientName={client.name} />
