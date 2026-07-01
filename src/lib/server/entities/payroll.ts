@@ -1,6 +1,6 @@
 'use server';
 
-import { and, desc, eq, isNull, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, isNull, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { db } from '@/lib/db/client';
@@ -40,6 +40,14 @@ import {
  *   - generateSalaryRun / postSalaryRun / reverseSalaryRun
  *   - payReimbursement (creates a ledger transaction)
  */
+
+/** The calendar day before an ISO `YYYY-MM-DD` date, computed in UTC so no
+ * timezone shift can nudge it across a day boundary. */
+function dayBeforeIso(iso: string): string {
+  const d = new Date(`${iso}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().slice(0, 10);
+}
 
 const BonusKindEnum = z.enum(['bonus', 'perk_cash', 'perk_inkind', 'gift', 'award']);
 const ReimbursementAttributionEnum = z.enum(['client', 'opex']);
@@ -447,8 +455,16 @@ export async function createSalaryStructure(
   const parsed = CreateSalaryStructureSchema.parse(input);
 
   const newId = await db.transaction(async (tx) => {
-    // Close any prior open or future-overlapping structure for this employee.
-    // "Open" = effective_to IS NULL, "Overlapping" = effective_to >= new from.
+    // Close prior structures that STARTED BEFORE this one and still cover its
+    // start (open, or ending on/after it), setting their effective_to to the
+    // day before the new start.
+    //
+    // The `effective_from < newFrom` guard is essential: without it, a
+    // back-dated insert would match a LATER open structure and push its
+    // effective_to before its OWN effective_from — an inverted interval that
+    // silently destroyed that structure's captured comp (it could never be
+    // selected as "active" again). Only structures that began earlier may be
+    // closed by a new one.
     await tx
       .update(salaryStructures)
       .set({
@@ -459,12 +475,30 @@ export async function createSalaryStructure(
         and(
           eq(salaryStructures.employeeId, parsed.employeeId),
           isNull(salaryStructures.deletedAt),
+          sql`${salaryStructures.effectiveFrom} < ${parsed.effectiveFrom}::date`,
           or(
             isNull(salaryStructures.effectiveTo),
             sql`${salaryStructures.effectiveTo} >= ${parsed.effectiveFrom}::date`,
           ),
         ),
       );
+
+    // If a LATER structure already exists (starts after this one), bound the new
+    // row so it ends the day before that later structure begins — otherwise a
+    // back-dated insert would run open and overlap it (two active structures).
+    const [laterStruct] = await tx
+      .select({ effectiveFrom: salaryStructures.effectiveFrom })
+      .from(salaryStructures)
+      .where(
+        and(
+          eq(salaryStructures.employeeId, parsed.employeeId),
+          isNull(salaryStructures.deletedAt),
+          sql`${salaryStructures.effectiveFrom} > ${parsed.effectiveFrom}::date`,
+        ),
+      )
+      .orderBy(asc(salaryStructures.effectiveFrom))
+      .limit(1);
+    const newEffectiveTo = laterStruct ? dayBeforeIso(laterStruct.effectiveFrom) : null;
 
     const otherAllowancesJson = parsed.otherAllowances.map((a) => ({
       label: a.label,
@@ -476,7 +510,7 @@ export async function createSalaryStructure(
       .values({
         employeeId: parsed.employeeId,
         effectiveFrom: parsed.effectiveFrom,
-        effectiveTo: null,
+        effectiveTo: newEffectiveTo,
         basicPaise: parsed.basicPaise,
         hraPaise: parsed.hraPaise,
         specialAllowancePaise: parsed.specialAllowancePaise,

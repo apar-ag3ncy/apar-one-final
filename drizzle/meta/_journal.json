@@ -351,6 +351,13 @@
       "when": 1780600090000,
       "tag": "0049_client_receipts",
       "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1780600090001,
+      "tag": "0050_salary_structure_date_range_check",
+      "breakpoints": true
     }
   ]
 }

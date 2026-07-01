@@ -1,5 +1,7 @@
+import { sql } from 'drizzle-orm';
 import {
   bigint,
+  check,
   date,
   index,
   jsonb,
@@ -48,6 +50,13 @@ export const salaryStructures = pgTable(
   (t) => [
     index().on(t.employeeId, t.effectiveFrom.desc()),
     index().on(t.employeeId, t.effectiveTo),
+    // A version's end must not precede its start. Guards against the inverted
+    // interval an auto-close of a back-dated structure could otherwise create
+    // (mirrors the leaves table's date-range CHECK). Added in migration 0050.
+    check(
+      'salary_structures_date_range_ordered',
+      sql`effective_to IS NULL OR effective_to >= effective_from`,
+    ),
   ],
 );
 
