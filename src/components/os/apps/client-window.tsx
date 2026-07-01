@@ -15,7 +15,7 @@ import { EntitySettingsSection } from '@/components/entity/entity-settings-secti
 import { ClientEditDialog } from './client-edit-dialog';
 import { DocumentsSection } from '@/components/entity/documents-section';
 import { ClientInvoicesSection } from '@/components/entity/client-invoices-section';
-import { ClientTransactionsSection } from '@/components/entity/client-transactions-section';
+import { ClientPaymentsSection } from '@/components/entity/client-payments-section';
 import { ClientExpensesOnBehalfSection } from '@/components/entity/vendor-bills-section';
 import { ActivityFeed } from '@/components/entity/activity-feed';
 import { StatementOfAccount } from '@/components/entity/statement-of-account';
@@ -223,7 +223,7 @@ export function ClientWindow({ clientId, onClose }: ClientWindowProps) {
           <ClientInvoicesSection clientId={client.id} clientName={client.name} />
         ) : null}
         {tab === 'transactions' ? (
-          <ClientTransactionsSection clientId={client.id} clientName={client.name} />
+          <ClientPaymentsSection clientId={client.id} clientName={client.name} />
         ) : null}
         {tab === 'expenses' ? (
           <ClientExpensesOnBehalfSection clientId={client.id} clientName={client.name} />

@@ -45,16 +45,26 @@ const VendorPaymentAllocationSchema = z.object({
 
 export type VendorPaymentAllocationInput = z.input<typeof VendorPaymentAllocationSchema>;
 
-const RecordVendorPaymentInputSchema = z.object({
-  vendorId: z.string().uuid(),
-  bankAccountId: z.string().uuid(),
-  paymentDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  totalPaise: z.bigint().positive(),
-  source: z.enum(['bank', 'advance']).default('bank'),
-  notes: z.string().trim().max(2000).nullish(),
-  /** Explicit allocation to posted bill txns. Empty → FIFO over open bills. */
-  allocations: z.array(VendorPaymentAllocationSchema).default([]),
-});
+const RecordVendorPaymentInputSchema = z
+  .object({
+    vendorId: z.string().uuid(),
+    /** Our bank account the money left from. Null/omitted iff source ≠ 'bank'. */
+    bankAccountId: z.string().uuid().nullish(),
+    /** Which of the VENDOR's saved bank accounts received the money. */
+    counterpartyBankAccountId: z.string().uuid().nullish(),
+    paymentDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    totalPaise: z.bigint().positive(),
+    source: z.enum(['bank', 'advance', 'cash']).default('bank'),
+    // Informational only (vendor TDS is withheld into 2130 at bill time).
+    capturedGstAmountPaise: z.bigint().nonnegative().default(0n),
+    capturedTdsAmountPaise: z.bigint().nonnegative().default(0n),
+    notes: z.string().trim().max(2000).nullish(),
+    /** Explicit allocation to posted bill txns. Empty → FIFO over open bills. */
+    allocations: z.array(VendorPaymentAllocationSchema).default([]),
+  })
+  .refine((v) => v.source !== 'bank' || !!v.bankAccountId, {
+    message: "bankAccountId is required when source is 'bank'.",
+  });
 
 export type RecordVendorPaymentInput = z.input<typeof RecordVendorPaymentInputSchema>;
 
@@ -115,9 +125,12 @@ export async function recordVendorPayment(
         kind: 'vendor_payment_made',
         input: {
           vendorId: v.vendorId,
-          bankAccountId: v.bankAccountId,
+          bankAccountId: v.source === 'bank' ? v.bankAccountId! : null,
           amountPaise: v.totalPaise,
           source: v.source,
+          gstAmountPaise: v.capturedGstAmountPaise,
+          tdsAmountPaise: v.capturedTdsAmountPaise,
+          counterpartyBankAccountId: v.counterpartyBankAccountId ?? null,
           billAllocations: [], // real rows written via bill_allocations below
           paymentDocumentId: documentId,
           externalRef,
@@ -214,11 +227,18 @@ async function assembleVoucherData(
     .orderBy(asc(entityAddresses.kind));
   const addr = addresses.find((a) => a.kind === 'registered') ?? addresses[0] ?? null;
 
-  const [bank] = await db
-    .select({ displayName: bankAccounts.displayName, accountLast4: bankAccounts.accountLast4 })
-    .from(bankAccounts)
-    .where(eq(bankAccounts.id, v.bankAccountId))
-    .limit(1);
+  const bank = v.bankAccountId
+    ? (
+        await db
+          .select({
+            displayName: bankAccounts.displayName,
+            accountLast4: bankAccounts.accountLast4,
+          })
+          .from(bankAccounts)
+          .where(eq(bankAccounts.id, v.bankAccountId))
+          .limit(1)
+      )[0]
+    : null;
 
   // Map any explicit allocations to bill document numbers for the voucher body.
   const allocations: PaymentVoucherPdfData['allocations'] = [];
@@ -263,7 +283,11 @@ async function assembleVoucherData(
     voucherNumber,
     paymentDate: v.paymentDate,
     amountPaise: v.totalPaise,
-    paidFromLabel: bank ? `${bank.displayName} ••${bank.accountLast4}` : null,
+    paidFromLabel: bank
+      ? `${bank.displayName} ••${bank.accountLast4}`
+      : v.source === 'cash'
+        ? 'Cash on hand'
+        : null,
     allocations,
     unappliedPaise: v.totalPaise - appliedPaise,
     notes: v.notes ?? null,
@@ -306,10 +330,15 @@ export type VendorPaymentRow = {
   txnDate: string;
   status: string;
   amountPaise: bigint;
+  gstPaise: bigint;
+  tdsPaise: bigint;
+  counterpartyBankLabel: string | null;
   allocations: VendorPaymentAllocationRow[];
 };
 
-/** Lists this vendor's payments (vendor_payment_made txns) + their allocations. */
+/** Lists this vendor's payments (vendor_payment_made txns) + their allocations.
+ * GST/TDS/counterparty-bank ride on the 2110 debit leg's metadata (see
+ * vendorPaymentMade template) — read back here for display. */
 export async function listVendorPayments(vendorId: string): Promise<readonly VendorPaymentRow[]> {
   await getActorContext();
   const parsed = z.string().uuid().parse(vendorId);
@@ -320,6 +349,9 @@ export async function listVendorPayments(vendorId: string): Promise<readonly Ven
     txn_date: string;
     status: string;
     amount: string;
+    gst_paise: string | null;
+    tds_paise: string | null;
+    counterparty_bank_label: string | null;
   }>(sql`
     SELECT
       t.id::text AS id,
@@ -329,8 +361,23 @@ export async function listVendorPayments(vendorId: string): Promise<readonly Ven
       COALESCE((
         SELECT SUM(p.amount_paise) FROM postings p
         WHERE p.transaction_id = t.id AND p.side = 'debit'
-      ), 0)::text AS amount
+      ), 0)::text AS amount,
+      dm.meta->>'gstAmountPaise' AS gst_paise,
+      dm.meta->>'tdsAmountPaise' AS tds_paise,
+      CASE
+        WHEN cb.id IS NOT NULL THEN cb.bank_name || ' ••' || cb.account_last4
+        ELSE NULL
+      END AS counterparty_bank_label
     FROM transactions t
+    LEFT JOIN LATERAL (
+      SELECT p.metadata AS meta
+      FROM postings p
+      JOIN accounts a ON a.id = p.account_id
+      WHERE p.transaction_id = t.id AND p.side = 'debit' AND a.code = '2110'
+      LIMIT 1
+    ) dm ON true
+    LEFT JOIN entity_bank_accounts cb
+      ON cb.id = NULLIF(dm.meta->>'counterpartyBankAccountId', '')::uuid
     WHERE t.kind = 'vendor_payment_made'
       AND t.paid_to_vendor_id = ${parsed}
       AND t.reverses_id IS NULL
@@ -390,6 +437,9 @@ export async function listVendorPayments(vendorId: string): Promise<readonly Ven
     txnDate: p.txn_date,
     status: p.status,
     amountPaise: BigInt(p.amount ?? '0'),
+    gstPaise: BigInt(p.gst_paise ?? '0'),
+    tdsPaise: BigInt(p.tds_paise ?? '0'),
+    counterpartyBankLabel: p.counterparty_bank_label,
     allocations: allocByPayment.get(p.id) ?? [],
   }));
 }

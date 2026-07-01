@@ -15,6 +15,7 @@ import { auditColumns, timestamps } from './_shared';
 import { bankAccounts } from './bank_accounts';
 import { clients } from './clients';
 import { documents } from './documents';
+import { entityBankAccounts } from './entity_bank_accounts';
 import { transactions } from './transactions';
 
 /**
@@ -65,6 +66,17 @@ export const receipts = pgTable(
     capturedTdsAmountPaise: bigint({ mode: 'bigint' }).notNull().default(0n),
     capturedTdsSection: text(),
     capturedTdsRateBps: integer().notNull().default(0),
+
+    // GST portion of the payment — captured-not-computed, informational only
+    // (GST itself is posted at invoice time). Shown on the receipt voucher.
+    capturedGstAmountPaise: bigint({ mode: 'bigint' }).notNull().default(0n),
+
+    // Which of the CLIENT's own saved bank accounts the money came from. Their
+    // account (entity_bank_accounts), not in our chart of accounts, so it never
+    // posts to the ledger — pure traceability on the receipt.
+    counterpartyBankAccountId: uuid().references(() => entityBankAccounts.id, {
+      onDelete: 'set null',
+    }),
 
     notes: text(),
 

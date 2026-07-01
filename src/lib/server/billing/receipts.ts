@@ -19,7 +19,7 @@ import {
 import { AppError } from '@/lib/errors';
 import { requireCapability } from '@/lib/rbac';
 import { getActorContext } from '@/lib/server/actor';
-import { createDraftTransaction, postTransaction } from '@/lib/server/ledger';
+import { createDraftTransaction, postTransaction, reverseTransaction } from '@/lib/server/ledger';
 
 import { loadBillingSettings, nextDocumentNumber, withNumberingRetry } from './numbering';
 import { renderPaymentReceiptPdf, type PaymentReceiptPdfData } from './pdf/payment-receipt';
@@ -66,13 +66,20 @@ export type AllocationInput = z.input<typeof AllocationInputSchema>;
 const RecordManualReceiptInputSchema = z.object({
   clientId: z.string().uuid(),
   bankAccountId: z.string().uuid().nullish(),
+  /** Which of the CLIENT's own saved bank accounts the money came from. */
+  counterpartyBankAccountId: z.string().uuid().nullish(),
   receiptDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  // Net cash actually received into our bank / cash-in-hand (i.e. gross settled
+  // minus any TDS the client withheld). Gross = totalPaise + capturedTds.
   totalPaise: z.bigint().positive(),
   method: z.enum(['bank_transfer', 'upi', 'cheque', 'cash', 'card']),
-  // Customer-side TDS deducted from us — captured, not computed.
+  // Customer-side TDS deducted from us — captured, not computed. Posted to
+  // 1260 TDS Receivable so it settles the invoice alongside the cash.
   capturedTdsAmountPaise: z.bigint().nonnegative().default(0n),
   capturedTdsSection: z.string().trim().max(20).nullish(),
   capturedTdsRateBps: z.number().int().min(0).max(10000).default(0),
+  // GST portion of the payment — informational only (GST posts at invoice time).
+  capturedGstAmountPaise: z.bigint().nonnegative().default(0n),
   notes: z.string().trim().max(2000).nullish(),
   /** Optional pre-allocation; runs allocateReceipt as the same logical action. */
   allocations: z.array(AllocationInputSchema).default([]),
@@ -98,17 +105,12 @@ export async function recordManualReceipt(
   if (v.method !== 'cash' && !v.bankAccountId) {
     throw new AppError('validation', 'bankAccountId is required for non-cash receipt methods.');
   }
-  // For cash receipts, the ledger debit goes to '1110 Cash on Hand'
-  // (no subledger). For everything else, 1120 sub:bank_account.
-  // The template requires bankAccountId; for cash we pass a synthetic
-  // null and post via journal instead. Cleaner: refuse cash for now and
-  // surface it as a separate path.
-  if (v.method === 'cash') {
-    throw new AppError(
-      'validation',
-      'cash receipts are not supported in this build; record via Office Expenses → cash receipt flow instead.',
-    );
+  if (v.capturedTdsAmountPaise < 0n) {
+    throw new AppError('validation', 'TDS cannot be negative.');
   }
+  // Cash receipts (method='cash', no bankAccountId) debit 1110 Cash on Hand;
+  // everything else debits 1120 sub:bank_account. Handled in the posting
+  // template via the `cash` flag below.
 
   const settings = await loadBillingSettings();
   const fyStart = fyStartForDate(v.receiptDate, settings.fyStartMonth);
@@ -169,6 +171,10 @@ async function insertReceiptRow(
 ): Promise<{ id: string; receiptNumber: string }> {
   const { documentNumber: receiptNumber } = await nextDocumentNumber('receipt', fyStart, tx);
 
+  // total_paise stores the GROSS settled against the receivable (net cash +
+  // TDS) so the allocation trigger lets the receipt clear the invoice in full.
+  const grossPaise = v.totalPaise + v.capturedTdsAmountPaise;
+
   const [row] = await tx
     .insert(receipts)
     .values({
@@ -177,11 +183,13 @@ async function insertReceiptRow(
       financialYearStart: fyStart,
       clientId: v.clientId,
       bankAccountId: v.bankAccountId ?? null,
-      totalPaise: v.totalPaise,
+      counterpartyBankAccountId: v.counterpartyBankAccountId ?? null,
+      totalPaise: grossPaise,
       method: v.method,
       capturedTdsAmountPaise: v.capturedTdsAmountPaise,
       capturedTdsSection: v.capturedTdsSection ?? null,
       capturedTdsRateBps: v.capturedTdsRateBps,
+      capturedGstAmountPaise: v.capturedGstAmountPaise,
       notes: v.notes ?? null,
       validationFlags: [],
       createdBy: ctx.userId,
@@ -196,7 +204,7 @@ async function insertReceiptRow(
       entityType: 'receipt',
       entityId: row.id,
       action: 'insert',
-      changes: { receipt_number: receiptNumber, total_paise: v.totalPaise.toString() },
+      changes: { receipt_number: receiptNumber, total_paise: grossPaise.toString() },
     },
     tx as unknown as typeof db,
   );
@@ -223,8 +231,11 @@ async function postReceiptTransaction(
       kind: 'client_payment_received',
       input: {
         clientId: v.clientId,
-        bankAccountId: v.bankAccountId!, // non-null per the cash check above
-        amountPaise: v.totalPaise,
+        bankAccountId: v.method === 'cash' ? null : v.bankAccountId!,
+        cash: v.method === 'cash',
+        // Gross settled against the receivable = net cash + TDS withheld.
+        amountPaise: v.totalPaise + v.capturedTdsAmountPaise,
+        tdsAmountPaise: v.capturedTdsAmountPaise,
         receiptDocumentId,
         externalRef: `receipt:${receipt.receiptNumber}`,
         txnDate: v.receiptDate,
@@ -343,11 +354,12 @@ async function assemblePaymentReceiptData(
     },
     receiptNumber,
     receiptDate: v.receiptDate,
-    amountPaise: v.totalPaise,
+    // Gross settled against the receivable = net cash + TDS withheld.
+    amountPaise: v.totalPaise + v.capturedTdsAmountPaise,
     method: v.method,
     bankLabel: null,
     allocations,
-    unappliedPaise: v.totalPaise - appliedPaise,
+    unappliedPaise: v.totalPaise + v.capturedTdsAmountPaise - appliedPaise,
     notes: v.notes ?? null,
   };
 }
@@ -556,6 +568,86 @@ async function pickFifoAllocations(
 }
 
 /* -------------------------------------------------------------------------- */
+/* reverseClientReceipt                                                       */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Reverse a posted client receipt (duplicate / mis-recorded). The ledger is
+ * append-only, so `reverseTransaction` posts an offsetting entry (Dr 1200 /
+ * Cr bank + Cr 1260) and flips the original to 'reversed'. Because the receipt
+ * carried the invoice settlement, we first delete its `payment_allocations` and
+ * recompute each touched invoice's state (paid → partially_paid / sent) so the
+ * receivable re-opens correctly. Gates on `reverse_transaction`; reason ≥10.
+ */
+export async function reverseClientReceipt(
+  receiptId: string,
+  reason: string,
+): Promise<{ reversalTransactionId: string }> {
+  const ctx = await getActorContext();
+  const parsedId = ReceiptIdSchema.parse(receiptId);
+
+  const [receipt] = await db.select().from(receipts).where(eq(receipts.id, parsedId)).limit(1);
+  if (!receipt) throw new AppError('not_found', `receipt ${parsedId} not found`);
+  if (!receipt.postedTransactionId) {
+    throw new AppError('validation', `receipt ${parsedId} is not posted; nothing to reverse.`);
+  }
+
+  // Un-apply this receipt from its invoices, then re-derive their states from
+  // whatever allocations remain (payment + advance), inside one DB txn.
+  await db.transaction(async (tx) => {
+    const applied = await tx
+      .select({ invoiceId: paymentAllocations.invoiceId })
+      .from(paymentAllocations)
+      .where(eq(paymentAllocations.receiptId, parsedId));
+    const invoiceIds = Array.from(new Set(applied.map((a) => a.invoiceId)));
+
+    await tx.delete(paymentAllocations).where(eq(paymentAllocations.receiptId, parsedId));
+
+    if (invoiceIds.length > 0) {
+      const invoiceRows = await tx.select().from(invoices).where(inArray(invoices.id, invoiceIds));
+      for (const inv of invoiceRows) {
+        // Only invoices in a settleable lifecycle state get re-derived.
+        if (!['sent', 'partially_paid', 'paid'].includes(inv.state)) continue;
+        const [payAgg] = await tx
+          .select({ total: sum(paymentAllocations.allocatedPaise) })
+          .from(paymentAllocations)
+          .where(eq(paymentAllocations.invoiceId, inv.id));
+        const paid = payAgg?.total != null ? BigInt(payAgg.total as string) : 0n;
+        const nextState =
+          paid >= inv.capturedTotalPaise ? 'paid' : paid > 0n ? 'partially_paid' : 'sent';
+        if (nextState !== inv.state) {
+          await tx
+            .update(invoices)
+            .set({ state: nextState, updatedBy: ctx.userId })
+            .where(eq(invoices.id, inv.id));
+        }
+      }
+    }
+  });
+
+  const result = await reverseTransaction(ctx, {
+    transactionId: receipt.postedTransactionId,
+    reason,
+  });
+
+  await logActivity({
+    entityType: 'client',
+    entityId: receipt.clientId,
+    actorId: ctx.userId,
+    kind: 'payment.received',
+    summary: `Receipt ${receipt.receiptNumber} reversed`,
+    payload: {
+      receipt_id: receipt.id,
+      receipt_number: receipt.receiptNumber,
+      reversal_transaction_id: result.reversalTransactionId,
+      reason,
+    },
+  });
+
+  return result;
+}
+
+/* -------------------------------------------------------------------------- */
 /* getReceipt / listReceipts                                                  */
 /* -------------------------------------------------------------------------- */
 
@@ -639,7 +731,10 @@ export type ClientReceiptRow = {
   method: string;
   totalPaise: bigint;
   tdsPaise: bigint;
-  status: 'posted' | 'unposted';
+  gstPaise: bigint;
+  counterpartyBankLabel: string | null;
+  transactionId: string | null;
+  status: 'posted' | 'unposted' | 'reversed';
   allocations: ClientReceiptAllocationRow[];
 };
 
@@ -655,7 +750,10 @@ export async function listClientReceipts(clientId: string): Promise<readonly Cli
     method: string;
     total_paise: string;
     tds_paise: string;
+    gst_paise: string;
+    counterparty_bank_label: string | null;
     posted_transaction_id: string | null;
+    txn_status: string | null;
   }>(sql`
     SELECT
       r.id::text AS id,
@@ -664,8 +762,17 @@ export async function listClientReceipts(clientId: string): Promise<readonly Cli
       r.method::text AS method,
       r.total_paise::text AS total_paise,
       r.captured_tds_amount_paise::text AS tds_paise,
-      r.posted_transaction_id::text AS posted_transaction_id
+      r.captured_gst_amount_paise::text AS gst_paise,
+      CASE
+        WHEN cb.id IS NOT NULL
+          THEN cb.bank_name || ' ••' || cb.account_last4
+        ELSE NULL
+      END AS counterparty_bank_label,
+      r.posted_transaction_id::text AS posted_transaction_id,
+      t.status::text AS txn_status
     FROM receipts r
+    LEFT JOIN entity_bank_accounts cb ON cb.id = r.counterparty_bank_account_id
+    LEFT JOIN transactions t ON t.id = r.posted_transaction_id
     WHERE r.client_id = ${parsed}
     ORDER BY r.receipt_date DESC, r.receipt_number DESC
   `);
@@ -711,7 +818,14 @@ export async function listClientReceipts(clientId: string): Promise<readonly Cli
     method: r.method,
     totalPaise: BigInt(r.total_paise ?? '0'),
     tdsPaise: BigInt(r.tds_paise ?? '0'),
-    status: r.posted_transaction_id ? 'posted' : 'unposted',
+    gstPaise: BigInt(r.gst_paise ?? '0'),
+    counterpartyBankLabel: r.counterparty_bank_label,
+    transactionId: r.posted_transaction_id,
+    status: !r.posted_transaction_id
+      ? 'unposted'
+      : r.txn_status === 'reversed'
+        ? 'reversed'
+        : 'posted',
     allocations: allocByReceipt.get(r.id) ?? [],
   }));
 }

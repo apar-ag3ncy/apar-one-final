@@ -12,6 +12,7 @@ import { EntitySettingsSection } from '@/components/entity/entity-settings-secti
 import { VendorEditDialog } from './vendor-edit-dialog';
 import { DocumentsSection } from '@/components/entity/documents-section';
 import { VendorBillsSection } from '@/components/entity/vendor-bills-section';
+import { VendorPaymentsSection } from '@/components/entity/vendor-payments-section';
 import { ActivityFeed } from '@/components/entity/activity-feed';
 import { StatementOfAccount } from '@/components/entity/statement-of-account';
 import { useRealtimeActivity } from '@/lib/client/use-realtime-activity';
@@ -34,6 +35,7 @@ type VendorTab =
   | 'bank'
   | 'documents'
   | 'bills'
+  | 'transactions'
   | 'ledger'
   | 'activity'
   | 'settings';
@@ -44,6 +46,7 @@ const TAB_LABELS: Record<VendorTab, string> = {
   bank: 'Bank accounts',
   documents: 'Documents',
   bills: 'Bills',
+  transactions: 'Transactions',
   ledger: 'Ledger',
   activity: 'Activity',
   settings: 'Settings',
@@ -104,6 +107,7 @@ export function VendorWindow({ vendorId, onClose }: VendorWindowProps) {
     'bank',
     'documents',
     'bills',
+    'transactions',
     'ledger',
     'activity',
     'settings',
@@ -145,6 +149,9 @@ export function VendorWindow({ vendorId, onClose }: VendorWindowProps) {
         ) : null}
         {tab === 'bills' ? (
           <VendorBillsSection vendorId={vendor.id} vendorName={vendor.name} />
+        ) : null}
+        {tab === 'transactions' ? (
+          <VendorPaymentsSection vendorId={vendor.id} vendorName={vendor.name} />
         ) : null}
         {tab === 'ledger' ? <VendorLedgerBody vendorId={vendor.id} /> : null}
         {tab === 'activity' ? <ActivityBody vendorId={vendor.id} /> : null}

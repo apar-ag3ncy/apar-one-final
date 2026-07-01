@@ -25,6 +25,7 @@ import {
   type PayableByProjectRow,
   type VendorPaymentRow,
 } from '@/lib/server/billing/vendor-payments';
+import { listBankAccounts, type BankAccountRow } from '@/lib/server/entities/bank-accounts';
 import {
   VendorAdvanceDialog,
   VendorDebitNoteDialog,
@@ -144,10 +145,21 @@ export function VendorPaymentsSection({
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="text-sm font-medium">Payment</span>
                         <StatusBadge
-                          tone={p.status === 'posted' ? 'success' : 'neutral'}
+                          tone={
+                            p.status === 'posted'
+                              ? 'success'
+                              : p.status === 'reversed'
+                                ? 'danger'
+                                : 'neutral'
+                          }
                           label={p.status}
                           dot={false}
                         />
+                        {p.counterpartyBankLabel ? (
+                          <span className="text-muted-foreground text-xs">
+                            to {p.counterpartyBankLabel}
+                          </span>
+                        ) : null}
                       </div>
                       {p.allocations.length > 0 ? (
                         <ul className="text-muted-foreground flex flex-col gap-0.5 text-xs">
@@ -175,6 +187,16 @@ export function VendorPaymentsSection({
                         {formatINR(p.amountPaise)}
                       </div>
                       <div className="text-muted-foreground text-xs">{formatDate(p.txnDate)}</div>
+                      {p.tdsPaise > 0n ? (
+                        <div className="text-muted-foreground text-xs">
+                          TDS {formatINR(p.tdsPaise)}
+                        </div>
+                      ) : null}
+                      {p.gstPaise > 0n ? (
+                        <div className="text-muted-foreground text-xs">
+                          GST {formatINR(p.gstPaise)}
+                        </div>
+                      ) : null}
                       {p.status === 'posted' ? (
                         <Button
                           variant="outline"
@@ -365,6 +387,16 @@ function normaliseRupee(s: string): string {
   return s.replace(/[,\s]/g, '').trim();
 }
 
+/** Parse an optional rupee input to paise; '' → 0n. Throws on garbage. */
+function parseOptionalRupees(s: string): bigint {
+  const t = normaliseRupee(s);
+  if (!t) return 0n;
+  return rupeesToPaise(t);
+}
+
+// Sentinel value in the "paid from" select meaning a cash payment (no bank).
+const CASH_SENTINEL = '__cash__';
+
 function RecordVendorPaymentDialog({
   open,
   onOpenChange,
@@ -379,14 +411,21 @@ function RecordVendorPaymentDialog({
   onRecorded: () => void;
 }) {
   const [banks, setBanks] = useState<readonly AgencyBankAccountRow[]>([]);
+  const [vendorBanks, setVendorBanks] = useState<readonly BankAccountRow[]>([]);
   const [bills, setBills] = useState<readonly OpenBillRow[]>([]);
+  // '' = unset, CASH_SENTINEL = cash (no bank), else an agency bank account id.
   const [bankAccountId, setBankAccountId] = useState('');
+  const [counterpartyBankId, setCounterpartyBankId] = useState('');
   const [paymentDate, setPaymentDate] = useState(todayISO());
   const [amountRupees, setAmountRupees] = useState('');
+  const [gstRupees, setGstRupees] = useState('');
+  const [tdsRupees, setTdsRupees] = useState('');
   const [notes, setNotes] = useState('');
   // Per-bill manual allocation amounts (rupee strings keyed by billTxnId).
   const [allocs, setAllocs] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
+
+  const isCash = bankAccountId === CASH_SENTINEL;
 
   useEffect(() => {
     if (!open) return;
@@ -394,8 +433,11 @@ function RecordVendorPaymentDialog({
     queueMicrotask(() => {
       if (cancelled) return;
       setBankAccountId('');
+      setCounterpartyBankId('');
       setPaymentDate(todayISO());
       setAmountRupees('');
+      setGstRupees('');
+      setTdsRupees('');
       setNotes('');
       setAllocs({});
     });
@@ -407,6 +449,16 @@ function RecordVendorPaymentDialog({
       })
       .catch(() => {
         if (!cancelled) setBanks([]);
+      });
+    listBankAccounts({ entityType: 'vendor', entityId: vendorId })
+      .then((b) => {
+        if (cancelled) return;
+        setVendorBanks(b);
+        // Default to the vendor's primary account (list is primary-first).
+        if (b[0]) setCounterpartyBankId(b[0].id);
+      })
+      .catch(() => {
+        if (!cancelled) setVendorBanks([]);
       });
     listOpenBillsForVendor(vendorId)
       .then((bl) => {
@@ -435,14 +487,18 @@ function RecordVendorPaymentDialog({
 
   async function submit() {
     if (!bankAccountId) {
-      toast.error('Pick the bank account the money left from.');
+      toast.error('Pick where the money left from — a bank account or cash.');
       return;
     }
     let totalPaise: bigint;
+    let gstPaise: bigint;
+    let tdsPaise: bigint;
     try {
       totalPaise = rupeesToPaise(normaliseRupee(amountRupees || '0'));
+      gstPaise = parseOptionalRupees(gstRupees);
+      tdsPaise = parseOptionalRupees(tdsRupees);
     } catch {
-      toast.error('Enter a valid amount.');
+      toast.error('Enter valid amounts.');
       return;
     }
     if (totalPaise <= 0n) {
@@ -473,9 +529,13 @@ function RecordVendorPaymentDialog({
     try {
       const result = await recordVendorPayment({
         vendorId,
-        bankAccountId,
+        bankAccountId: isCash ? null : bankAccountId,
+        counterpartyBankAccountId: isCash || !counterpartyBankId ? null : counterpartyBankId,
+        source: isCash ? 'cash' : 'bank',
         paymentDate,
         totalPaise,
+        capturedGstAmountPaise: gstPaise,
+        capturedTdsAmountPaise: tdsPaise,
         notes: notes.trim() || null,
         allocations,
       });
@@ -526,14 +586,15 @@ function RecordVendorPaymentDialog({
           }}
         >
           <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0, lineHeight: 1.5 }}>
-            Posts a payment-made entry (Dr payables / Cr bank) and generates a payment voucher.
-            Allocate it to the open bills it settles, or leave the amounts blank to auto-apply
-            oldest-first.
+            Posts a payment-made entry (Dr payables / Cr bank or cash) and generates a payment
+            voucher. Allocate it to the open bills it settles, or leave the amounts blank to
+            auto-apply oldest-first. GST/TDS here are recorded for the record only — vendor TDS is
+            already withheld at bill time.
           </p>
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             <div className="os-field">
-              <span className="os-field-label">From bank account</span>
+              <span className="os-field-label">Paid from (our account)</span>
               <select
                 value={bankAccountId}
                 onChange={(e) => setBankAccountId(e.target.value)}
@@ -549,7 +610,47 @@ function RecordVendorPaymentDialog({
                     {b.isActive ? '' : ' (inactive)'}
                   </option>
                 ))}
+                <option value={CASH_SENTINEL}>Cash (no bank account)</option>
               </select>
+            </div>
+            <div className="os-field">
+              <span className="os-field-label">Vendor&apos;s bank account</span>
+              <select
+                value={isCash ? '' : counterpartyBankId}
+                onChange={(e) => setCounterpartyBankId(e.target.value)}
+                disabled={submitting || isCash}
+                style={osInputStyle}
+              >
+                <option value="">
+                  {isCash
+                    ? 'n/a — cash'
+                    : vendorBanks.length === 0
+                      ? 'None on file'
+                      : 'Not specified'}
+                </option>
+                {vendorBanks.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.bankName} ••{b.accountLast4}
+                    {b.isPrimary ? ' (primary)' : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+            <div className="os-field">
+              <label htmlFor="vp-date" className="os-field-label">
+                Payment date
+              </label>
+              <input
+                id="vp-date"
+                type="date"
+                value={paymentDate}
+                onChange={(e) => setPaymentDate(e.target.value)}
+                disabled={submitting}
+                style={osInputStyle}
+              />
             </div>
             <div className="os-field">
               <label htmlFor="vp-amt" className="os-field-label">
@@ -566,22 +667,6 @@ function RecordVendorPaymentDialog({
                 style={osInputStyle}
               />
             </div>
-          </div>
-
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 12 }}>
-            <div className="os-field">
-              <label htmlFor="vp-date" className="os-field-label">
-                Payment date
-              </label>
-              <input
-                id="vp-date"
-                type="date"
-                value={paymentDate}
-                onChange={(e) => setPaymentDate(e.target.value)}
-                disabled={submitting}
-                style={osInputStyle}
-              />
-            </div>
             <div className="os-field">
               <label htmlFor="vp-notes" className="os-field-label">
                 Notes (optional)
@@ -589,9 +674,42 @@ function RecordVendorPaymentDialog({
               <input
                 id="vp-notes"
                 type="text"
-                placeholder="UTR / cheque no. / memo"
+                placeholder="UTR / cheque no."
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
+                disabled={submitting}
+                style={osInputStyle}
+              />
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div className="os-field">
+              <label htmlFor="vp-gst" className="os-field-label">
+                GST ₹ (optional)
+              </label>
+              <input
+                id="vp-gst"
+                type="text"
+                inputMode="decimal"
+                placeholder="0.00"
+                value={gstRupees}
+                onChange={(e) => setGstRupees(e.target.value)}
+                disabled={submitting}
+                style={osInputStyle}
+              />
+            </div>
+            <div className="os-field">
+              <label htmlFor="vp-tds" className="os-field-label">
+                TDS ₹ (optional)
+              </label>
+              <input
+                id="vp-tds"
+                type="text"
+                inputMode="decimal"
+                placeholder="0.00"
+                value={tdsRupees}
+                onChange={(e) => setTdsRupees(e.target.value)}
                 disabled={submitting}
                 style={osInputStyle}
               />
