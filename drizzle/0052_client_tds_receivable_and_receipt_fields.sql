@@ -18,14 +18,19 @@
 --      - captured_gst_amount_paise → GST portion of the payment, recorded for
 --        the record (GST itself is posted at invoice time, not here).
 
+-- Idempotent: on the shared prod DB `1260` may already exist (main's
+-- 0049_client_receipts seeds it) and the columns may be partially present, so
+-- guard every statement — this migration must be safe to (re-)apply on top of
+-- either a fresh branch DB or the main-advanced prod DB.
 INSERT INTO "accounts" (code, name, type, is_control, subledger_kind) VALUES
-  ('1260', 'TDS Receivable', 'asset', false, NULL);
+  ('1260', 'TDS Receivable', 'asset', false, NULL)
+  ON CONFLICT (code) DO NOTHING;
 --> statement-breakpoint
 
 ALTER TABLE "receipts"
-  ADD COLUMN "counterparty_bank_account_id" uuid
+  ADD COLUMN IF NOT EXISTS "counterparty_bank_account_id" uuid
     REFERENCES "entity_bank_accounts"("id") ON DELETE SET NULL;
 --> statement-breakpoint
 
 ALTER TABLE "receipts"
-  ADD COLUMN "captured_gst_amount_paise" bigint DEFAULT 0 NOT NULL;
+  ADD COLUMN IF NOT EXISTS "captured_gst_amount_paise" bigint DEFAULT 0 NOT NULL;
