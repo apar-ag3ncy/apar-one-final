@@ -262,8 +262,7 @@ function CreditAvailableCard({
           {formatINR(creditPaise)}
         </div>
         <p className="text-muted-foreground mt-1 text-xs">
-          {clientName} has paid more than we&apos;ve billed. This surplus is held in our accounts
-          and can be applied to their next invoice or refunded.
+          {`${clientName} has paid more than we've billed. This surplus is held in our accounts and can be applied to their next invoice or refunded.`}
         </p>
       </CardContent>
     </Card>
