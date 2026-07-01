@@ -44,18 +44,21 @@ export function VendorPaymentsSection({
 }) {
   const [payments, setPayments] = useState<readonly VendorPaymentRow[] | null>(null);
   const [due, setDue] = useState<DueState | null>(null);
+  const [bills, setBills] = useState<readonly OpenBillRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [reversing, setReversing] = useState<{ id: string; amount: bigint } | null>(null);
 
   async function reload() {
     try {
-      const [p, d] = await Promise.all([
+      const [p, d, b] = await Promise.all([
         listVendorPayments(vendorId),
         getVendorPayablesByProject(vendorId),
+        listOpenBillsForVendor(vendorId),
       ]);
       setPayments(p);
       setDue(d);
+      setBills(b);
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not load transactions');
@@ -64,11 +67,16 @@ export function VendorPaymentsSection({
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([listVendorPayments(vendorId), getVendorPayablesByProject(vendorId)])
-      .then(([p, d]) => {
+    Promise.all([
+      listVendorPayments(vendorId),
+      getVendorPayablesByProject(vendorId),
+      listOpenBillsForVendor(vendorId),
+    ])
+      .then(([p, d, b]) => {
         if (cancelled) return;
         setPayments(p);
         setDue(d);
+        setBills(b);
         setError(null);
       })
       .catch((e) => {
@@ -82,13 +90,15 @@ export function VendorPaymentsSection({
   if (error) {
     return <EmptyState icon={WalletIcon} title="Could not load transactions" description={error} />;
   }
-  if (payments === null || due === null) {
+  if (payments === null || due === null || bills === null) {
     return <Skeleton className="h-40 w-full" />;
   }
 
   return (
     <div className="flex flex-col gap-4">
       <DueToPayCard due={due} />
+
+      <BillDuesCard bills={bills} />
 
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
@@ -217,6 +227,65 @@ function DueToPayCard({ due }: { due: DueState }) {
           </ul>
         ) : (
           <p className="text-muted-foreground mt-3 text-sm italic">Nothing outstanding.</p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+/** Per-bill remaining dues — each open bill with how much is still due
+ * (recorded payable minus what's been paid/adjusted). */
+function BillDuesCard({ bills }: { bills: readonly OpenBillRow[] }) {
+  const totalDue = bills.reduce((acc, b) => acc + b.outstandingPaise, 0n);
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between">
+        <CardTitle className="text-base">
+          Bill dues{' '}
+          <span className="text-muted-foreground text-xs font-normal">({bills.length})</span>
+        </CardTitle>
+        {bills.length > 0 ? (
+          <span className="font-mono text-sm tabular-nums">{formatINR(totalDue)} due</span>
+        ) : null}
+      </CardHeader>
+      <CardContent className="p-0">
+        {bills.length === 0 ? (
+          <p className="text-muted-foreground px-6 pb-4 text-sm italic">
+            No open bills — everything is cleared.
+          </p>
+        ) : (
+          <ul className="divide-y">
+            {bills.map((bill) => {
+              const paidPaise = bill.totalPaise - bill.outstandingPaise;
+              const partiallyPaid = paidPaise > 0n;
+              return (
+                <li key={bill.billId} className="flex items-center justify-between gap-3 px-4 py-3">
+                  <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-mono text-sm">{bill.documentNumber}</span>
+                      <StatusBadge
+                        tone={partiallyPaid ? 'info' : 'warning'}
+                        label={partiallyPaid ? 'partially paid' : 'unpaid'}
+                        dot={false}
+                      />
+                    </div>
+                    <div className="text-muted-foreground text-xs">
+                      {bill.projectName ?? 'No project'} · {formatDate(bill.documentDate)}
+                    </div>
+                  </div>
+                  <div className="flex shrink-0 flex-col items-end gap-0.5">
+                    <div className="font-mono text-sm tabular-nums">
+                      {formatINR(bill.outstandingPaise)}{' '}
+                      <span className="text-muted-foreground text-xs">due</span>
+                    </div>
+                    <div className="text-muted-foreground text-xs tabular-nums">
+                      of {formatINR(bill.totalPaise)}
+                    </div>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
         )}
       </CardContent>
     </Card>

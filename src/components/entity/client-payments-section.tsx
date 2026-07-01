@@ -44,18 +44,21 @@ export function ClientPaymentsSection({
 }) {
   const [receipts, setReceipts] = useState<readonly ClientReceiptRow[] | null>(null);
   const [due, setDue] = useState<DueState | null>(null);
+  const [invoices, setInvoices] = useState<readonly OpenInvoiceRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [reversing, setReversing] = useState<{ id: string; amount: bigint } | null>(null);
 
   async function reload() {
     try {
-      const [r, d] = await Promise.all([
+      const [r, d, inv] = await Promise.all([
         listClientReceipts(clientId),
         getClientReceivablesByProject(clientId),
+        listOpenInvoicesForClient(clientId),
       ]);
       setReceipts(r);
       setDue(d);
+      setInvoices(inv);
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not load transactions');
@@ -64,11 +67,16 @@ export function ClientPaymentsSection({
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([listClientReceipts(clientId), getClientReceivablesByProject(clientId)])
-      .then(([r, d]) => {
+    Promise.all([
+      listClientReceipts(clientId),
+      getClientReceivablesByProject(clientId),
+      listOpenInvoicesForClient(clientId),
+    ])
+      .then(([r, d, inv]) => {
         if (cancelled) return;
         setReceipts(r);
         setDue(d);
+        setInvoices(inv);
         setError(null);
       })
       .catch((e) => {
@@ -82,13 +90,15 @@ export function ClientPaymentsSection({
   if (error) {
     return <EmptyState icon={WalletIcon} title="Could not load transactions" description={error} />;
   }
-  if (receipts === null || due === null) {
+  if (receipts === null || due === null || invoices === null) {
     return <Skeleton className="h-40 w-full" />;
   }
 
   return (
     <div className="flex flex-col gap-4">
       <DueToCollectCard due={due} />
+
+      <InvoiceDuesCard invoices={invoices} />
 
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
@@ -217,6 +227,68 @@ function DueToCollectCard({ due }: { due: DueState }) {
           </ul>
         ) : (
           <p className="text-muted-foreground mt-3 text-sm italic">Nothing outstanding.</p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+/** Per-invoice remaining dues — each open invoice with how much is still due
+ * (captured total minus what's been received/adjusted). */
+function InvoiceDuesCard({ invoices }: { invoices: readonly OpenInvoiceRow[] }) {
+  const totalDue = invoices.reduce((acc, i) => acc + i.outstandingPaise, 0n);
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between">
+        <CardTitle className="text-base">
+          Invoice dues{' '}
+          <span className="text-muted-foreground text-xs font-normal">({invoices.length})</span>
+        </CardTitle>
+        {invoices.length > 0 ? (
+          <span className="font-mono text-sm tabular-nums">{formatINR(totalDue)} due</span>
+        ) : null}
+      </CardHeader>
+      <CardContent className="p-0">
+        {invoices.length === 0 ? (
+          <p className="text-muted-foreground px-6 pb-4 text-sm italic">
+            No open invoices — everything is cleared.
+          </p>
+        ) : (
+          <ul className="divide-y">
+            {invoices.map((inv) => {
+              const paidPaise = inv.totalPaise - inv.outstandingPaise;
+              const partiallyPaid = paidPaise > 0n;
+              return (
+                <li
+                  key={inv.invoiceId}
+                  className="flex items-center justify-between gap-3 px-4 py-3"
+                >
+                  <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-mono text-sm">{inv.documentNumber}</span>
+                      <StatusBadge
+                        tone={partiallyPaid ? 'info' : 'warning'}
+                        label={partiallyPaid ? 'partially paid' : 'unpaid'}
+                        dot={false}
+                      />
+                    </div>
+                    <div className="text-muted-foreground text-xs">
+                      {inv.projectName ?? 'No project'} · {formatDate(inv.documentDate)}
+                    </div>
+                  </div>
+                  <div className="flex shrink-0 flex-col items-end gap-0.5">
+                    <div className="font-mono text-sm tabular-nums">
+                      {formatINR(inv.outstandingPaise)}{' '}
+                      <span className="text-muted-foreground text-xs">due</span>
+                    </div>
+                    <div className="text-muted-foreground text-xs tabular-nums">
+                      of {formatINR(inv.totalPaise)}
+                    </div>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
         )}
       </CardContent>
     </Card>
