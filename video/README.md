@@ -1,57 +1,51 @@
-# Apar One — "The Bookkeeping OS" intro video
+# Apar One — "The Bookkeeping OS" — epic launch film
 
 A self-contained [Remotion](https://remotion.dev) project that renders a 60-second
-SaaS launch video for the Apar One **OS** module. It has its **own** `package.json`
-and dependencies so it never touches the Next.js app's build.
+**cinematic, 3D, generative** SaaS launch film for the Apar One **OS** module. It
+has its **own** `package.json` so it never touches the Next.js app's build.
 
 - **Composition:** `OsIntro` — authored at 1920×1080, 30fps, 1800 frames (60s)
-- **Output:** rendered at `--scale=2` → **true 3840×2160 (4K)**, H.264. All text,
-  UI and logo are vector so they stay razor-sharp at 4K.
-- **Brand:** color `#ee3a24`, wordmark from `../public/brand/apar-orange.svg`
-- **Real product:** the desktop reveal and every feature beat use **real 4K
-  screenshots of the live OS** (`public/os/*.png`, captured from production in
-  dark mode) and the **real OS app icons** (ported verbatim in
-  `src/components/OsIcons.tsx`).
-- **Soundtrack:** `public/soundtrack.mp3` (60s instrumental)
-
-## Regenerating the OS screenshots
-
-`public/os/*.png` are captured from production at 3840×2160 (viewport 1920×1080
-@ 2× DPI). To refresh them, run the dev/prod capture script (Playwright):
-
-```bash
-# from repo root; BASE defaults to the prod URL
-node video/scripts/capture-os.mjs
-```
-
-Reports read the production DB, so capture against prod (or a Vercel preview),
-not local dev.
+- **Output:** rendered at `--scale=2` → **true 3840×2160 (4K)**, H.264.
+- **Look:** AI-generated cinematic backdrops + KLING motion clips + the **real OS
+  screenshots on floating 3D glass panels** + kinetic typography + particles,
+  cut to an epic trailer soundtrack. Brand accent `#ee3a24` on near-black.
 
 ## Story beats (`src/OsIntro.tsx`)
 
-| # | Scene | What it shows |
-|---|-------|----------------|
-| 1 | Hook | The broken realities of bookkeeping get struck out |
-| 2 | Brand | The Apar wordmark draws on → *One · The Bookkeeping OS* |
-| 3 | Desktop | macOS-style shell: menu bar, Statement of Account window, dock |
-| 4 | Features | Trial Balance, live P&L, ledger statements, AR/AP aging, branded exports |
-| 5 | Why it wins | 20+ apps · 0 spreadsheets · 1-click audit-ready exports |
-| 6 | CTA | Logo lockup + "See the OS in action" |
+| # | Scene | Media |
+|---|-------|-------|
+| A | Ignition | Energy-core motion clip powers up · "Your books just came alive" |
+| B | Problem | Kinetic slams (Spreadsheets / Silos / Month-end dread) over a node network |
+| C | Brand | APAR logo ignites over the glowing monolith |
+| D | OS reveal | Real desktop flies in as a 3D glass slab over the holographic command center |
+| E | Features | Real Trial Balance / P&L / Statement / Balance-Sheet screenshots on flying 3D panels, over the neon ledger-city fly-through |
+| F | Momentum | Real OS app icons explode into a ring over an energy burst · stat slams |
+| G | CTA | Logo lockup over the neon horizon · "See the OS in action" |
+
+## Generated assets
+
+- **Images** (`public/gen/*.png`): Google **Nano Banana 2 Pro** @ 2K, 16:9.
+- **Motion clips** (`public/gen/*.mp4`): **KLING 2.5** @ 720p/10s, image-to-video
+  from the stills above.
+- **Soundtrack** (`public/soundtrack-epic.mp3`): 60s epic instrumental.
+- **Real OS screenshots** (`public/os/*.png`): 4K captures of the live product
+  (dark mode), reproducible via `node video/scripts/capture-os.mjs`.
+
+The `src/gen.ts` manifest maps each asset; `HeroMedia` plays the KLING clip when
+`hasVideo` is set, otherwise Ken Burns the still.
 
 ## Commands
 
 ```bash
 cd video
-npm install          # first time only
-npm run studio       # open the Remotion Studio to edit/preview live
-npm run render       # render to out/apar-os-intro.mp4 (h264)
-npm run render:hd    # same, crf=18 (higher quality)
-npm run still        # export a poster frame
+npm install
+npm run studio      # live editor
+npm run render      # → out/apar-os-epic-4k.mp4 (4K)
 ```
 
-## Editing tips
+## Reusable building blocks (`src/components`)
 
-- Copy, colors, and timing live in `src/scenes/*` and `src/theme.ts`.
-- Mock product UI (windows, tables, charts) is in `src/components/`.
-- Scene durations are wired in `src/OsIntro.tsx`; keep the total at 1800 frames
-  (or bump `durationInFrames` in `src/Root.tsx` to match).
+`HeroMedia` (video/still backdrop), `KenBurns`, `Glass3DPanel` (3D screenshot
+slab), `KineticText` (`KineticWords` + `SlamText`), `Particles` (deterministic
+embers), `Overlays` (`Vignette`, `Scanlines`, `Grid3D`, `LightSweep`,
+`RgbGlitch`, `Flash`), `OsIcons` (the real OS icon set), `AparLogo`.
