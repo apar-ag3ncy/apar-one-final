@@ -9,6 +9,7 @@ import { entityBankAccounts } from '@/lib/db/schema';
 import { AppError } from '@/lib/errors';
 import { requireCapability, type Capability } from '@/lib/rbac';
 import { getActorContext } from '@/lib/server/actor';
+import { removeVaultObject, storeBank } from '@/lib/storage';
 
 export type BankAccountEntityType = 'client' | 'vendor' | 'employee' | 'project' | 'office';
 export type BankAccountTypeDb = 'current' | 'savings' | 'od' | 'escrow';
@@ -28,10 +29,12 @@ const BankAccountInputSchema = z.object({
   entityType: entityTypeSchema,
   entityId: z.string().uuid(),
   holderName: z.string().min(1).max(200),
-  accountLast4: z
+  // The FULL account number — server-only. It is written to the vault and the
+  // last-4 is derived from it; it is NEVER persisted on the row.
+  accountNumber: z
     .string()
-    .length(4)
-    .regex(/^[0-9]{4}$/),
+    .trim()
+    .regex(/^[0-9]{4,20}$/, 'Account number must be 4–20 digits.'),
   ifsc: z
     .string()
     .min(11)
@@ -41,17 +44,15 @@ const BankAccountInputSchema = z.object({
   branch: z.string().max(120).optional().nullable(),
   accountType: accountTypeSchema,
   isPrimary: z.boolean().default(false),
-  vaultObjectKey: z.string().min(1),
   notes: z.string().max(2000).optional().nullable(),
 });
 
+// Metadata-only patch. The account number (and its vault blob + last-4) is
+// immutable here: to change it, remove the account and add it again — that path
+// re-runs the vault write. So `accountLast4`/`vaultObjectKey` are intentionally
+// absent, which keeps the row's last-4 in sync with the vaulted number.
 const BankAccountPatchSchema = z.object({
   holderName: z.string().min(1).max(200).optional(),
-  accountLast4: z
-    .string()
-    .length(4)
-    .regex(/^[0-9]{4}$/)
-    .optional(),
   ifsc: z
     .string()
     .regex(/^[A-Z]{4}0[A-Z0-9]{6}$/)
@@ -60,7 +61,6 @@ const BankAccountPatchSchema = z.object({
   branch: z.string().max(120).optional().nullable(),
   accountType: accountTypeSchema.optional(),
   isPrimary: z.boolean().optional(),
-  vaultObjectKey: z.string().min(1).optional(),
   isVerified: z.boolean().optional(),
   verificationNotes: z.string().max(500).optional().nullable(),
   notes: z.string().max(2000).optional().nullable(),
@@ -147,54 +147,71 @@ export async function createBankAccount(input: BankAccountInput): Promise<BankAc
   const parsed = BankAccountInputSchema.parse(input);
   requireCapability(ctx, updateCapabilityFor(parsed.entityType));
 
-  return await db.transaction(async (tx) => {
-    if (parsed.isPrimary) {
-      // At most one primary bank account per entity.
-      await tx
-        .update(entityBankAccounts)
-        .set({ isPrimary: false, updatedBy: ctx.userId })
-        .where(
-          and(
-            eq(entityBankAccounts.entityType, parsed.entityType),
-            eq(entityBankAccounts.entityId, parsed.entityId),
-            eq(entityBankAccounts.isPrimary, true),
-            isNull(entityBankAccounts.deletedAt),
-          ),
-        );
-    }
-    const [row] = await tx
-      .insert(entityBankAccounts)
-      .values({
-        entityType: parsed.entityType,
-        entityId: parsed.entityId,
-        holderName: parsed.holderName,
-        accountLast4: parsed.accountLast4,
-        ifsc: parsed.ifsc,
-        bankName: parsed.bankName,
-        branch: parsed.branch ?? null,
-        accountType: parsed.accountType,
-        isPrimary: parsed.isPrimary,
-        vaultObjectKey: parsed.vaultObjectKey,
-        notes: parsed.notes ?? null,
-        createdBy: ctx.userId,
-        updatedBy: ctx.userId,
-      })
-      .returning();
-    if (!row) throw new AppError('internal', 'entity_bank_accounts insert returned no row');
+  const accountLast4 = parsed.accountNumber.slice(-4);
 
-    await logActivity(
-      {
-        entityType: parsed.entityType,
-        entityId: parsed.entityId,
-        actorId: ctx.userId,
-        kind: 'bank.added',
-        summary: `Added bank account at ${parsed.bankName} (****${parsed.accountLast4})`,
-        payload: { bankAccountId: row.id, last4: parsed.accountLast4 },
-      },
-      tx as unknown as DbClient,
-    );
-    return rowToBank(row);
+  // Vault discipline: write the full number to the encrypted bucket FIRST, then
+  // store only the last-4 + the returned object key on the row. If the row
+  // insert fails we best-effort remove the just-written blob so a failed create
+  // doesn't leak an orphaned vault object.
+  const { objectKey } = await storeBank(ctx, {
+    accountNumber: parsed.accountNumber,
+    entityType: parsed.entityType,
+    entityId: parsed.entityId,
   });
+
+  try {
+    return await db.transaction(async (tx) => {
+      if (parsed.isPrimary) {
+        // At most one primary bank account per entity.
+        await tx
+          .update(entityBankAccounts)
+          .set({ isPrimary: false, updatedBy: ctx.userId })
+          .where(
+            and(
+              eq(entityBankAccounts.entityType, parsed.entityType),
+              eq(entityBankAccounts.entityId, parsed.entityId),
+              eq(entityBankAccounts.isPrimary, true),
+              isNull(entityBankAccounts.deletedAt),
+            ),
+          );
+      }
+      const [row] = await tx
+        .insert(entityBankAccounts)
+        .values({
+          entityType: parsed.entityType,
+          entityId: parsed.entityId,
+          holderName: parsed.holderName,
+          accountLast4,
+          ifsc: parsed.ifsc,
+          bankName: parsed.bankName,
+          branch: parsed.branch ?? null,
+          accountType: parsed.accountType,
+          isPrimary: parsed.isPrimary,
+          vaultObjectKey: objectKey,
+          notes: parsed.notes ?? null,
+          createdBy: ctx.userId,
+          updatedBy: ctx.userId,
+        })
+        .returning();
+      if (!row) throw new AppError('internal', 'entity_bank_accounts insert returned no row');
+
+      await logActivity(
+        {
+          entityType: parsed.entityType,
+          entityId: parsed.entityId,
+          actorId: ctx.userId,
+          kind: 'bank.added',
+          summary: `Added bank account at ${parsed.bankName} (****${accountLast4})`,
+          payload: { bankAccountId: row.id, last4: accountLast4 },
+        },
+        tx as unknown as DbClient,
+      );
+      return rowToBank(row);
+    });
+  } catch (e) {
+    await removeVaultObject(objectKey);
+    throw e;
+  }
 }
 
 export async function updateBankAccount(
@@ -232,13 +249,11 @@ export async function updateBankAccount(
       .update(entityBankAccounts)
       .set({
         holderName: parsed.holderName ?? existing.holderName,
-        accountLast4: parsed.accountLast4 ?? existing.accountLast4,
         ifsc: parsed.ifsc ?? existing.ifsc,
         bankName: parsed.bankName ?? existing.bankName,
         branch: parsed.branch === undefined ? existing.branch : parsed.branch,
         accountType: parsed.accountType ?? existing.accountType,
         isPrimary: parsed.isPrimary ?? existing.isPrimary,
-        vaultObjectKey: parsed.vaultObjectKey ?? existing.vaultObjectKey,
         isVerified: parsed.isVerified ?? existing.isVerified,
         verifiedAt,
         verificationNotes:

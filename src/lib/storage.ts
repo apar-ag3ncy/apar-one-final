@@ -132,6 +132,63 @@ export async function revealBank(
 }
 
 /**
+ * Write a full bank-account number to the encrypted KYC vault and return the
+ * object key to persist on the entity_bank_accounts row (only the last-4 +
+ * this key are stored; the plaintext never touches a normal column). Mirrors
+ * revealBank's audit discipline — every vault write is audit-logged. Callers
+ * write the vault FIRST, then insert the row; on insert failure they call
+ * removeVaultObject to avoid leaking an orphaned blob.
+ */
+export async function storeBank(
+  ctx: CurrentUserContext,
+  args: {
+    accountNumber: string;
+    entityType: string;
+    entityId: string;
+  },
+): Promise<{ objectKey: string }> {
+  const objectKey = `${args.entityType}/${args.entityId}/${crypto.randomUUID()}-bank.txt`;
+  const admin = createAdminClient();
+  const { error } = await admin.storage
+    .from(KYC_BUCKET)
+    .upload(objectKey, new TextEncoder().encode(args.accountNumber), {
+      contentType: 'text/plain; charset=utf-8',
+      cacheControl: '0',
+      upsert: false,
+    });
+  if (error) {
+    throw new AppError('internal', 'Failed to store the bank account number in the vault.', {
+      cause: error,
+    });
+  }
+
+  await logAudit({
+    actorId: ctx.userId,
+    entityType: args.entityType,
+    entityId: args.entityId,
+    action: 'store_bank',
+    changes: { object_key: objectKey, last4: args.accountNumber.slice(-4) },
+  });
+
+  return { objectKey };
+}
+
+/** Best-effort delete of a vault object (used to unwind a failed create). Never
+ * throws — an orphaned blob is harmless to correctness; we log it for sweeping. */
+export async function removeVaultObject(objectKey: string): Promise<void> {
+  try {
+    const admin = createAdminClient();
+    const { error } = await admin.storage.from(KYC_BUCKET).remove([objectKey]);
+    if (error) throw error;
+  } catch (e) {
+    console.error('[storage.removeVaultObject] failed to delete orphaned vault object', {
+      objectKey,
+      error: e,
+    });
+  }
+}
+
+/**
  * Get a signed URL for a regular (non-KYC) document. SPEC-AMENDMENT-001
  * §10.3 — used by `<DocumentViewer>` to render the PDF inline. Caller
  * decides whether the audit + activity row should be written; we
