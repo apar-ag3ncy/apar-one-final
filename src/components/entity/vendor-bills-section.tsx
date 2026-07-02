@@ -11,6 +11,7 @@ import { StatusBadge } from '@/components/shared/status-badge';
 import { formatINR } from '@/components/shared/format-inr';
 import { PostTransactionDialog } from './post-transaction-dialog';
 import { VendorBillForm } from './vendor-bill-form';
+import { useEntityMutation } from '@/components/os/auth/entity-mutation-gate';
 import {
   listVendorBillsForClient,
   listVendorBillsForVendor,
@@ -48,6 +49,9 @@ export function ClientExpensesOnBehalfSection({
   const [error, setError] = useState<string | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [posting, setPosting] = useState<{ id: string; ref: string } | null>(null);
+  // OS read-only bridge — permissive outside the OS. Recording + posting a
+  // bill are both edits on the clients app.
+  const { canEdit } = useEntityMutation();
 
   async function reload() {
     try {
@@ -89,10 +93,12 @@ export function ClientExpensesOnBehalfSection({
             Expenses on behalf{' '}
             <span className="text-muted-foreground text-xs font-normal">({rows.length})</span>
           </CardTitle>
-          <Button size="sm" onClick={() => setFormOpen(true)}>
-            <PlusIcon className="mr-1.5 size-4" aria-hidden />
-            Record expense
-          </Button>
+          {canEdit ? (
+            <Button size="sm" onClick={() => setFormOpen(true)}>
+              <PlusIcon className="mr-1.5 size-4" aria-hidden />
+              Record expense
+            </Button>
+          ) : null}
         </CardHeader>
         <CardContent className="p-0">
           {rows.length === 0 ? (
@@ -104,7 +110,11 @@ export function ClientExpensesOnBehalfSection({
           ) : (
             <BillsList
               rows={rows}
-              onPost={(r) => setPosting({ id: r.id, ref: r.vendorInvoiceNumber ?? r.reference })}
+              onPost={
+                canEdit
+                  ? (r) => setPosting({ id: r.id, ref: r.vendorInvoiceNumber ?? r.reference })
+                  : undefined
+              }
             />
           )}
         </CardContent>
@@ -152,6 +162,9 @@ export function VendorBillsSection({
   const [error, setError] = useState<string | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [posting, setPosting] = useState<{ id: string; ref: string } | null>(null);
+  // OS read-only bridge — permissive outside the OS. Recording + posting a
+  // bill are both edits on the vendors app.
+  const { canEdit } = useEntityMutation();
 
   async function reload() {
     try {
@@ -192,10 +205,12 @@ export function VendorBillsSection({
           <CardTitle className="text-base">
             Bills <span className="text-muted-foreground text-xs font-normal">({rows.length})</span>
           </CardTitle>
-          <Button size="sm" onClick={() => setFormOpen(true)}>
-            <PlusIcon className="mr-1.5 size-4" aria-hidden />
-            New bill
-          </Button>
+          {canEdit ? (
+            <Button size="sm" onClick={() => setFormOpen(true)}>
+              <PlusIcon className="mr-1.5 size-4" aria-hidden />
+              New bill
+            </Button>
+          ) : null}
         </CardHeader>
         <CardContent className="p-0">
           {rows.length === 0 ? (
@@ -207,7 +222,11 @@ export function VendorBillsSection({
           ) : (
             <BillsList
               rows={rows}
-              onPost={(r) => setPosting({ id: r.id, ref: r.vendorInvoiceNumber ?? r.reference })}
+              onPost={
+                canEdit
+                  ? (r) => setPosting({ id: r.id, ref: r.vendorInvoiceNumber ?? r.reference })
+                  : undefined
+              }
             />
           )}
         </CardContent>

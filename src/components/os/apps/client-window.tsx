@@ -25,6 +25,7 @@ import {
   type UserOption,
 } from '@/components/projects/new-project-dialog';
 import type { Project, ProjectStatus } from '@/components/projects/types';
+import { useEntityMutation } from '../auth/entity-mutation-gate';
 import { useRealtimeActivity } from '@/lib/client/use-realtime-activity';
 import { getEntityActivity } from '@/lib/server/entities/activity';
 import { listContacts, type ContactRow } from '@/lib/server/entities/contacts';
@@ -104,6 +105,8 @@ export function ClientWindow({ clientId, onClose }: ClientWindowProps) {
   const [state, setState] = useState<State>({ kind: 'loading' });
   const [tab, setTab] = useState<ClientTab>('overview');
   const [reloadKey, setReloadKey] = useState(0);
+  // OS edit grant for the clients app (provided by os-root's EntityMutationGate).
+  const { canEdit } = useEntityMutation();
 
   useEffect(() => {
     let cancelled = false;
@@ -174,7 +177,11 @@ export function ClientWindow({ clientId, onClose }: ClientWindowProps) {
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
       <Header
         client={client}
-        actions={<ClientEditDialog client={client} onSaved={() => setReloadKey((k) => k + 1)} />}
+        actions={
+          canEdit ? (
+            <ClientEditDialog client={client} onSaved={() => setReloadKey((k) => k + 1)} />
+          ) : undefined
+        }
       />
       <div className="tabs">
         {tabs.map((t) => (
@@ -270,6 +277,8 @@ function ProjectsBody({
   onProjectCreated: () => void;
 }) {
   const [dialogOpen, setDialogOpen] = useState(false);
+  // Composing a project is an edit on the clients app.
+  const { canEdit } = useEntityMutation();
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -285,22 +294,24 @@ function ProjectsBody({
             ? 'No projects yet'
             : `${projects.length} project${projects.length === 1 ? '' : 's'} for ${client.name}`}
         </div>
-        <button
-          type="button"
-          onClick={() => setDialogOpen(true)}
-          style={{
-            background: 'var(--accent, #4a72ff)',
-            color: '#fff',
-            border: 0,
-            borderRadius: 8,
-            padding: '8px 14px',
-            fontSize: 13,
-            fontWeight: 600,
-            cursor: 'pointer',
-          }}
-        >
-          New Project
-        </button>
+        {canEdit ? (
+          <button
+            type="button"
+            onClick={() => setDialogOpen(true)}
+            style={{
+              background: 'var(--accent, #4a72ff)',
+              color: '#fff',
+              border: 0,
+              borderRadius: 8,
+              padding: '8px 14px',
+              fontSize: 13,
+              fontWeight: 600,
+              cursor: 'pointer',
+            }}
+          >
+            New Project
+          </button>
+        ) : null}
       </div>
 
       {projects.length === 0 ? (

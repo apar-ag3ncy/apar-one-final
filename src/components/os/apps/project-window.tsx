@@ -13,6 +13,7 @@ import { EntitySettingsSection } from '@/components/entity/entity-settings-secti
 import { DocumentsSection } from '@/components/entity/documents-section';
 import { TransactionList, type Transaction } from '@/components/entity/transaction-list';
 import { ProjectStatusChanger } from '@/components/projects/project-status-changer';
+import { useEntityMutation } from '../auth/entity-mutation-gate';
 import {
   PROJECT_DB_STATUS_LABELS,
   type Project,
@@ -62,6 +63,8 @@ export function ProjectWindow({ projectId, onClose }: ProjectWindowProps) {
   const [state, setState] = useState<State>({ kind: 'loading' });
   const [tab, setTab] = useState<ProjectTab>('overview');
   const [reloadKey, setReloadKey] = useState(0);
+  // OS edit grant for the projects app (provided by os-root's EntityMutationGate).
+  const { canEdit } = useEntityMutation();
 
   useEffect(() => {
     let cancelled = false;
@@ -107,7 +110,11 @@ export function ProjectWindow({ projectId, onClose }: ProjectWindowProps) {
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-      <Header project={project} onStatusChanged={() => setReloadKey((k) => k + 1)} />
+      <Header
+        project={project}
+        canEdit={canEdit}
+        onStatusChanged={() => setReloadKey((k) => k + 1)}
+      />
       <div className="tabs">
         {tabs.map((t) => (
           <div key={t} className={`tab ${tab === t ? 'active' : ''}`} onClick={() => setTab(t)}>
@@ -149,7 +156,15 @@ export function ProjectWindow({ projectId, onClose }: ProjectWindowProps) {
 /* Header                                                                      */
 /* -------------------------------------------------------------------------- */
 
-function Header({ project, onStatusChanged }: { project: Project; onStatusChanged?: () => void }) {
+function Header({
+  project,
+  canEdit,
+  onStatusChanged,
+}: {
+  project: Project;
+  canEdit: boolean;
+  onStatusChanged?: () => void;
+}) {
   const tone = PROJECT_STATUS_TONE[project.status];
   return (
     <div
@@ -223,13 +238,15 @@ function Header({ project, onStatusChanged }: { project: Project; onStatusChange
           </span>
         </div>
       </div>
-      <div style={{ flexShrink: 0 }}>
-        <ProjectStatusChanger
-          projectId={project.id}
-          value={project.dbStatus}
-          onChanged={onStatusChanged}
-        />
-      </div>
+      {canEdit ? (
+        <div style={{ flexShrink: 0 }}>
+          <ProjectStatusChanger
+            projectId={project.id}
+            value={project.dbStatus}
+            onChanged={onStatusChanged}
+          />
+        </div>
+      ) : null}
     </div>
   );
 }

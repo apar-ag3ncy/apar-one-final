@@ -32,6 +32,7 @@ import { EmptyState } from '@/components/shared/empty-state';
 import { StatusBadge, type StatusTone } from '@/components/shared/status-badge';
 import { InvoiceComposerDialog } from '@/components/entity/billing/invoice-composer';
 import { useCurrentUser } from '@/lib/client/use-current-user';
+import { useEntityMutation } from '@/components/os/auth/entity-mutation-gate';
 import { formatINR } from '@/lib/money';
 import {
   deleteDraftInvoice,
@@ -78,9 +79,12 @@ export type ClientInvoicesSectionProps = {
 
 export function ClientInvoicesSection({ clientId, clientName }: ClientInvoicesSectionProps) {
   const { hasCapability } = useCurrentUser();
-  const canCompose = hasCapability('create_invoice');
-  const canManageThemes = hasCapability('manage_invoice_themes');
-  const canDelete = hasCapability('void_invoice');
+  // OS read-only bridge — permissive outside the OS. Compose/theme edits hang
+  // off the OS edit grant; voiding an invoice off the delete grant.
+  const { canEdit: osCanEdit, canDelete: osCanDelete } = useEntityMutation();
+  const canCompose = osCanEdit && hasCapability('create_invoice');
+  const canManageThemes = osCanEdit && hasCapability('manage_invoice_themes');
+  const canDelete = osCanDelete && hasCapability('void_invoice');
 
   const [rows, setRows] = useState<readonly InvoiceRow[] | null>(null);
   const [themes, setThemes] = useState<InvoiceThemeSummary[]>([]);

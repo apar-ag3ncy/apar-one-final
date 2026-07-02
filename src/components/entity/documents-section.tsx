@@ -36,6 +36,7 @@ import {
 } from '@/lib/server/entities/entity-documents';
 import { getDocumentSignedUrl } from '@/lib/server/entities/documents';
 import { useCurrentUser } from '@/lib/client/use-current-user';
+import { useEntityMutation } from '@/components/os/auth/entity-mutation-gate';
 import { rupeesToPaise } from '@/lib/money';
 import { todayIstIso } from '@/lib/billing/fy';
 import {
@@ -123,6 +124,10 @@ export function DocumentsSection({
   const [uploadOpen, setUploadOpen] = useState(false);
   const [viewing, setViewing] = useState<EntityDocumentRow | null>(null);
 
+  // OS read-only bridge — permissive outside the OS. Upload is the only
+  // mutation here (view / download are reads); gate it on the OS edit grant.
+  const { canEdit } = useEntityMutation();
+
   // Load + reload on demand.
   const reload = useRef<() => Promise<void>>(async () => {});
   useEffect(() => {
@@ -165,10 +170,12 @@ export function DocumentsSection({
             Documents{' '}
             <span className="text-muted-foreground text-xs font-normal">({rows.length})</span>
           </CardTitle>
-          <Button size="sm" onClick={() => setUploadOpen(true)}>
-            <UploadIcon className="mr-1.5 size-4" aria-hidden />
-            Upload document
-          </Button>
+          {canEdit ? (
+            <Button size="sm" onClick={() => setUploadOpen(true)}>
+              <UploadIcon className="mr-1.5 size-4" aria-hidden />
+              Upload document
+            </Button>
+          ) : null}
         </CardHeader>
         <CardContent className="p-0">
           {rows.length === 0 ? (

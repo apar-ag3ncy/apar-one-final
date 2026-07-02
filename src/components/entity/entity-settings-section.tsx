@@ -13,6 +13,7 @@
 import { useEffect, useState } from 'react';
 
 import { useCurrentUser } from '@/lib/client/use-current-user';
+import { useEntityMutation } from '@/components/os/auth/entity-mutation-gate';
 import { archiveClient, restoreClient, hardDeleteClient } from '@/lib/server/entities/clients';
 import { archiveVendor, restoreVendor, hardDeleteVendor } from '@/lib/server/entities/vendors';
 import {
@@ -83,9 +84,15 @@ export function EntitySettingsSection({
   onDeleted,
 }: EntitySettingsSectionProps) {
   const { user, hasCapability } = useCurrentUser();
+  // OS read-only bridge: archive / restore / permanent-delete are all
+  // destructive, so they hang off the OS "delete" grant. Permissive outside
+  // the OS (no provider) — the real (app) surface still relies on the
+  // capability + partner checks below and server-side enforcement.
+  const { canDelete: osCanMutate } = useEntityMutation();
   const isPartner = user?.role === 'partner';
-  const canArchive = hasCapability(ARCHIVE_CAPS[kind]);
-  const canRestore = hasCapability(RESTORE_CAPS[kind]);
+  const canArchive = osCanMutate && hasCapability(ARCHIVE_CAPS[kind]);
+  const canRestore = osCanMutate && hasCapability(RESTORE_CAPS[kind]);
+  const canHardDelete = osCanMutate && isPartner;
 
   const [busy, setBusy] = useState<'archive' | 'restore' | 'delete' | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -167,7 +174,7 @@ export function EntitySettingsSection({
               {busy === 'archive' ? 'Archiving…' : 'Archive'}
             </button>
           )}
-          {isPartner ? (
+          {canHardDelete ? (
             <button
               type="button"
               className="btn"
@@ -182,7 +189,7 @@ export function EntitySettingsSection({
         {error ? (
           <p style={{ fontSize: 12, color: 'var(--text-error, #c33)', marginTop: 8 }}>{error}</p>
         ) : null}
-        {!canArchive && !canRestore && !isPartner ? (
+        {!canArchive && !canRestore && !canHardDelete ? (
           <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 8 }}>
             Your role doesn&apos;t have lifecycle capabilities for this {kind}.
           </p>

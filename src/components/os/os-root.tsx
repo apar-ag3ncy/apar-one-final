@@ -14,6 +14,7 @@ import { APP_REGISTRY, isPortalOnlyRole } from '@/lib/os/app-registry';
 import { osActions, useOsStore, type WindowState } from '@/lib/os/store';
 import { useWindowUrlSync } from '@/lib/url/per-window-nuqs';
 import { AdminConsole } from './auth/admin-console';
+import { EntityMutationGate } from './auth/entity-mutation-gate';
 import { LockScreen } from './auth/lock-screen';
 import { useAuth, SUPER_ADMIN_USER_ID } from './auth/store';
 import { can } from './auth/types';
@@ -185,8 +186,14 @@ function Desktop({ signOut }: { signOut: () => void }) {
   const windows = useOsStore((s) => s.windows);
   const focusedId = useOsStore((s) => s.focusedId);
 
-  // URL ↔ store sync (replaces the localStorage session snapshot).
-  useWindowUrlSync();
+  // Single source of truth for "may this user view this app". Used by the
+  // dock/palette filters, the openApp gate, the URL-restore filter, and the
+  // renderBody belt-and-braces guard so no path can surface a forbidden app.
+  const canViewApp = useCallback((appId: AppId) => can(user, appId, 'view'), [user]);
+
+  // URL ↔ store sync (replaces the localStorage session snapshot). Gated so a
+  // pasted `?windows=…` link can't restore an app the operator didn't grant.
+  useWindowUrlSync({ canView: canViewApp });
 
   const [cmdkOpen, setCmdkOpen] = useState(false);
   const [dockBounds, setDockBounds] = useState<DockBounds>({});
@@ -352,19 +359,23 @@ function Desktop({ signOut }: { signOut: () => void }) {
     });
     // Deep-links straight into Settings sub-sections, so the invoice format
     // editor and bank accounts are reachable from ⌘K — not just by digging
-    // through the Settings sidebar.
-    list.push({
-      icon: 'filetext',
-      label: 'Invoice format',
-      hint: 'Settings',
-      run: () => openApp('settings', { tab: 'Invoice format' }),
-    });
-    list.push({
-      icon: 'book',
-      label: 'Bank accounts',
-      hint: 'Settings',
-      run: () => openApp('settings', { tab: 'Bank accounts' }),
-    });
+    // through the Settings sidebar. Both are admin-tier panes, so only offer
+    // them when the user actually has settings edit (otherwise the deep-link
+    // would land on an access-denied pane).
+    if (can(user, 'settings', 'edit')) {
+      list.push({
+        icon: 'filetext',
+        label: 'Invoice format',
+        hint: 'Settings',
+        run: () => openApp('settings', { tab: 'Invoice format' }),
+      });
+      list.push({
+        icon: 'book',
+        label: 'Bank accounts',
+        hint: 'Settings',
+        run: () => openApp('settings', { tab: 'Bank accounts' }),
+      });
+    }
     if (can(user, 'clients', 'edit')) {
       list.push({
         icon: 'plus',
@@ -509,17 +520,28 @@ function Desktop({ signOut }: { signOut: () => void }) {
       /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(w.entityId)
     ) {
       const onClose = () => osActions.closeWindow(w.id);
+      // Carry the OS user's edit/delete grant for this app into the detail
+      // window so its (deeply nested, shared) entity sections render
+      // read-only when the operator didn't grant edit/delete.
+      const gate = (node: React.ReactNode) => (
+        <EntityMutationGate
+          canEdit={can(user, w.app, 'edit')}
+          canDelete={can(user, w.app, 'delete')}
+        >
+          {node}
+        </EntityMutationGate>
+      );
       if (w.app === 'clients') {
-        return <ClientWindow clientId={w.entityId} onClose={onClose} />;
+        return gate(<ClientWindow clientId={w.entityId} onClose={onClose} />);
       }
       if (w.app === 'vendors') {
-        return <VendorWindow vendorId={w.entityId} onClose={onClose} />;
+        return gate(<VendorWindow vendorId={w.entityId} onClose={onClose} />);
       }
       if (w.app === 'employees') {
-        return <EmployeeWindow employeeId={w.entityId} onClose={onClose} />;
+        return gate(<EmployeeWindow employeeId={w.entityId} onClose={onClose} />);
       }
       if (w.app === 'projects') {
-        return <ProjectWindow projectId={w.entityId} onClose={onClose} />;
+        return gate(<ProjectWindow projectId={w.entityId} onClose={onClose} />);
       }
     }
 
@@ -604,6 +626,31 @@ function Desktop({ signOut }: { signOut: () => void }) {
       {windows.map((w) => {
         if (w.isMinimized) return null;
         const renderBody = () => {
+          // Defense in depth: never render an app body the user can't view,
+          // no matter how the window entered the store — a pasted deep-link,
+          // a stale snapshot, or a permission revoked after the window opened.
+          // `openApp` blocks the normal path; this backstops every other one.
+          if (!canViewApp(w.app)) {
+            return (
+              <div
+                className="main"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  padding: 32,
+                  color: 'var(--text-muted)',
+                  textAlign: 'center',
+                }}
+              >
+                <div>
+                  You don&apos;t have permission to view this app.
+                  <br />
+                  Ask the operator for access.
+                </div>
+              </div>
+            );
+          }
           // Phase-4 windows route directly — their bodies handle their own
           // entityId resolution against A's actions (once those land).
           if (w.app === 'transactions') {
@@ -674,7 +721,7 @@ function Desktop({ signOut }: { signOut: () => void }) {
                 </div>
               );
             case 'attendance':
-              return <AttendanceApp />;
+              return <AttendanceApp canEdit={can(user, 'attendance', 'edit')} />;
             case 'office':
               return (
                 <div className="main">
@@ -781,6 +828,7 @@ function Desktop({ signOut }: { signOut: () => void }) {
                   onSettingsChange={setSettings}
                   onResetSettings={resetSettings}
                   currentUserRole={user.role}
+                  canEditSettings={can(user, 'settings', 'edit')}
                   onSignOut={signOut}
                   onDisplayNameChange={setDisplayName}
                   initialSection={w.tab}

@@ -106,18 +106,32 @@ function readUrlWindows(
   return out;
 }
 
+export type UseWindowUrlSyncOptions = {
+  /**
+   * View-permission gate. Returns whether the current user may open a given
+   * app. URL-restored windows are the one open path that does NOT go through
+   * `openApp` (which enforces `can(user, app, 'view')`), so without this a
+   * crafted `?windows=…` link would open apps the operator never granted.
+   * When omitted, every app is allowed (back-compat / non-gated callers).
+   */
+  canView?: (app: AppId) => boolean;
+};
+
 /**
  * Bidirectional sync between the OS store and the URL.
  *
  * Direction A (URL → store): runs once on mount. If the URL has a non-empty
  * `?windows=...`, hydrate the store from the URL. The store wins on first
- * paint after that — refreshes restore from the URL, not the store.
+ * paint after that — refreshes restore from the URL, not the store. Windows
+ * for apps the user can't view are dropped here so a shared/pasted link can
+ * never bypass the RBAC `view` gate.
  *
  * Direction B (store → URL): runs whenever the store's identity tuple
  * changes. URL changes are batched via nuqs's `history: 'replace'` so they
  * don't pollute the back stack.
  */
-export function useWindowUrlSync(): void {
+export function useWindowUrlSync(options: UseWindowUrlSyncOptions = {}): void {
+  const { canView } = options;
   const slots = useOsStore((s) => ({
     ids: s.windows.map((w) => w.id),
     tuples: s.windows.map((w) => ({ id: w.id, app: w.app, entityId: w.entityId, tab: w.tab })),
@@ -136,8 +150,11 @@ export function useWindowUrlSync(): void {
     if (slots.ids.length > 0) return; // store already populated (e.g. legacy localStorage)
     const fromUrl = readUrlWindows(urlState.windows, urlState as unknown as Record<string, string>);
     if (fromUrl.length === 0) return;
-    // Open windows in order; positions cascade.
+    // Open windows in order; positions cascade. Enforce the `view` gate so a
+    // pasted deep-link can't surface an app the operator didn't grant — this
+    // is the one open path that bypasses `openApp`'s permission check.
     for (const w of fromUrl) {
+      if (canView && !canView(w.app)) continue;
       osActions.openWindow({
         app: w.app,
         entityId: w.entityId,

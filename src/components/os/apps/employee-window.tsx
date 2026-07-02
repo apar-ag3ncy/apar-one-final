@@ -33,6 +33,7 @@ import { getEmployeeStatement, type Statement } from '@/lib/server/ledger/statem
 import { listEmployees } from '@/lib/server-stub/entity-actions';
 import { Icon } from '../icons';
 import { EmployeeProfileEditor } from '../apps';
+import { useEntityMutation } from '../auth/entity-mutation-gate';
 import { osActions } from '@/lib/os/store';
 import { navigateBesideFocused } from './navigate';
 
@@ -62,6 +63,8 @@ export function EmployeeWindow({ employeeId, onClose }: EmployeeWindowProps) {
   const [reloadKey, setReloadKey] = useState(0);
   const [roster, setRoster] = useState<readonly RosterEntry[]>([]);
   const [editing, setEditing] = useState(false);
+  // OS edit grant for the employees app (provided by os-root's EntityMutationGate).
+  const { canEdit } = useEntityMutation();
 
   useEffect(() => {
     let cancelled = false;
@@ -132,7 +135,7 @@ export function EmployeeWindow({ employeeId, onClose }: EmployeeWindowProps) {
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-      <Header employee={employee} onEdit={() => setEditing(true)} />
+      <Header employee={employee} onEdit={canEdit ? () => setEditing(true) : undefined} />
       <div className="tabs">
         {tabDefs.map((t) => (
           <div
@@ -226,7 +229,7 @@ export function EmployeeWindow({ employeeId, onClose }: EmployeeWindowProps) {
           />
         ) : null}
       </div>
-      {editing ? (
+      {editing && canEdit ? (
         <EmployeeProfileEditor
           mode="edit"
           employeeId={employee.id}
@@ -253,7 +256,8 @@ function Header({
   onEdit,
 }: {
   employee: EmployeeSummary['employee'];
-  onEdit: () => void;
+  /** Omitted when the user lacks edit permission — the button is then hidden. */
+  onEdit?: () => void;
 }) {
   return (
     <header
@@ -296,10 +300,12 @@ function Header({
       >
         {employee.status}
       </span>
-      <button className="btn" type="button" onClick={onEdit} title="Edit profile">
-        <Icon name="edit" size={13} />
-        Edit profile
-      </button>
+      {onEdit ? (
+        <button className="btn" type="button" onClick={onEdit} title="Edit profile">
+          <Icon name="edit" size={13} />
+          Edit profile
+        </button>
+      ) : null}
     </header>
   );
 }

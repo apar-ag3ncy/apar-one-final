@@ -36,6 +36,7 @@ import {
 } from '@/lib/server/entities/bank-accounts';
 import { revealBank as revealBankAction } from '@/lib/server-stub/entity-actions';
 import { useCurrentUser } from '@/lib/client/use-current-user';
+import { useEntityMutation } from '@/components/os/auth/entity-mutation-gate';
 
 /** Capability that gates add / edit / remove for each entity type. */
 const MANAGE_CAP: Record<BankAccountEntityType, string> = {
@@ -71,7 +72,13 @@ export function BankAccountsSection({
   entityName,
 }: BankAccountsSectionProps) {
   const { hasCapability } = useCurrentUser();
-  const canManage = hasCapability(MANAGE_CAP[entityType]);
+  // OS read-only bridge — permissive outside the OS. add/edit hang off the OS
+  // `canEdit` grant, removal off `canDelete`. Revealing masked bank details is
+  // a read op with no OS-model granularity, so it stays on `reveal_bank` only.
+  const { canEdit: osCanEdit, canDelete: osCanDelete } = useEntityMutation();
+  const manageCap = hasCapability(MANAGE_CAP[entityType]);
+  const canManage = osCanEdit && manageCap;
+  const canRemove = osCanDelete && manageCap;
 
   const [rows, setRows] = useState<readonly BankAccountRow[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -214,7 +221,7 @@ export function BankAccountsSection({
             : undefined
         }
         onDelete={
-          canManage
+          canRemove
             ? (a) => {
                 const row = rows.find((x) => x.id === a.id);
                 if (!row) return;

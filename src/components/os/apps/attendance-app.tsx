@@ -94,7 +94,7 @@ type PickerState = {
   y: number;
 };
 
-export function AttendanceApp() {
+export function AttendanceApp({ canEdit = false }: { canEdit?: boolean }) {
   const today = new Date();
   const todayIso = useMemo(
     () => `${today.getFullYear()}-${pad2(today.getMonth() + 1)}-${pad2(today.getDate())}`,
@@ -186,7 +186,8 @@ export function AttendanceApp() {
     current: AttendanceStatus,
     isOverride: boolean,
   ) {
-    if (busy) return;
+    // View-only users can't open the status picker.
+    if (busy || !canEdit) return;
     const rect = e.currentTarget.getBoundingClientRect();
     // Approx height: header + 7 status rows (+1 reset row) + paddings.
     const approxHeight = 36 + STATUS_ORDER.length * 28 + (isOverride ? 36 : 0) + 12;
@@ -204,7 +205,7 @@ export function AttendanceApp() {
   }
 
   async function pickStatus(value: AttendanceStatus) {
-    if (!picker) return;
+    if (!picker || !canEdit) return;
     const { employeeId, date } = picker;
     setPicker(null);
     setBusy(true);
@@ -219,7 +220,7 @@ export function AttendanceApp() {
   }
 
   async function pickClear() {
-    if (!picker) return;
+    if (!picker || !canEdit) return;
     const { employeeId, date } = picker;
     setPicker(null);
     setBusy(true);
@@ -261,6 +262,7 @@ export function AttendanceApp() {
   }, [picker]);
 
   async function cellClear(employeeId: string, date: string) {
+    if (!canEdit) return;
     setBusy(true);
     try {
       await clearAttendance({ employeeId, date });
@@ -273,7 +275,7 @@ export function AttendanceApp() {
   }
 
   async function markAllOnDate(status: AttendanceStatus) {
-    if (!rows) return;
+    if (!rows || !canEdit) return;
     if (!/^\d{4}-\d{2}-\d{2}$/.test(bulkDate)) {
       toast.error('Pick a valid date first.');
       return;
@@ -351,11 +353,12 @@ export function AttendanceApp() {
           </button>
           <span style={{ width: 1, height: 20, background: 'var(--border)', margin: '0 2px' }} />
           <ExportAttendanceDialog />
-          <ImportAttendanceDialog onImported={reload} />
+          {canEdit ? <ImportAttendanceDialog onImported={reload} /> : null}
         </div>
       </div>
 
-      {/* Bulk actions */}
+      {/* Bulk actions — mutation controls; hidden for view-only users. The
+          Legend stays visible so the matrix colours are always explained. */}
       <div
         style={{
           display: 'flex',
@@ -366,60 +369,68 @@ export function AttendanceApp() {
           flexWrap: 'wrap',
         }}
       >
-        <span style={{ fontSize: 11, color: 'var(--text-muted)', marginRight: 4 }}>
-          Bulk mark for:
-        </span>
-        <div className="att-date-picker" role="group" aria-label="Bulk mark date">
-          <button
-            type="button"
-            className="att-date-step"
-            onClick={() => shiftBulkDate(-1)}
-            disabled={busy}
-            aria-label="Previous day"
-            title="Previous day"
-          >
-            ‹
-          </button>
-          <span className={`att-date-label${bulkDate === todayIso ? 'is-today' : ''}`}>
-            {bulkDateLabel}
-            {bulkDate === todayIso ? <span className="att-date-today-pill">Today</span> : null}
+        {canEdit ? (
+          <>
+            <span style={{ fontSize: 11, color: 'var(--text-muted)', marginRight: 4 }}>
+              Bulk mark for:
+            </span>
+            <div className="att-date-picker" role="group" aria-label="Bulk mark date">
+              <button
+                type="button"
+                className="att-date-step"
+                onClick={() => shiftBulkDate(-1)}
+                disabled={busy}
+                aria-label="Previous day"
+                title="Previous day"
+              >
+                ‹
+              </button>
+              <span className={`att-date-label${bulkDate === todayIso ? 'is-today' : ''}`}>
+                {bulkDateLabel}
+                {bulkDate === todayIso ? <span className="att-date-today-pill">Today</span> : null}
+              </span>
+              <button
+                type="button"
+                className="att-date-step"
+                onClick={() => shiftBulkDate(1)}
+                disabled={busy}
+                aria-label="Next day"
+                title="Next day"
+              >
+                ›
+              </button>
+            </div>
+            <button
+              type="button"
+              className="btn"
+              disabled={busy || bulkDate === todayIso}
+              onClick={() => setBulkDate(todayIso)}
+              title="Reset to today"
+            >
+              Today
+            </button>
+            {(['present', 'work_from_home', 'holiday'] as AttendanceStatus[]).map((s) => (
+              <button
+                key={s}
+                type="button"
+                className="btn"
+                disabled={busy || !rows}
+                onClick={() => markAllOnDate(s)}
+                style={{
+                  background: STATUS_COLOR[s],
+                  color: '#fff',
+                  borderColor: STATUS_COLOR[s],
+                }}
+              >
+                Mark all {STATUS_LABEL[s]}
+              </button>
+            ))}
+          </>
+        ) : (
+          <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+            View only — you don&apos;t have permission to edit attendance.
           </span>
-          <button
-            type="button"
-            className="att-date-step"
-            onClick={() => shiftBulkDate(1)}
-            disabled={busy}
-            aria-label="Next day"
-            title="Next day"
-          >
-            ›
-          </button>
-        </div>
-        <button
-          type="button"
-          className="btn"
-          disabled={busy || bulkDate === todayIso}
-          onClick={() => setBulkDate(todayIso)}
-          title="Reset to today"
-        >
-          Today
-        </button>
-        {(['present', 'work_from_home', 'holiday'] as AttendanceStatus[]).map((s) => (
-          <button
-            key={s}
-            type="button"
-            className="btn"
-            disabled={busy || !rows}
-            onClick={() => markAllOnDate(s)}
-            style={{
-              background: STATUS_COLOR[s],
-              color: '#fff',
-              borderColor: STATUS_COLOR[s],
-            }}
-          >
-            Mark all {STATUS_LABEL[s]}
-          </button>
-        ))}
+        )}
         <div style={{ flex: 1 }} />
         <Legend />
       </div>
@@ -561,7 +572,7 @@ export function AttendanceApp() {
                           height: 28,
                           textAlign: 'center',
                           padding: 0,
-                          cursor: busy ? 'wait' : 'pointer',
+                          cursor: busy ? 'wait' : canEdit ? 'pointer' : 'default',
                           // `backgroundColor` longhand — using `background`
                           // shorthand would reset background-image and
                           // wipe out the CSS-set today-column tint.

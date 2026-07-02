@@ -10,6 +10,7 @@ import { ContactsSection } from '@/components/entity/contacts-section';
 import { BankAccountsSection } from '@/components/entity/bank-accounts-section';
 import { EntitySettingsSection } from '@/components/entity/entity-settings-section';
 import { VendorEditDialog } from './vendor-edit-dialog';
+import { useEntityMutation } from '../auth/entity-mutation-gate';
 import { DocumentsSection } from '@/components/entity/documents-section';
 import { VendorBillsSection } from '@/components/entity/vendor-bills-section';
 import { VendorPaymentsSection } from '@/components/entity/vendor-payments-section';
@@ -66,6 +67,8 @@ export function VendorWindow({ vendorId, onClose }: VendorWindowProps) {
   const [state, setState] = useState<State>({ kind: 'loading' });
   const [tab, setTab] = useState<VendorTab>('overview');
   const [reloadKey, setReloadKey] = useState(0);
+  // OS edit grant for the vendors app (provided by os-root's EntityMutationGate).
+  const { canEdit } = useEntityMutation();
 
   useEffect(() => {
     let cancelled = false;
@@ -117,7 +120,11 @@ export function VendorWindow({ vendorId, onClose }: VendorWindowProps) {
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
       <Header
         vendor={vendor}
-        actions={<VendorEditDialog vendor={vendor} onSaved={() => setReloadKey((k) => k + 1)} />}
+        actions={
+          canEdit ? (
+            <VendorEditDialog vendor={vendor} onSaved={() => setReloadKey((k) => k + 1)} />
+          ) : undefined
+        }
       />
       <div className="tabs">
         {tabs.map((t) => (

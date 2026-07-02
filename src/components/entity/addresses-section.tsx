@@ -20,6 +20,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { AddressList, type Address } from './address-list';
 import { AddressForm, type AddressFormValues } from './address-form';
+import { useEntityMutation } from '@/components/os/auth/entity-mutation-gate';
 import {
   createAddress,
   listAddresses,
@@ -55,6 +56,10 @@ export function AddressesSection({ entityType, entityId, entityName }: Addresses
   const [rows, setRows] = useState<readonly AddressRow[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [, startTransition] = useTransition();
+
+  // OS read-only bridge — permissive outside the OS. Set-primary is an edit,
+  // so it hangs off `canEdit`; removal off `canDelete`.
+  const { canEdit, canDelete } = useEntityMutation();
 
   // Add / edit dialog state
   const [formOpen, setFormOpen] = useState(false);
@@ -202,26 +207,42 @@ export function AddressesSection({ entityType, entityId, entityName }: Addresses
       <AddressList
         addresses={rows.map(rowToView)}
         entityName={entityName}
-        onAdd={() => {
-          setEditing(null);
-          setFormOpen(true);
-        }}
-        onEdit={(a) => {
-          const row = rows.find((x) => x.id === a.id);
-          if (!row) return;
-          setEditing(row);
-          setFormOpen(true);
-        }}
-        onSetPrimary={(a) => {
-          const row = rows.find((x) => x.id === a.id);
-          if (!row || row.isPrimary) return;
-          void handleSetPrimary(row);
-        }}
-        onDelete={(a) => {
-          const row = rows.find((x) => x.id === a.id);
-          if (!row) return;
-          setPendingDelete(row);
-        }}
+        onAdd={
+          canEdit
+            ? () => {
+                setEditing(null);
+                setFormOpen(true);
+              }
+            : undefined
+        }
+        onEdit={
+          canEdit
+            ? (a) => {
+                const row = rows.find((x) => x.id === a.id);
+                if (!row) return;
+                setEditing(row);
+                setFormOpen(true);
+              }
+            : undefined
+        }
+        onSetPrimary={
+          canEdit
+            ? (a) => {
+                const row = rows.find((x) => x.id === a.id);
+                if (!row || row.isPrimary) return;
+                void handleSetPrimary(row);
+              }
+            : undefined
+        }
+        onDelete={
+          canDelete
+            ? (a) => {
+                const row = rows.find((x) => x.id === a.id);
+                if (!row) return;
+                setPendingDelete(row);
+              }
+            : undefined
+        }
       />
 
       <AddressForm

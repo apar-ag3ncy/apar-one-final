@@ -184,8 +184,8 @@ const OS_TO_DB_CLIENT_STATUS: Record<string, 'prospect' | 'active' | 'inactive'>
 
 export function ClientsApp({
   openClient,
-  canEdit = true,
-  canDelete = true,
+  canEdit = false,
+  canDelete = false,
 }: {
   openClient: (c: Client) => void;
   canEdit?: boolean;
@@ -657,8 +657,8 @@ const VENDOR_CATEGORIES: readonly string[] = [
 export function VendorsApp({
   store,
   openVendor,
-  canEdit = true,
-  canDelete = true,
+  canEdit = false,
+  canDelete = false,
 }: {
   store: VendorStore;
   openVendor: (v: Vendor) => void;
@@ -1233,8 +1233,8 @@ const PROJECT_COLS: readonly ('Proposed' | 'Active' | 'Review' | 'Completed')[] 
 ];
 
 export function ProjectsApp({
-  canEdit = true,
-  canDelete = true,
+  canEdit = false,
+  canDelete = false,
 }: {
   canEdit?: boolean;
   canDelete?: boolean;
@@ -1762,8 +1762,8 @@ const EMP_TYPE_LABEL: Record<string, string> = {
 type DirRow = HrEmployee & { tone: string; managerName: string | null };
 
 export function EmployeesApp({
-  canEdit = true,
-  canDelete = true,
+  canEdit = false,
+  canDelete = false,
 }: {
   canEdit?: boolean;
   canDelete?: boolean;
@@ -3205,11 +3205,22 @@ type SettingsSection = {
   icon: IconName;
 };
 
+// Admin-tier settings sections. These mutate company-wide data (company
+// profile & documents, bank accounts, invoice themes, the credential vault),
+// so they require the OS `settings` edit grant — not just settings view.
+const ADMIN_SETTINGS_SECTIONS: ReadonlySet<SettingsSection['name']> = new Set([
+  'Company documents',
+  'Bank accounts',
+  'Invoice format',
+  'Vault',
+]);
+
 export function SettingsApp({
   settings,
   onSettingsChange,
   onResetSettings,
   currentUserRole,
+  canEditSettings = false,
   onSignOut,
   onDisplayNameChange,
   initialSection,
@@ -3218,6 +3229,8 @@ export function SettingsApp({
   onSettingsChange: (patch: Partial<UserSettings>) => void;
   onResetSettings?: () => void;
   currentUserRole?: 'super_admin' | 'admin' | 'user';
+  /** OS `can(user, 'settings', 'edit')` — gates the admin-tier panes. */
+  canEditSettings?: boolean;
   onSignOut?: () => void;
   onDisplayNameChange?: (fullName: string) => void;
   /** Deep-link: open the window straight to this preferences section. */
@@ -3235,14 +3248,18 @@ export function SettingsApp({
     'Notifications',
     'Security',
   ];
+  const requestedSection: SettingsSection['name'] = SECTION_NAMES.some((n) => n === initialSection)
+    ? (initialSection as SettingsSection['name'])
+    : 'General';
   const [section, setSection] = useState<SettingsSection['name']>(
-    SECTION_NAMES.some((n) => n === initialSection)
-      ? (initialSection as SettingsSection['name'])
-      : 'General',
+    // Never land a view-only user directly on an admin-tier pane via deep-link.
+    !canEditSettings && ADMIN_SETTINGS_SECTIONS.has(requestedSection)
+      ? 'General'
+      : requestedSection,
   );
   // Apps a user can pick as their landing app (admin-only apps excluded).
   const landingApps = APPS.filter((a) => a.id !== 'admin_console');
-  const sections: readonly SettingsSection[] = [
+  const allSections: readonly SettingsSection[] = [
     { name: 'General', icon: 'settings' },
     { name: 'Company documents', icon: 'building' },
     { name: 'Bank accounts', icon: 'book' },
@@ -3254,6 +3271,10 @@ export function SettingsApp({
     { name: 'Notifications', icon: 'bell' },
     { name: 'Security', icon: 'shield' },
   ];
+  // Hide the admin-tier panes from the sidebar for users without settings edit.
+  const sections = canEditSettings
+    ? allSections
+    : allSections.filter((s) => !ADMIN_SETTINGS_SECTIONS.has(s.name));
   return (
     <>
       <div className="sidebar">
@@ -3419,6 +3440,13 @@ export function SettingsApp({
                 onClick={() => onSettingsChange({ reducedMotion: !settings.reducedMotion })}
               />
             </div>
+          </div>
+        ) : ADMIN_SETTINGS_SECTIONS.has(section) && !canEditSettings ? (
+          // Defense in depth — the sidebar hides these and the initial section
+          // is redirected, but never render an admin pane without settings edit.
+          <div style={{ padding: 24, color: 'var(--text-muted)', fontSize: 13 }}>
+            You don&apos;t have permission to manage {section.toLowerCase()}. Ask the operator for
+            settings access.
           </div>
         ) : section === 'Company documents' ? (
           <CompanySettingsPane />

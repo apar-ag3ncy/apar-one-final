@@ -27,6 +27,7 @@ import {
 } from '@/lib/server/entities/payroll';
 import { formatINR, paiseToRupees, rupeesToPaise, type Paise } from '@/lib/money';
 import { useCurrentUser } from '@/lib/client/use-current-user';
+import { useEntityMutation } from '@/components/os/auth/entity-mutation-gate';
 
 export type CompensationSectionProps = {
   employeeId: string;
@@ -72,9 +73,13 @@ function formatDay(iso: string | null): string {
 
 export function CompensationSection({ employeeId, employeeName }: CompensationSectionProps) {
   const { hasCapability, isLoading } = useCurrentUser();
+  // OS read-only bridge — permissive outside the OS. Salary/bonus/payment
+  // changes are all edit-class, so they additionally require the OS edit
+  // grant for the employees app. Viewing salary is unchanged (a read op).
+  const { canEdit: osCanEdit } = useEntityMutation();
   const canView = hasCapability('view_salary');
-  const canManageSalary = hasCapability('manage_salary_structures');
-  const canRecordBonus = hasCapability('record_bonus_or_perk');
+  const canManageSalary = osCanEdit && hasCapability('manage_salary_structures');
+  const canRecordBonus = osCanEdit && hasCapability('record_bonus_or_perk');
 
   const [structures, setStructures] = useState<readonly SalaryStructureRow[] | null>(null);
   const [bonuses, setBonuses] = useState<readonly BonusRow[] | null>(null);

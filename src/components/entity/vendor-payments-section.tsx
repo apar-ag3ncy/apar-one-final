@@ -16,6 +16,7 @@ import {
   type AgencyBankAccountRow,
 } from '@/lib/server/billing/agency-banks';
 import { listBankAccounts, type BankAccountRow } from '@/lib/server/entities/bank-accounts';
+import { useEntityMutation } from '@/components/os/auth/entity-mutation-gate';
 import {
   getVendorPayablesByProject,
   listOpenBillsForVendor,
@@ -48,6 +49,9 @@ export function VendorPaymentsSection({
   const [error, setError] = useState<string | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [reversing, setReversing] = useState<{ id: string; amount: bigint } | null>(null);
+  // OS read-only bridge — permissive outside the OS. Recording a payment is an
+  // edit; reversing a posted payment is destructive (delete grant).
+  const { canEdit, canDelete } = useEntityMutation();
 
   async function reload() {
     try {
@@ -104,10 +108,12 @@ export function VendorPaymentsSection({
             Money paid{' '}
             <span className="text-muted-foreground text-xs font-normal">({payments.length})</span>
           </CardTitle>
-          <Button size="sm" onClick={() => setFormOpen(true)}>
-            <PlusIcon className="mr-1.5 size-4" aria-hidden />
-            Record payment
-          </Button>
+          {canEdit ? (
+            <Button size="sm" onClick={() => setFormOpen(true)}>
+              <PlusIcon className="mr-1.5 size-4" aria-hidden />
+              Record payment
+            </Button>
+          ) : null}
         </CardHeader>
         <CardContent className="p-0">
           {payments.length === 0 ? (
@@ -156,7 +162,7 @@ export function VendorPaymentsSection({
                         {formatINR(p.amountPaise)}
                       </div>
                       <div className="text-muted-foreground text-xs">{formatDate(p.txnDate)}</div>
-                      {p.status === 'posted' ? (
+                      {p.status === 'posted' && canDelete ? (
                         <Button
                           variant="outline"
                           size="sm"

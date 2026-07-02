@@ -17,6 +17,7 @@ import {
   type AgencyBankAccountRow,
 } from '@/lib/server/billing/agency-banks';
 import { listBankAccounts, type BankAccountRow } from '@/lib/server/entities/bank-accounts';
+import { useEntityMutation } from '@/components/os/auth/entity-mutation-gate';
 import {
   getClientReceivablesByProject,
   listClientReceipts,
@@ -55,6 +56,9 @@ export function ClientPaymentsSection({
   const [error, setError] = useState<string | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [reversing, setReversing] = useState<{ id: string; amount: bigint } | null>(null);
+  // OS read-only bridge — permissive outside the OS. Recording a receipt is an
+  // edit; reversing a posted receipt is destructive (delete grant).
+  const { canEdit, canDelete } = useEntityMutation();
 
   async function reload() {
     try {
@@ -128,10 +132,12 @@ export function ClientPaymentsSection({
             Money received{' '}
             <span className="text-muted-foreground text-xs font-normal">({receipts.length})</span>
           </CardTitle>
-          <Button size="sm" onClick={() => setFormOpen(true)}>
-            <PlusIcon className="mr-1.5 size-4" aria-hidden />
-            Record receipt
-          </Button>
+          {canEdit ? (
+            <Button size="sm" onClick={() => setFormOpen(true)}>
+              <PlusIcon className="mr-1.5 size-4" aria-hidden />
+              Record receipt
+            </Button>
+          ) : null}
         </CardHeader>
         <CardContent className="p-0">
           {receipts.length === 0 ? (
@@ -192,7 +198,7 @@ export function ClientPaymentsSection({
                           <DownloadIcon className="mr-1 size-3.5" aria-hidden />
                           Receipt
                         </Button>
-                        {r.status === 'posted' ? (
+                        {r.status === 'posted' && canDelete ? (
                           <Button
                             variant="outline"
                             size="sm"

@@ -15,6 +15,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { ContactList, type Contact } from '@/components/entity/contact-list';
 import { ContactForm, type ContactFormValues } from '@/components/entity/contact-form';
+import { useEntityMutation } from '@/components/os/auth/entity-mutation-gate';
 import {
   createContact,
   hardDeleteContact,
@@ -54,6 +55,12 @@ export function ContactsSection({
 }: ContactsSectionProps) {
   const [contacts, setContacts] = useState<readonly ContactRow[]>(initial);
   const [, startTransition] = useTransition();
+
+  // OS read-only bridge — permissive outside the OS (no provider). When the
+  // OS user lacks edit/delete we withhold the mutation callbacks entirely,
+  // and <ContactList> hides the Add / Edit / Delete affordances that key off
+  // their presence.
+  const { canEdit, canDelete } = useEntityMutation();
 
   // Add / edit dialog state
   const [formOpen, setFormOpen] = useState(false);
@@ -153,21 +160,33 @@ export function ContactsSection({
       <ContactList
         contacts={contacts.map(toListContact)}
         entityName={entityName}
-        onAdd={() => {
-          setEditing(null);
-          setFormOpen(true);
-        }}
-        onEdit={(c) => {
-          const row = contacts.find((x) => x.id === c.id);
-          if (!row) return;
-          setEditing(row);
-          setFormOpen(true);
-        }}
-        onDelete={(c) => {
-          const row = contacts.find((x) => x.id === c.id);
-          if (!row) return;
-          setPendingDelete(row);
-        }}
+        onAdd={
+          canEdit
+            ? () => {
+                setEditing(null);
+                setFormOpen(true);
+              }
+            : undefined
+        }
+        onEdit={
+          canEdit
+            ? (c) => {
+                const row = contacts.find((x) => x.id === c.id);
+                if (!row) return;
+                setEditing(row);
+                setFormOpen(true);
+              }
+            : undefined
+        }
+        onDelete={
+          canDelete
+            ? (c) => {
+                const row = contacts.find((x) => x.id === c.id);
+                if (!row) return;
+                setPendingDelete(row);
+              }
+            : undefined
+        }
       />
 
       <ContactForm

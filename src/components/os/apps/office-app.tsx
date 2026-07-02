@@ -96,8 +96,8 @@ function formatDate(iso: string): string {
 }
 
 export function OfficeApp({
-  canEdit = true,
-  canDelete = true,
+  canEdit = false,
+  canDelete = false,
 }: {
   canEdit?: boolean;
   canDelete?: boolean;
