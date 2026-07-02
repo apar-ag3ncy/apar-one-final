@@ -2053,11 +2053,18 @@ export function EmployeesApp({
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                     <div
                       className="name"
+                      title={e.fullName}
                       style={{
+                        // Show the full name — wrap up to two lines instead of
+                        // hard-truncating to one (backlog: "full names to be
+                        // visible"); the title still surfaces the whole name on
+                        // hover for the rare 3-line name.
                         minWidth: 0,
                         overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
+                        display: '-webkit-box',
+                        WebkitLineClamp: 2,
+                        WebkitBoxOrient: 'vertical',
+                        overflowWrap: 'anywhere',
                       }}
                     >
                       {e.fullName}
