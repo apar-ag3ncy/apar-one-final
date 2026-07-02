@@ -56,6 +56,9 @@ import { BankBookWindow } from './apps/bank-book-window';
 import { CombinedBankBookWindow } from './apps/combined-bank-book-window';
 import { DayBookWindow } from './apps/day-book-window';
 import { GstSummaryWindow } from './apps/gst-summary-window';
+import { SalesRegisterWindow, PurchaseRegisterWindow } from './apps/register-window';
+import { ProjectPnlWindow } from './apps/project-pnl-window';
+import { TdsSummaryWindow } from './apps/tds-summary-window';
 import { OfficeLedgerWindow } from './apps/office-ledger-window';
 import { OfficeUtilitiesWindow } from './apps/office-utilities-window';
 import { TdsBookWindow } from './apps/tds-book-window';
@@ -437,6 +440,10 @@ function Desktop({ signOut }: { signOut: () => void }) {
         { slug: 'bank-book-combined', label: 'Bank Book (all accounts)' },
         { slug: 'day-book', label: 'Day Book' },
         { slug: 'gst-summary', label: 'GST Summary' },
+        { slug: 'tds-summary', label: 'TDS Summary' },
+        { slug: 'sales-register', label: 'Sales Register' },
+        { slug: 'purchase-register', label: 'Purchase Register' },
+        { slug: 'project-pnl', label: 'Per-Project P&L' },
         { slug: 'statement', label: 'Statement of Account' },
         { slug: 'per-client-pnl', label: 'Per-client P&L' },
         { slug: 'cash-flow', label: 'Cash Flow' },
@@ -746,6 +753,14 @@ function Desktop({ signOut }: { signOut: () => void }) {
                   return <DayBookWindow />;
                 case 'gst-summary':
                   return <GstSummaryWindow />;
+                case 'sales-register':
+                  return <SalesRegisterWindow />;
+                case 'purchase-register':
+                  return <PurchaseRegisterWindow />;
+                case 'project-pnl':
+                  return <ProjectPnlWindow />;
+                case 'tds-summary':
+                  return <TdsSummaryWindow />;
                 case 'cash-flow':
                   return <CashFlowWindow />;
                 default:

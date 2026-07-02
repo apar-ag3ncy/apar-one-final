@@ -3059,6 +3059,33 @@ const OS_REPORT_GROUPS: ReadonlyArray<{
         label: 'GST Summary',
         desc: 'Output vs input GST, net payable by month.',
       },
+      {
+        slug: 'tds-summary',
+        label: 'TDS Summary',
+        desc: 'TDS receivable vs payable, by month.',
+      },
+    ],
+  },
+  {
+    heading: 'Registers',
+    reports: [
+      { slug: 'sales-register', label: 'Sales Register', desc: 'Every client invoice raised.' },
+      {
+        slug: 'purchase-register',
+        label: 'Purchase Register',
+        desc: 'Every vendor bill recorded.',
+      },
+    ],
+  },
+  {
+    heading: 'Profitability',
+    reports: [
+      { slug: 'per-client-pnl', label: 'Per-Client P&L', desc: 'Profitability by client.' },
+      {
+        slug: 'project-pnl',
+        label: 'Per-Project P&L',
+        desc: 'Billed/received vs cost/paid, per project.',
+      },
     ],
   },
   {
@@ -3066,7 +3093,6 @@ const OS_REPORT_GROUPS: ReadonlyArray<{
     reports: [
       { slug: 'day-book', label: 'Day Book', desc: 'General journal — every posting by date.' },
       { slug: 'statement', label: 'Statement of Account', desc: 'Per-party ledger statement.' },
-      { slug: 'per-client-pnl', label: 'Per-Client P&L', desc: 'Profitability by client.' },
     ],
   },
 ];
