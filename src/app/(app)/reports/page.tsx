@@ -10,6 +10,11 @@ import {
   BookOpenIcon,
   FileTextIcon,
   UsersIcon,
+  PercentIcon,
+  ReceiptIcon,
+  ShoppingCartIcon,
+  TruckIcon,
+  FolderKanbanIcon,
   type LucideIcon,
 } from 'lucide-react';
 import { PageHeader } from '@/components/shared/page-header';
@@ -69,12 +74,74 @@ const GROUPS: readonly ReportGroup[] = [
     ],
   },
   {
-    heading: 'Ledgers & statements',
+    heading: 'Bank & cash',
     reports: [
       {
         slug: 'bank-book',
         title: 'Bank Book',
-        description: 'Bank account movements with running balance.',
+        description: 'Per-account passbook or all accounts combined, with running balance.',
+        icon: BanknoteIcon,
+      },
+    ],
+  },
+  {
+    heading: 'Tax',
+    reports: [
+      {
+        slug: 'gst-summary',
+        title: 'GST Summary',
+        description: 'Output vs input GST and net payable, by month.',
+        icon: PercentIcon,
+      },
+      {
+        slug: 'tds-summary',
+        title: 'TDS Summary',
+        description: 'TDS receivable vs payable, by month.',
+        icon: ReceiptIcon,
+      },
+    ],
+  },
+  {
+    heading: 'Registers',
+    reports: [
+      {
+        slug: 'sales-register',
+        title: 'Sales Register',
+        description: 'Every client invoice raised, with taxable value and GST.',
+        icon: ShoppingCartIcon,
+      },
+      {
+        slug: 'purchase-register',
+        title: 'Purchase Register',
+        description: 'Every vendor bill recorded, with taxable value and GST.',
+        icon: TruckIcon,
+      },
+    ],
+  },
+  {
+    heading: 'Profitability',
+    reports: [
+      {
+        slug: 'per-client-pnl',
+        title: 'Per-Client P&L',
+        description: 'Profitability broken down by client.',
+        icon: UsersIcon,
+      },
+      {
+        slug: 'project-pnl',
+        title: 'Per-Project P&L',
+        description: 'Billed & received vs vendor cost & paid, per project.',
+        icon: FolderKanbanIcon,
+      },
+    ],
+  },
+  {
+    heading: 'Ledgers & statements',
+    reports: [
+      {
+        slug: 'day-book',
+        title: 'Day Book',
+        description: 'General journal — every posting by date.',
         icon: BookOpenIcon,
       },
       {
@@ -82,12 +149,6 @@ const GROUPS: readonly ReportGroup[] = [
         title: 'Statement of Account',
         description: 'Per-party ledger statement for a client or vendor.',
         icon: FileTextIcon,
-      },
-      {
-        slug: 'per-client-pnl',
-        title: 'Per-Client P&L',
-        description: 'Profitability broken down by client.',
-        icon: UsersIcon,
       },
     ],
   },
@@ -101,10 +162,11 @@ export default function ReportsPage() {
         description="Pick the question you want answered. Financial statements explain the business overall; receivables/payables show money pending; ledgers show transaction history."
       />
       <div className="bg-muted/40 text-muted-foreground rounded-md border p-3 text-sm">
-        Start with <span className="text-foreground font-medium">Profit & Loss</span> for income
-        vs expenses, <span className="text-foreground font-medium">Balance Sheet</span> for what
-        the company owns/owes, and <span className="text-foreground font-medium">Statement of
-        Account</span> when you need one client or vendor&apos;s ledger.
+        Start with <span className="text-foreground font-medium">Profit & Loss</span> for income vs
+        expenses, <span className="text-foreground font-medium">Balance Sheet</span> for what the
+        company owns/owes, and{' '}
+        <span className="text-foreground font-medium">Statement of Account</span> when you need one
+        client or vendor&apos;s ledger.
       </div>
       <div className="flex flex-col gap-8">
         {GROUPS.map((group) => (

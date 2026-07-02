@@ -1,30 +1,46 @@
-import type { Metadata } from 'next';
-import { ProfileHeader } from '@/components/entity/profile-header';
-import { Card, CardContent } from '@/components/ui/card';
-import { ReportShell } from '@/components/shared/report-shell';
+'use client';
 
-export const metadata: Metadata = { title: 'Cash flow · Apar Dashboard' };
+import { getCashFlowStatement } from '@/lib/server/ledger/report-suite';
+import { ReportRangeView } from '@/components/reports/report-range-view';
 
-type Props = { searchParams: Promise<{ asOf?: string }> };
+function kindLabel(k: string) {
+  return k.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+}
 
-export default async function CashFlowPage({ searchParams }: Props) {
-  const sp = await searchParams;
-  const asOfDate = sp.asOf ?? new Date().toISOString().slice(0, 10);
+export default function CashFlowPage() {
   return (
-    <>
-      <ProfileHeader
-        title="Cash flow"
-        subtitle="Inflows and outflows across operating / investing / financing activities. Indirect method, derived from posted transactions."
-        back={{ href: '/reports', label: 'All reports' }}
-      />
-      <ReportShell asOfDate={asOfDate} basePath="/reports/cash-flow">
-        <Card className="border-0 shadow-none">
-          <CardContent className="text-muted-foreground py-10 text-center text-sm">
-            Cash flow renders once Backend ships `getCashFlowStatement(fromDate, toDate)`. Operating
-            / investing / financing categorisation comes from the chart-of-accounts domain field.
-          </CardContent>
-        </Card>
-      </ReportShell>
-    </>
+    <ReportRangeView
+      title="Cash Flow"
+      subtitle="Direct method — cash + bank (1110 + 1120) movement by category, opening to closing."
+      exportName="cash-flow"
+      sheetName="Cash Flow"
+      signedCols={['net']}
+      columns={[
+        { key: 'category', label: 'Category' },
+        { key: 'inflow', label: 'Money in', align: 'right', money: true },
+        { key: 'outflow', label: 'Money out', align: 'right', money: true },
+        { key: 'net', label: 'Net', align: 'right', money: true },
+      ]}
+      fetchData={async (from, to) => {
+        const d = await getCashFlowStatement({ from, to });
+        return {
+          rows: [
+            { category: 'Opening cash & bank', inflow: null, outflow: null, net: d.openingPaise },
+            ...d.rows.map((r) => ({
+              category: kindLabel(r.kind),
+              inflow: r.inflowPaise || null,
+              outflow: r.outflowPaise || null,
+              net: r.netPaise,
+            })),
+          ],
+          totalRow: {
+            category: 'Closing cash & bank',
+            inflow: d.totalInflowPaise,
+            outflow: d.totalOutflowPaise,
+            net: d.closingPaise,
+          },
+        };
+      }}
+    />
   );
 }
