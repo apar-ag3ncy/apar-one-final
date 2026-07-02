@@ -52,6 +52,10 @@ import { PnLWindow } from './apps/pnl-window';
 import { AgingWindow } from './apps/aging-window';
 import { StatementWindow } from './apps/statement-window';
 import { CashFlowWindow } from './apps/cash-flow-window';
+import { BankBookWindow } from './apps/bank-book-window';
+import { CombinedBankBookWindow } from './apps/combined-bank-book-window';
+import { DayBookWindow } from './apps/day-book-window';
+import { GstSummaryWindow } from './apps/gst-summary-window';
 import { OfficeLedgerWindow } from './apps/office-ledger-window';
 import { OfficeUtilitiesWindow } from './apps/office-utilities-window';
 import { TdsBookWindow } from './apps/tds-book-window';
@@ -429,7 +433,10 @@ function Desktop({ signOut }: { signOut: () => void }) {
         { slug: 'pnl', label: 'Profit & Loss' },
         { slug: 'ar-aging', label: 'AR Aging' },
         { slug: 'ap-aging', label: 'AP Aging' },
-        { slug: 'bank-book', label: 'Bank Book' },
+        { slug: 'bank-book', label: 'Bank Book (per account)' },
+        { slug: 'bank-book-combined', label: 'Bank Book (all accounts)' },
+        { slug: 'day-book', label: 'Day Book' },
+        { slug: 'gst-summary', label: 'GST Summary' },
         { slug: 'statement', label: 'Statement of Account' },
         { slug: 'per-client-pnl', label: 'Per-client P&L' },
         { slug: 'cash-flow', label: 'Cash Flow' },
@@ -731,17 +738,14 @@ function Desktop({ signOut }: { signOut: () => void }) {
                   return <StatementWindow />;
                 case 'per-client-pnl':
                   return <PerClientPnLWindow />;
-                // The Office Ledger (cash + bank, running balance) IS the
-                // live bank book — reuse it with bank-book labels rather
-                // than ship a stub.
                 case 'bank-book':
-                  return (
-                    <OfficeLedgerWindow
-                      title="Bank Book"
-                      subtitle="Bank + cash movements (accounts 1110 + 1120) in date order, with a running balance. Posted transactions only."
-                      exportPrefix="bank-book"
-                    />
-                  );
+                  return <BankBookWindow />;
+                case 'bank-book-combined':
+                  return <CombinedBankBookWindow />;
+                case 'day-book':
+                  return <DayBookWindow />;
+                case 'gst-summary':
+                  return <GstSummaryWindow />;
                 case 'cash-flow':
                   return <CashFlowWindow />;
                 default:

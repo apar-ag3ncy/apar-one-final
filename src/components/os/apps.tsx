@@ -3037,9 +3037,34 @@ const OS_REPORT_GROUPS: ReadonlyArray<{
     ],
   },
   {
+    heading: 'Bank & cash',
+    reports: [
+      {
+        slug: 'bank-book',
+        label: 'Bank Book (per account)',
+        desc: 'One account: passbook + running balance.',
+      },
+      {
+        slug: 'bank-book-combined',
+        label: 'Bank Book (all accounts)',
+        desc: 'Every bank account, subtotals + grand total.',
+      },
+    ],
+  },
+  {
+    heading: 'Tax',
+    reports: [
+      {
+        slug: 'gst-summary',
+        label: 'GST Summary',
+        desc: 'Output vs input GST, net payable by month.',
+      },
+    ],
+  },
+  {
     heading: 'Ledgers & statements',
     reports: [
-      { slug: 'bank-book', label: 'Bank Book', desc: 'Bank movements + running balance.' },
+      { slug: 'day-book', label: 'Day Book', desc: 'General journal — every posting by date.' },
       { slug: 'statement', label: 'Statement of Account', desc: 'Per-party ledger statement.' },
       { slug: 'per-client-pnl', label: 'Per-Client P&L', desc: 'Profitability by client.' },
     ],

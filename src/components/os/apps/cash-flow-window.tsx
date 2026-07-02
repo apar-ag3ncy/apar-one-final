@@ -1,50 +1,206 @@
 'use client';
 
-// Cash Flow — native OS window. There is no getCashFlowStatement backend yet,
-// so this renders an honest "not available" state (no fabricated numbers)
-// and points the user at the live Office Ledger, which shows real cash + bank
-// movements with a running balance today.
+// Cash Flow — native OS window. Direct-method: net movement of cash + bank
+// (1110 + 1120) over the range, grouped by transaction kind, with opening and
+// closing cash positions. Backed by getCashFlowStatement.
 
-import { osActions } from '@/lib/os/store';
-import { ReportWindowFrame } from './report-window-kit';
+import { useState } from 'react';
+
+import { formatINR } from '@/components/shared/format-inr';
+import { paiseToRupees } from '@/lib/client/export-rows';
+import { getCashFlowStatement, type CashFlowStatement } from '@/lib/server/ledger/report-suite';
+import {
+  DateField,
+  OsExportButtons,
+  ReportWindowFrame,
+  currentFyDefaults,
+  exportRows,
+  useReportData,
+  type ExportFormat,
+} from './report-window-kit';
+
+function kindLabel(k: string): string {
+  return k.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+}
 
 export function CashFlowWindow() {
+  const fy = currentFyDefaults();
+  const [fromDate, setFromDate] = useState(fy.fromDate);
+  const [toDate, setToDate] = useState(fy.toDate);
+
+  const { data, error } = useReportData<CashFlowStatement>(
+    () => getCashFlowStatement({ from: fromDate, to: toDate }),
+    [fromDate, toDate],
+  );
+
+  function handleExport(format: ExportFormat) {
+    if (!data) return;
+    const headers = ['Category', 'Money in', 'Money out', 'Net'];
+    const rows: Record<string, string | number>[] = [
+      {
+        Category: `Opening cash & bank (before ${fromDate})`,
+        'Money in': '',
+        'Money out': '',
+        Net: paiseToRupees(data.openingPaise),
+      },
+      ...data.rows.map((r) => ({
+        Category: kindLabel(r.kind),
+        'Money in': paiseToRupees(r.inflowPaise),
+        'Money out': paiseToRupees(r.outflowPaise),
+        Net: paiseToRupees(r.netPaise),
+      })),
+      {
+        Category: 'Net movement',
+        'Money in': paiseToRupees(data.totalInflowPaise),
+        'Money out': paiseToRupees(data.totalOutflowPaise),
+        Net: paiseToRupees(data.totalInflowPaise - data.totalOutflowPaise),
+      },
+      {
+        Category: 'Closing cash & bank',
+        'Money in': '',
+        'Money out': '',
+        Net: paiseToRupees(data.closingPaise),
+      },
+    ];
+    exportRows(rows, headers, `cash-flow-${fromDate}-to-${toDate}`, format, 'Cash Flow', {
+      columnFormats: { Net: '+#,##0.00;-#,##0.00;0.00' },
+    });
+  }
+
   return (
     <ReportWindowFrame
       title="Cash Flow"
-      subtitle="Operating / investing / financing cash movements."
+      subtitle="Direct method — cash + bank (1110 + 1120) movement by category."
+      error={error}
+      loading={!data}
+      controls={
+        <div style={{ display: 'flex', alignItems: 'flex-end', gap: 10, flexWrap: 'wrap' }}>
+          <DateField label="From" value={fromDate} onChange={setFromDate} />
+          <DateField label="To" value={toDate} onChange={setToDate} />
+          <OsExportButtons onExport={handleExport} disabled={!data} />
+        </div>
+      }
     >
+      {data ? (
+        <>
+          <div style={{ display: 'flex', gap: 24, marginBottom: 12, flexWrap: 'wrap' }}>
+            <Kpi label="Opening" value={formatINR(data.openingPaise)} />
+            <Kpi label="Money in" value={formatINR(data.totalInflowPaise)} tone="green" />
+            <Kpi label="Money out" value={formatINR(data.totalOutflowPaise)} tone="red" />
+            <Kpi label="Closing" value={formatINR(data.closingPaise)} strong />
+          </div>
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Category</th>
+                <th style={{ textAlign: 'right' }}>Money in</th>
+                <th style={{ textAlign: 'right' }}>Money out</th>
+                <th style={{ textAlign: 'right' }}>Net</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td style={{ fontStyle: 'italic', color: 'var(--text-muted)' }}>
+                  Opening cash &amp; bank (before {fromDate})
+                </td>
+                <td /> <td />
+                <td
+                  style={{
+                    textAlign: 'right',
+                    fontVariantNumeric: 'tabular-nums',
+                    fontWeight: 600,
+                  }}
+                >
+                  {formatINR(data.openingPaise)}
+                </td>
+              </tr>
+              {data.rows.map((r) => (
+                <tr key={r.kind}>
+                  <td>{kindLabel(r.kind)}</td>
+                  <td
+                    style={{
+                      textAlign: 'right',
+                      fontVariantNumeric: 'tabular-nums',
+                      color: r.inflowPaise > 0n ? 'var(--apar-green, #2E8F5A)' : 'var(--text-dim)',
+                    }}
+                  >
+                    {r.inflowPaise > 0n ? formatINR(r.inflowPaise) : '—'}
+                  </td>
+                  <td
+                    style={{
+                      textAlign: 'right',
+                      fontVariantNumeric: 'tabular-nums',
+                      color: r.outflowPaise > 0n ? 'var(--apar-red, #c33)' : 'var(--text-dim)',
+                    }}
+                  >
+                    {r.outflowPaise > 0n ? formatINR(r.outflowPaise) : '—'}
+                  </td>
+                  <td
+                    style={{
+                      textAlign: 'right',
+                      fontVariantNumeric: 'tabular-nums',
+                      fontWeight: 600,
+                    }}
+                  >
+                    {formatINR(r.netPaise)}
+                  </td>
+                </tr>
+              ))}
+              <tr style={{ borderTop: '2px solid var(--border)', fontWeight: 700 }}>
+                <td>Closing cash &amp; bank</td>
+                <td /> <td />
+                <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                  {formatINR(data.closingPaise)}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </>
+      ) : null}
+    </ReportWindowFrame>
+  );
+}
+
+function Kpi({
+  label,
+  value,
+  strong,
+  tone,
+}: {
+  label: string;
+  value: string;
+  strong?: boolean;
+  tone?: 'green' | 'red';
+}) {
+  return (
+    <div>
       <div
         style={{
-          border: '1px dashed var(--border)',
-          borderRadius: 8,
-          padding: 20,
+          fontSize: 10,
           color: 'var(--text-muted)',
-          fontSize: 13,
-          lineHeight: 1.6,
+          textTransform: 'uppercase',
+          letterSpacing: '0.06em',
+          fontWeight: 600,
         }}
       >
-        <div style={{ fontWeight: 600, color: 'var(--text)', marginBottom: 6 }}>
-          Cash flow statement isn’t available yet
-        </div>
-        It activates once the cash-flow backend ships. In the meantime, the{' '}
-        <button
-          type="button"
-          className="btn"
-          style={{ padding: '2px 8px' }}
-          onClick={() =>
-            osActions.openWindow({
-              app: 'ledger',
-              entityId: 'office',
-              title: 'Office ledger',
-              position: 'beside-focused',
-            })
-          }
-        >
-          Office Ledger
-        </button>{' '}
-        shows live cash + bank movements with a running balance and is fully exportable.
+        {label}
       </div>
-    </ReportWindowFrame>
+      <div
+        className="font-display"
+        style={{
+          fontSize: strong ? 22 : 18,
+          fontVariantNumeric: 'tabular-nums',
+          marginTop: 2,
+          color:
+            tone === 'green'
+              ? 'var(--apar-green, #2E8F5A)'
+              : tone === 'red'
+                ? 'var(--apar-red, #c33)'
+                : 'var(--text)',
+        }}
+      >
+        {value}
+      </div>
+    </div>
   );
 }
