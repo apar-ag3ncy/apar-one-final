@@ -140,4 +140,19 @@
   html {
     @apply font-sans;
   }
+
+  /*
+   * Native date/time pickers paint their calendar / clock glyph in a dark
+   * colour that all but vanishes on the dark theme (the OS shell in dark mode,
+   * plus any dashboard form rendered inside a dark OS window). Invert just the
+   * picker indicator so the icon reads as white wherever we're in dark mode.
+   * APAR-ONE backlog: "in dark mode, calendar icons need to be white".
+   */
+  .dark input[type='date']::-webkit-calendar-picker-indicator,
+  .dark input[type='datetime-local']::-webkit-calendar-picker-indicator,
+  .dark input[type='month']::-webkit-calendar-picker-indicator,
+  .dark input[type='week']::-webkit-calendar-picker-indicator,
+  .dark input[type='time']::-webkit-calendar-picker-indicator {
+    filter: invert(1) brightness(1.7);
+  }
 }
