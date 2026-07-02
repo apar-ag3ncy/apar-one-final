@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   DownloadIcon,
+  FileCheck2Icon,
   FileTextIcon,
   PaletteIcon,
   PencilIcon,
@@ -41,6 +42,7 @@ import {
   type ClientBillingReadiness,
 } from '@/lib/server/billing/invoices';
 import { voidInvoice } from '@/lib/server/billing/invoice-transitions';
+import { convertProformaToInvoice } from '@/lib/server/billing/proforma-conversion';
 import {
   deleteInvoiceTheme,
   listInvoiceThemes,
@@ -159,6 +161,27 @@ export function ClientInvoicesSection({ clientId, clientName }: ClientInvoicesSe
   function openEdit(id: string) {
     setEditingId(id);
     setComposerOpen(true);
+  }
+
+  // Proforma → tax invoice: create a separate invoice (new number), keep the
+  // proforma, then open the new draft so the operator can review + send it.
+  const [convertingId, setConvertingId] = useState<string | null>(null);
+  async function handleConvertProforma(proforma: InvoiceRow) {
+    setConvertingId(proforma.id);
+    try {
+      const res = await convertProformaToInvoice(proforma.id);
+      await reloadInvoices();
+      toast.success(
+        res.alreadyConverted
+          ? `Proforma ${proforma.documentNumber} was already converted to ${res.documentNumber}.`
+          : `Created tax invoice ${res.documentNumber} from proforma ${proforma.documentNumber}.`,
+      );
+      openEdit(res.invoiceId);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not convert the proforma.');
+    } finally {
+      setConvertingId(null);
+    }
   }
 
   async function downloadSent(row: InvoiceRow) {
@@ -284,6 +307,18 @@ export function ClientInvoicesSection({ clientId, clientName }: ClientInvoicesSe
                         aria-label="Download invoice PDF"
                       >
                         <DownloadIcon className="size-4" aria-hidden />
+                      </Button>
+                    ) : null}
+                    {inv.documentType === 'proforma' && canCompose ? (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => void handleConvertProforma(inv)}
+                        disabled={convertingId === inv.id}
+                        title="Convert to a tax invoice (creates a new invoice; keeps this proforma)"
+                        aria-label="Convert proforma to tax invoice"
+                      >
+                        <FileCheck2Icon className="size-4" aria-hidden />
                       </Button>
                     ) : null}
                     {canDelete && inv.state !== 'void' ? (
