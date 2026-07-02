@@ -141,6 +141,23 @@ const TODAY_ISO = (): string => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 };
 
+/** Add `days` calendar days to an ISO (YYYY-MM-DD) date, returning ISO. */
+const addDaysIso = (iso: string, days: number): string => {
+  const [y, m, d] = iso.split('-').map(Number);
+  if (!y || !m || !d) return iso;
+  const dt = new Date(Date.UTC(y, m - 1, d + days));
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${dt.getUTCFullYear()}-${p(dt.getUTCMonth() + 1)}-${p(dt.getUTCDate())}`;
+};
+
+/**
+ * Quick "Net N" payment-terms presets offered next to the due-date field, and
+ * the default applied to a fresh invoice. Backlog: "invoice due date auto set:
+ * 14 days and 21 days".
+ */
+const DUE_DATE_PRESETS = [14, 21, 30] as const;
+const DEFAULT_DUE_DAYS = 14;
+
 export function InvoiceComposerDialog({
   open,
   onOpenChange,
@@ -242,7 +259,9 @@ export function InvoiceComposerDialog({
       } else {
         const today = TODAY_ISO();
         setDocumentDate(today);
-        setDueDate('');
+        // Auto-set the due date to Net-14 from the invoice date; the operator
+        // can one-click a different preset or edit it.
+        setDueDate(addDaysIso(today, DEFAULT_DUE_DAYS));
         setPlaceOfSupply(clientStateCode ?? '');
         setTerms('');
         setNotes('');
@@ -571,6 +590,26 @@ export function InvoiceComposerDialog({
                   value={dueDate}
                   onChange={(e) => setDueDate(e.target.value)}
                 />
+                <div className="flex flex-wrap gap-1">
+                  {DUE_DATE_PRESETS.map((n) => {
+                    const target = addDaysIso(documentDate, n);
+                    return (
+                      <button
+                        key={n}
+                        type="button"
+                        onClick={() => setDueDate(target)}
+                        aria-pressed={dueDate === target}
+                        className={`rounded border px-1.5 py-0.5 text-[11px] transition-colors ${
+                          dueDate === target
+                            ? 'border-primary bg-primary/10 text-primary'
+                            : 'text-muted-foreground hover:bg-muted'
+                        }`}
+                      >
+                        Net {n}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
               <div className="grid gap-1.5">
                 <Label htmlFor="inv-pos">Place of supply</Label>
