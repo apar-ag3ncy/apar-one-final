@@ -1,6 +1,7 @@
 import 'server-only';
 
 import { Document, Image, Page, StyleSheet, Text, View, renderToBuffer } from '@react-pdf/renderer';
+import { PDF_FONT_FAMILY } from './fonts';
 import * as React from 'react';
 
 import { APAR_ORANGE_MARK_DATA_URI } from '@/lib/brand/apar-orange-mark';
@@ -52,7 +53,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 36,
     paddingBottom: 60,
     fontSize: 9,
-    fontFamily: 'Helvetica',
+    fontFamily: PDF_FONT_FAMILY,
     color: '#111827',
   },
   headerRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 16 },
