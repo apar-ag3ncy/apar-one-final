@@ -20,6 +20,7 @@ import {
   type TableCol,
 } from '@/lib/billing/invoice-style';
 import { formatRupeesPlain, rupeesInWordsINR } from '@/lib/money';
+import { PDF_FONT_FAMILY } from './fonts';
 
 /**
  * Invoice PDF renderer. Layout modelled on the provided AFTRBRND invoice
@@ -129,8 +130,12 @@ export type InvoicePdfData = {
   } | null;
 };
 
-/** react-pdf can only lay out its three built-in font families on the server. */
-const BUILTIN_FONTS = new Set(['Helvetica', 'Times-Roman', 'Courier']);
+/**
+ * Fonts an invoice theme may select. The three PDF built-ins plus Rubik, our
+ * registered brand face (see ./fonts). Anything else a DOCX theme carries falls
+ * back to the Rubik default in `resolveTheme`.
+ */
+const BUILTIN_FONTS = new Set(['Helvetica', 'Times-Roman', 'Courier', PDF_FONT_FAMILY]);
 
 type ResolvedTheme = {
   primary: string;
@@ -164,7 +169,7 @@ type Dyn = {
 
 /** Merge the optional theme overlay onto neutral defaults. */
 function resolveTheme(o: InvoicePdfData['themeOverrides']): ResolvedTheme {
-  const font = o?.fontFamily && BUILTIN_FONTS.has(o.fontFamily) ? o.fontFamily : 'Helvetica';
+  const font = o?.fontFamily && BUILTIN_FONTS.has(o.fontFamily) ? o.fontFamily : PDF_FONT_FAMILY;
   return {
     primary: o?.primaryColor || '#111111',
     accent: o?.accentColor || '#f3f4f6',
@@ -212,7 +217,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 40,
     paddingBottom: 60,
     fontSize: 9,
-    fontFamily: 'Helvetica',
+    fontFamily: PDF_FONT_FAMILY,
     color: '#111111',
     lineHeight: 1.35,
   },
