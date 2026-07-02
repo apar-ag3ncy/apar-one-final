@@ -18,6 +18,7 @@ import {
 } from '@/lib/server/billing/agency-banks';
 import { listBankAccounts, type BankAccountRow } from '@/lib/server/entities/bank-accounts';
 import { useEntityMutation } from '@/components/os/auth/entity-mutation-gate';
+import { recordCustomerAdvance } from '@/lib/server/billing/advances';
 import {
   getClientReceivablesByProject,
   listClientReceipts,
@@ -55,6 +56,7 @@ export function ClientPaymentsSection({
   const [invoices, setInvoices] = useState<readonly OpenInvoiceRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [formOpen, setFormOpen] = useState(false);
+  const [balanceOpen, setBalanceOpen] = useState(false);
   const [reversing, setReversing] = useState<{ id: string; amount: bigint } | null>(null);
   // OS read-only bridge — permissive outside the OS. Recording a receipt is an
   // edit; reversing a posted receipt is destructive (delete grant).
@@ -133,10 +135,16 @@ export function ClientPaymentsSection({
             <span className="text-muted-foreground text-xs font-normal">({receipts.length})</span>
           </CardTitle>
           {canEdit ? (
-            <Button size="sm" onClick={() => setFormOpen(true)}>
-              <PlusIcon className="mr-1.5 size-4" aria-hidden />
-              Record receipt
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button size="sm" variant="outline" onClick={() => setBalanceOpen(true)}>
+                <WalletIcon className="mr-1.5 size-4" aria-hidden />
+                Add to client balance
+              </Button>
+              <Button size="sm" onClick={() => setFormOpen(true)}>
+                <PlusIcon className="mr-1.5 size-4" aria-hidden />
+                Record receipt
+              </Button>
+            </div>
           ) : null}
         </CardHeader>
         <CardContent className="p-0">
@@ -230,6 +238,17 @@ export function ClientPaymentsSection({
         clientName={clientName}
         onRecorded={() => {
           setFormOpen(false);
+          void reload();
+        }}
+      />
+
+      <AddToBalanceDialog
+        open={balanceOpen}
+        onOpenChange={setBalanceOpen}
+        clientId={clientId}
+        clientName={clientName}
+        onRecorded={() => {
+          setBalanceOpen(false);
           void reload();
         }}
       />
@@ -902,6 +921,237 @@ function ReverseReceiptDialog({
           </Button>
           <Button variant="destructive" size="sm" onClick={submit} disabled={submitting}>
             {submitting ? 'Reversing…' : 'Reverse receipt'}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * "Add to client balance" — records money received on account as a customer
+ * advance (Dr bank / Cr 2180 Client Advances) instead of settling an invoice.
+ * The counterpart to "Record receipt"; reuses the existing recordCustomerAdvance
+ * server action. Kept net-only (no advance-stage GST) for a clean first cut —
+ * GST is captured when the advance is later applied to an invoice.
+ */
+function AddToBalanceDialog({
+  open,
+  onOpenChange,
+  clientId,
+  clientName,
+  onRecorded,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  clientId: string;
+  clientName: string;
+  onRecorded: () => void;
+}) {
+  const [ourBanks, setOurBanks] = useState<readonly AgencyBankAccountRow[]>([]);
+  const [bankAccountId, setBankAccountId] = useState('');
+  const [receiptDate, setReceiptDate] = useState(todayISO());
+  const [amountRupees, setAmountRupees] = useState('');
+  const [description, setDescription] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      setBankAccountId('');
+      setReceiptDate(todayISO());
+      setAmountRupees('');
+      setDescription('');
+    });
+    listAgencyBankAccounts()
+      .then((b) => {
+        if (cancelled) return;
+        setOurBanks(b);
+        if (b[0]) setBankAccountId(b[0].id);
+      })
+      .catch(() => !cancelled && setOurBanks([]));
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !submitting) onOpenChange(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open, submitting, onOpenChange]);
+
+  if (!open) return null;
+
+  async function submit() {
+    if (!bankAccountId) {
+      toast.error('Pick the bank account the money was received into.');
+      return;
+    }
+    let advancePaise: bigint;
+    try {
+      advancePaise = parsePaise(amountRupees);
+    } catch {
+      toast.error('Enter a valid amount.');
+      return;
+    }
+    if (advancePaise <= 0n) {
+      toast.error('Amount must be positive.');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const res = await recordCustomerAdvance({
+        clientId,
+        bankAccountId,
+        receiptDate,
+        advancePaise,
+        advanceTaxPaise: 0n,
+        method: 'bank_transfer',
+        description: description.trim() || null,
+      });
+      toast.success(
+        `Added ${formatINR(advancePaise)} to ${clientName}'s balance — voucher ${res.voucherNumber}.`,
+      );
+      onRecorded();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not add to the client balance.');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div
+      className="os-modal-overlay"
+      style={modalOverlayStyle}
+      onMouseDown={() => {
+        if (!submitting) onOpenChange(false);
+      }}
+    >
+      <div
+        className="os-modal"
+        style={{ ...modalBoxStyle, width: 460 }}
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <div className="os-modal-head" style={modalHeadStyle}>
+          <div className="font-display" style={{ fontSize: 18 }}>
+            Add to client balance — {clientName}
+          </div>
+          <button
+            type="button"
+            className="btn"
+            onClick={() => onOpenChange(false)}
+            disabled={submitting}
+            aria-label="Close"
+          >
+            ×
+          </button>
+        </div>
+
+        <div
+          style={{
+            flex: 1,
+            minHeight: 0,
+            padding: 18,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 14,
+            overflowY: 'auto',
+          }}
+        >
+          <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0 }}>
+            Records money received on account as an advance — it isn&apos;t applied to any invoice
+            yet. Posts to the client&apos;s advance balance and generates a receipt voucher; apply it
+            to invoices later.
+          </p>
+
+          <div className="os-field">
+            <label htmlFor="bal-bank" className="os-field-label">
+              Into our bank account
+            </label>
+            <select
+              id="bal-bank"
+              style={osInputStyle}
+              value={bankAccountId}
+              onChange={(e) => setBankAccountId(e.target.value)}
+              disabled={submitting}
+            >
+              <option value="" disabled>
+                Select account
+              </option>
+              {ourBanks.map((b) => (
+                <option key={b.id} value={b.id}>
+                  {b.label} ••{b.accountLast4}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div className="os-field">
+              <label htmlFor="bal-date" className="os-field-label">
+                Received on
+              </label>
+              <input
+                id="bal-date"
+                type="date"
+                style={osInputStyle}
+                value={receiptDate}
+                onChange={(e) => setReceiptDate(e.target.value)}
+                disabled={submitting}
+              />
+            </div>
+            <div className="os-field">
+              <label htmlFor="bal-amt" className="os-field-label">
+                Amount (₹)
+              </label>
+              <input
+                id="bal-amt"
+                inputMode="decimal"
+                placeholder="0"
+                style={osInputStyle}
+                value={amountRupees}
+                onChange={(e) => setAmountRupees(e.target.value)}
+                disabled={submitting}
+              />
+            </div>
+          </div>
+
+          <div className="os-field">
+            <label htmlFor="bal-desc" className="os-field-label">
+              Note (optional)
+            </label>
+            <input
+              id="bal-desc"
+              style={osInputStyle}
+              placeholder="e.g. advance for Q3 retainer"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              disabled={submitting}
+            />
+          </div>
+        </div>
+
+        <div
+          style={{
+            display: 'flex',
+            gap: 8,
+            justifyContent: 'flex-end',
+            padding: '12px 18px',
+            borderTop: '1px solid var(--border, #e5e7eb)',
+          }}
+        >
+          <Button variant="outline" size="sm" onClick={() => onOpenChange(false)} disabled={submitting}>
+            Cancel
+          </Button>
+          <Button size="sm" onClick={submit} disabled={submitting}>
+            {submitting ? 'Saving…' : 'Add to balance'}
           </Button>
         </div>
       </div>
