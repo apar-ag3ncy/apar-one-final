@@ -9,6 +9,7 @@ import {
   employees,
   salaryStructures,
 } from '@/lib/db/schema';
+import { isUndefinedTableError } from '@/lib/db/pg-errors';
 import { AppError } from '@/lib/errors';
 import { requireCapability } from '@/lib/rbac';
 import { getActorContext } from '@/lib/server/actor';
@@ -106,17 +107,24 @@ export async function previewSalaryFromAttendance(month: string): Promise<Salary
   }
   const { year, monthIdx, from, to, lastDay } = monthBounds(month);
 
-  // 1) Holidays in the month.
-  const holidayRows = await db
-    .select({ date: companyHolidays.holidayDate })
-    .from(companyHolidays)
-    .where(
-      and(
-        isNull(companyHolidays.deletedAt),
-        gte(companyHolidays.holidayDate, from),
-        lte(companyHolidays.holidayDate, to),
-      ),
-    );
+  // 1) Holidays in the month. If migration 0051 hasn't been applied on this DB
+  //    yet, degrade to no holidays (working days = calendar − Sundays) rather
+  //    than failing the whole run — it self-heals once the table exists.
+  let holidayRows: { date: string }[] = [];
+  try {
+    holidayRows = await db
+      .select({ date: companyHolidays.holidayDate })
+      .from(companyHolidays)
+      .where(
+        and(
+          isNull(companyHolidays.deletedAt),
+          gte(companyHolidays.holidayDate, from),
+          lte(companyHolidays.holidayDate, to),
+        ),
+      );
+  } catch (e) {
+    if (!isUndefinedTableError(e)) throw e;
+  }
   const holidaySet = new Set(holidayRows.map((h) => h.date));
   const workingDays = computeWorkingDays(month, lastDay, monthIdx, year, holidaySet);
 

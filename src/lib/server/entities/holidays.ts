@@ -6,9 +6,13 @@ import { z } from 'zod';
 import { logAudit } from '@/lib/audit';
 import { db } from '@/lib/db/client';
 import { companyHolidays } from '@/lib/db/schema';
+import { isUndefinedTableError } from '@/lib/db/pg-errors';
 import { AppError } from '@/lib/errors';
 import { requireCapability } from '@/lib/rbac';
 import { getActorContext } from '@/lib/server/actor';
+
+const TABLE_PENDING_MSG =
+  "The holiday calendar isn't set up on this database yet — apply migration 0051.";
 
 /**
  * Company holiday calendar management (Settings → Holidays). Reads/writes
@@ -43,17 +47,23 @@ export async function listHolidays(range?: {
     conds.push(lte(companyHolidays.holidayDate, range.to));
   }
 
-  const rows = await db
-    .select({
-      id: companyHolidays.id,
-      date: companyHolidays.holidayDate,
-      name: companyHolidays.name,
-    })
-    .from(companyHolidays)
-    .where(and(...conds))
-    .orderBy(asc(companyHolidays.holidayDate));
+  try {
+    const rows = await db
+      .select({
+        id: companyHolidays.id,
+        date: companyHolidays.holidayDate,
+        name: companyHolidays.name,
+      })
+      .from(companyHolidays)
+      .where(and(...conds))
+      .orderBy(asc(companyHolidays.holidayDate));
 
-  return rows.map((r) => ({ id: r.id, date: r.date, name: r.name }));
+    return rows.map((r) => ({ id: r.id, date: r.date, name: r.name }));
+  } catch (e) {
+    // Migration 0051 not applied on this DB yet → no calendar, not an error.
+    if (isUndefinedTableError(e)) return [];
+    throw e;
+  }
 }
 
 export async function createHoliday(input: {
@@ -69,18 +79,18 @@ export async function createHoliday(input: {
   }
   const { date, name } = parsed.data;
 
-  // Reject a duplicate active date up front for a friendly message (the partial
-  // unique index is the final gate).
-  const existing = await db
-    .select({ id: companyHolidays.id })
-    .from(companyHolidays)
-    .where(and(eq(companyHolidays.holidayDate, date), isNull(companyHolidays.deletedAt)))
-    .limit(1);
-  if (existing[0]) {
-    return { ok: false, message: `A holiday on ${date} already exists.` };
-  }
-
   try {
+    // Reject a duplicate active date up front for a friendly message (the
+    // partial unique index is the final gate).
+    const existing = await db
+      .select({ id: companyHolidays.id })
+      .from(companyHolidays)
+      .where(and(eq(companyHolidays.holidayDate, date), isNull(companyHolidays.deletedAt)))
+      .limit(1);
+    if (existing[0]) {
+      return { ok: false, message: `A holiday on ${date} already exists.` };
+    }
+
     const [row] = await db
       .insert(companyHolidays)
       .values({ holidayDate: date, name, createdBy: ctx.userId, updatedBy: ctx.userId })
@@ -95,6 +105,7 @@ export async function createHoliday(input: {
     });
     return { ok: true };
   } catch (e) {
+    if (isUndefinedTableError(e)) return { ok: false, message: TABLE_PENDING_MSG };
     if (e instanceof AppError) return { ok: false, message: e.message };
     if (e instanceof Error && /duplicate key value/i.test(e.message)) {
       return { ok: false, message: `A holiday on ${date} already exists.` };
@@ -111,19 +122,24 @@ export async function deleteHoliday(id: string): Promise<HolidayMutationResult> 
   const parsed = z.string().uuid().safeParse(id);
   if (!parsed.success) return { ok: false, message: 'Invalid holiday id.' };
 
-  const updated = await db
-    .update(companyHolidays)
-    .set({ deletedAt: new Date(), updatedBy: ctx.userId })
-    .where(and(eq(companyHolidays.id, parsed.data), isNull(companyHolidays.deletedAt)))
-    .returning({ id: companyHolidays.id, holidayDate: companyHolidays.holidayDate });
-  if (updated.length === 0) return { ok: false, message: 'Holiday not found.' };
+  try {
+    const updated = await db
+      .update(companyHolidays)
+      .set({ deletedAt: new Date(), updatedBy: ctx.userId })
+      .where(and(eq(companyHolidays.id, parsed.data), isNull(companyHolidays.deletedAt)))
+      .returning({ id: companyHolidays.id, holidayDate: companyHolidays.holidayDate });
+    if (updated.length === 0) return { ok: false, message: 'Holiday not found.' };
 
-  await logAudit({
-    actorId: ctx.userId,
-    entityType: 'company_holidays',
-    entityId: parsed.data,
-    action: 'delete',
-    changes: { holidayDate: updated[0]!.holidayDate },
-  });
-  return { ok: true };
+    await logAudit({
+      actorId: ctx.userId,
+      entityType: 'company_holidays',
+      entityId: parsed.data,
+      action: 'delete',
+      changes: { holidayDate: updated[0]!.holidayDate },
+    });
+    return { ok: true };
+  } catch (e) {
+    if (isUndefinedTableError(e)) return { ok: false, message: TABLE_PENDING_MSG };
+    throw e;
+  }
 }
