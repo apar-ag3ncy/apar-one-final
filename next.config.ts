@@ -1,6 +1,12 @@
 import type { NextConfig } from 'next';
 
 const nextConfig: NextConfig = {
+  // Self-host build. `standalone` emits `.next/standalone/` — a minimal Node
+  // server (`server.js`) with only the traced production dependencies — so the
+  // app can run on a plain Node host (GoDaddy cPanel "Setup Node.js App" /
+  // Passenger, a VPS, Docker) instead of only on Vercel. Vercel ignores this.
+  // Deploy flow + Passenger entry: see DEPLOY-CPANEL.md.
+  output: 'standalone',
   experimental: {
     serverActions: {
       // File uploads (company documents, entity documents, KYC) are sent to
