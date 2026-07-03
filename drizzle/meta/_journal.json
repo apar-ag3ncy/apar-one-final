@@ -1,363 +1,370 @@
 {
-  "version": "7",
-  "dialect": "postgresql",
-  "entries": [
-    {
-      "idx": 0,
-      "version": "7",
-      "when": 1779374267311,
-      "tag": "0000_init",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "7",
-      "when": 1779392400000,
-      "tag": "0001_rls_baseline",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "7",
-      "when": 1779392500000,
-      "tag": "0002_audit_log_append_only",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "7",
-      "when": 1779392600000,
-      "tag": "0003_entity_subgraph",
-      "breakpoints": true
-    },
-    {
-      "idx": 4,
-      "version": "7",
-      "when": 1779392700000,
-      "tag": "0004_polymorphic_check_trigger",
-      "breakpoints": true
-    },
-    {
-      "idx": 5,
-      "version": "7",
-      "when": 1779392800000,
-      "tag": "0005_phase2_rls",
-      "breakpoints": true
-    },
-    {
-      "idx": 6,
-      "version": "7",
-      "when": 1779392900000,
-      "tag": "0006_phase3_seeds_and_triggers",
-      "breakpoints": true
-    },
-    {
-      "idx": 7,
-      "version": "7",
-      "when": 1779393000000,
-      "tag": "0007_ledger",
-      "breakpoints": true
-    },
-    {
-      "idx": 8,
-      "version": "7",
-      "when": 1779393100000,
-      "tag": "0008_payroll",
-      "breakpoints": true
-    },
-    {
-      "idx": 9,
-      "version": "7",
-      "when": 1779393200000,
-      "tag": "0009_employee_portal_rls",
-      "breakpoints": true
-    },
-    {
-      "idx": 10,
-      "version": "7",
-      "when": 1779393300000,
-      "tag": "0010_interconnection_non_archived",
-      "breakpoints": true
-    },
-    {
-      "idx": 11,
-      "version": "7",
-      "when": 1779393400000,
-      "tag": "0011_primary_uniqueness",
-      "breakpoints": true
-    },
-    {
-      "idx": 12,
-      "version": "7",
-      "when": 1779393500000,
-      "tag": "0012_event_kind_enum_and_reimb_project_fk",
-      "breakpoints": true
-    },
-    {
-      "idx": 13,
-      "version": "7",
-      "when": 1779393600000,
-      "tag": "0013_attendance",
-      "breakpoints": true
-    },
-    {
-      "idx": 14,
-      "version": "7",
-      "when": 1779393700000,
-      "tag": "0014_dev_admin_user_seed",
-      "breakpoints": true
-    },
-    {
-      "idx": 15,
-      "version": "7",
-      "when": 1779393800000,
-      "tag": "0015_allow_draft_delete",
-      "breakpoints": true
-    },
-    {
-      "idx": 16,
-      "version": "7",
-      "when": 1779393900000,
-      "tag": "0016_projects_fee",
-      "breakpoints": true
-    },
-    {
-      "idx": 17,
-      "version": "7",
-      "when": 1779394000000,
-      "tag": "0017_office_expenses",
-      "breakpoints": true
-    },
-    {
-      "idx": 18,
-      "version": "7",
-      "when": 1779394100000,
-      "tag": "0018_office_expenses_vendor_fk",
-      "breakpoints": true
-    },
-    {
-      "idx": 19,
-      "version": "7",
-      "when": 1779394200000,
-      "tag": "0019_billing_phase1",
-      "breakpoints": true
-    },
-    {
-      "idx": 20,
-      "version": "7",
-      "when": 1779394300000,
-      "tag": "0020_billing_chart_accounts",
-      "breakpoints": true
-    },
-    {
-      "idx": 21,
-      "version": "7",
-      "when": 1779394400000,
-      "tag": "0021_billing_reference_seeds",
-      "breakpoints": true
-    },
-    {
-      "idx": 22,
-      "version": "7",
-      "when": 1779394500000,
-      "tag": "0022_billing_validation_rules",
-      "breakpoints": true
-    },
-    {
-      "idx": 23,
-      "version": "7",
-      "when": 1779394600000,
-      "tag": "0023_billing_role_capabilities",
-      "breakpoints": true
-    },
-    {
-      "idx": 24,
-      "version": "7",
-      "when": 1779394700000,
-      "tag": "0024_fix_service_items_shape",
-      "breakpoints": true
-    },
-    {
-      "idx": 25,
-      "version": "7",
-      "when": 1779394800000,
-      "tag": "0025_billing_event_kinds",
-      "breakpoints": true
-    },
-    {
-      "idx": 26,
-      "version": "7",
-      "when": 1779394900000,
-      "tag": "0026_billing_views",
-      "breakpoints": true
-    },
-    {
-      "idx": 27,
-      "version": "7",
-      "when": 1779395000000,
-      "tag": "0027_reminder_schedules",
-      "breakpoints": true
-    },
-    {
-      "idx": 28,
-      "version": "7",
-      "when": 1780000000000,
-      "tag": "0028_office_expenses_project_id",
-      "breakpoints": true
-    },
-    {
-      "idx": 29,
-      "version": "7",
-      "when": 1780100000000,
-      "tag": "0029_clients_name_unique_active",
-      "breakpoints": true
-    },
-    {
-      "idx": 30,
-      "version": "7",
-      "when": 1780200000000,
-      "tag": "0030_enforce_period_close_default",
-      "breakpoints": true
-    },
-    {
-      "idx": 31,
-      "version": "7",
-      "when": 1780300000000,
-      "tag": "0031_bill_allocations",
-      "breakpoints": true
-    },
-    {
-      "idx": 32,
-      "version": "7",
-      "when": 1780400000000,
-      "tag": "0032_closing_source_kind",
-      "breakpoints": true
-    },
-    {
-      "idx": 33,
-      "version": "7",
-      "when": 1780500000000,
-      "tag": "0033_tds_gst_validation_enable",
-      "breakpoints": true
-    },
-    {
-      "idx": 34,
-      "version": "7",
-      "when": 1780500001000,
-      "tag": "0034_audit_all_business_tables",
-      "breakpoints": true
-    },
-    {
-      "idx": 35,
-      "version": "7",
-      "when": 1780500002000,
-      "tag": "0035_user_preferences",
-      "breakpoints": true
-    },
-    {
-      "idx": 36,
-      "version": "7",
-      "when": 1780600002000,
-      "tag": "0036_departments",
-      "breakpoints": true
-    },
-    {
-      "idx": 37,
-      "version": "7",
-      "when": 1780600003000,
-      "tag": "0037_invoice_themes",
-      "breakpoints": true
-    },
-    {
-      "idx": 38,
-      "version": "7",
-      "when": 1780600004000,
-      "tag": "0038_invoice_theme_capability",
-      "breakpoints": true
-    },
-    {
-      "idx": 39,
-      "version": "7",
-      "when": 1780600005000,
-      "tag": "0039_invoice_theme_immutability",
-      "breakpoints": true
-    },
-    {
-      "idx": 40,
-      "version": "7",
-      "when": 1780600006000,
-      "tag": "0040_invoice_types_and_billto",
-      "breakpoints": true
-    },
-    {
-      "idx": 41,
-      "version": "7",
-      "when": 1780600007000,
-      "tag": "0041_company_settings",
-      "breakpoints": true
-    },
-    {
-      "idx": 42,
-      "version": "7",
-      "when": 1780600007001,
-      "tag": "0042_vault",
-      "breakpoints": true
-    },
-    {
-      "idx": 43,
-      "version": "7",
-      "when": 1780600007002,
-      "tag": "0043_company_bank_upi",
-      "breakpoints": true
-    },
-    {
-      "idx": 44,
-      "version": "7",
-      "when": 1780600007003,
-      "tag": "0044_invoice_bank_account",
-      "breakpoints": true
-    },
-    {
-      "idx": 45,
-      "version": "7",
-      "when": 1780600007004,
-      "tag": "0045_salary_payments",
-      "breakpoints": true
-    },
-    {
-      "idx": 46,
-      "version": "7",
-      "when": 1780600007005,
-      "tag": "0046_salary_payments_ledger",
-      "breakpoints": true
-    },
-    {
-      "idx": 47,
-      "version": "7",
-      "when": 1780600007006,
-      "tag": "0047_bill_allocations_deleted_at",
-      "breakpoints": true
-    },
-    {
-      "idx": 48,
-      "version": "7",
-      "when": 1780600007007,
-      "tag": "0048_drop_company_bank_upi",
-      "breakpoints": true
-    },
-    {
-      "idx": 49,
-      "version": "7",
-      "when": 1780600090000,
-      "tag": "0049_client_receipts",
-      "breakpoints": true
-    },
-    {
-      "idx": 50,
-      "version": "7",
-      "when": 1780600090001,
-      "tag": "0050_salary_structure_date_range_check",
-      "breakpoints": true
-    }
-  ]
+	"version": "7",
+	"dialect": "postgresql",
+	"entries": [
+		{
+			"idx": 0,
+			"version": "7",
+			"when": 1779374267311,
+			"tag": "0000_init",
+			"breakpoints": true
+		},
+		{
+			"idx": 1,
+			"version": "7",
+			"when": 1779392400000,
+			"tag": "0001_rls_baseline",
+			"breakpoints": true
+		},
+		{
+			"idx": 2,
+			"version": "7",
+			"when": 1779392500000,
+			"tag": "0002_audit_log_append_only",
+			"breakpoints": true
+		},
+		{
+			"idx": 3,
+			"version": "7",
+			"when": 1779392600000,
+			"tag": "0003_entity_subgraph",
+			"breakpoints": true
+		},
+		{
+			"idx": 4,
+			"version": "7",
+			"when": 1779392700000,
+			"tag": "0004_polymorphic_check_trigger",
+			"breakpoints": true
+		},
+		{
+			"idx": 5,
+			"version": "7",
+			"when": 1779392800000,
+			"tag": "0005_phase2_rls",
+			"breakpoints": true
+		},
+		{
+			"idx": 6,
+			"version": "7",
+			"when": 1779392900000,
+			"tag": "0006_phase3_seeds_and_triggers",
+			"breakpoints": true
+		},
+		{
+			"idx": 7,
+			"version": "7",
+			"when": 1779393000000,
+			"tag": "0007_ledger",
+			"breakpoints": true
+		},
+		{
+			"idx": 8,
+			"version": "7",
+			"when": 1779393100000,
+			"tag": "0008_payroll",
+			"breakpoints": true
+		},
+		{
+			"idx": 9,
+			"version": "7",
+			"when": 1779393200000,
+			"tag": "0009_employee_portal_rls",
+			"breakpoints": true
+		},
+		{
+			"idx": 10,
+			"version": "7",
+			"when": 1779393300000,
+			"tag": "0010_interconnection_non_archived",
+			"breakpoints": true
+		},
+		{
+			"idx": 11,
+			"version": "7",
+			"when": 1779393400000,
+			"tag": "0011_primary_uniqueness",
+			"breakpoints": true
+		},
+		{
+			"idx": 12,
+			"version": "7",
+			"when": 1779393500000,
+			"tag": "0012_event_kind_enum_and_reimb_project_fk",
+			"breakpoints": true
+		},
+		{
+			"idx": 13,
+			"version": "7",
+			"when": 1779393600000,
+			"tag": "0013_attendance",
+			"breakpoints": true
+		},
+		{
+			"idx": 14,
+			"version": "7",
+			"when": 1779393700000,
+			"tag": "0014_dev_admin_user_seed",
+			"breakpoints": true
+		},
+		{
+			"idx": 15,
+			"version": "7",
+			"when": 1779393800000,
+			"tag": "0015_allow_draft_delete",
+			"breakpoints": true
+		},
+		{
+			"idx": 16,
+			"version": "7",
+			"when": 1779393900000,
+			"tag": "0016_projects_fee",
+			"breakpoints": true
+		},
+		{
+			"idx": 17,
+			"version": "7",
+			"when": 1779394000000,
+			"tag": "0017_office_expenses",
+			"breakpoints": true
+		},
+		{
+			"idx": 18,
+			"version": "7",
+			"when": 1779394100000,
+			"tag": "0018_office_expenses_vendor_fk",
+			"breakpoints": true
+		},
+		{
+			"idx": 19,
+			"version": "7",
+			"when": 1779394200000,
+			"tag": "0019_billing_phase1",
+			"breakpoints": true
+		},
+		{
+			"idx": 20,
+			"version": "7",
+			"when": 1779394300000,
+			"tag": "0020_billing_chart_accounts",
+			"breakpoints": true
+		},
+		{
+			"idx": 21,
+			"version": "7",
+			"when": 1779394400000,
+			"tag": "0021_billing_reference_seeds",
+			"breakpoints": true
+		},
+		{
+			"idx": 22,
+			"version": "7",
+			"when": 1779394500000,
+			"tag": "0022_billing_validation_rules",
+			"breakpoints": true
+		},
+		{
+			"idx": 23,
+			"version": "7",
+			"when": 1779394600000,
+			"tag": "0023_billing_role_capabilities",
+			"breakpoints": true
+		},
+		{
+			"idx": 24,
+			"version": "7",
+			"when": 1779394700000,
+			"tag": "0024_fix_service_items_shape",
+			"breakpoints": true
+		},
+		{
+			"idx": 25,
+			"version": "7",
+			"when": 1779394800000,
+			"tag": "0025_billing_event_kinds",
+			"breakpoints": true
+		},
+		{
+			"idx": 26,
+			"version": "7",
+			"when": 1779394900000,
+			"tag": "0026_billing_views",
+			"breakpoints": true
+		},
+		{
+			"idx": 27,
+			"version": "7",
+			"when": 1779395000000,
+			"tag": "0027_reminder_schedules",
+			"breakpoints": true
+		},
+		{
+			"idx": 28,
+			"version": "7",
+			"when": 1780000000000,
+			"tag": "0028_office_expenses_project_id",
+			"breakpoints": true
+		},
+		{
+			"idx": 29,
+			"version": "7",
+			"when": 1780100000000,
+			"tag": "0029_clients_name_unique_active",
+			"breakpoints": true
+		},
+		{
+			"idx": 30,
+			"version": "7",
+			"when": 1780200000000,
+			"tag": "0030_enforce_period_close_default",
+			"breakpoints": true
+		},
+		{
+			"idx": 31,
+			"version": "7",
+			"when": 1780300000000,
+			"tag": "0031_bill_allocations",
+			"breakpoints": true
+		},
+		{
+			"idx": 32,
+			"version": "7",
+			"when": 1780400000000,
+			"tag": "0032_closing_source_kind",
+			"breakpoints": true
+		},
+		{
+			"idx": 33,
+			"version": "7",
+			"when": 1780500000000,
+			"tag": "0033_tds_gst_validation_enable",
+			"breakpoints": true
+		},
+		{
+			"idx": 34,
+			"version": "7",
+			"when": 1780500001000,
+			"tag": "0034_audit_all_business_tables",
+			"breakpoints": true
+		},
+		{
+			"idx": 35,
+			"version": "7",
+			"when": 1780500002000,
+			"tag": "0035_user_preferences",
+			"breakpoints": true
+		},
+		{
+			"idx": 36,
+			"version": "7",
+			"when": 1780600002000,
+			"tag": "0036_departments",
+			"breakpoints": true
+		},
+		{
+			"idx": 37,
+			"version": "7",
+			"when": 1780600003000,
+			"tag": "0037_invoice_themes",
+			"breakpoints": true
+		},
+		{
+			"idx": 38,
+			"version": "7",
+			"when": 1780600004000,
+			"tag": "0038_invoice_theme_capability",
+			"breakpoints": true
+		},
+		{
+			"idx": 39,
+			"version": "7",
+			"when": 1780600005000,
+			"tag": "0039_invoice_theme_immutability",
+			"breakpoints": true
+		},
+		{
+			"idx": 40,
+			"version": "7",
+			"when": 1780600006000,
+			"tag": "0040_invoice_types_and_billto",
+			"breakpoints": true
+		},
+		{
+			"idx": 41,
+			"version": "7",
+			"when": 1780600007000,
+			"tag": "0041_company_settings",
+			"breakpoints": true
+		},
+		{
+			"idx": 42,
+			"version": "7",
+			"when": 1780600007001,
+			"tag": "0042_vault",
+			"breakpoints": true
+		},
+		{
+			"idx": 43,
+			"version": "7",
+			"when": 1780600007002,
+			"tag": "0043_company_bank_upi",
+			"breakpoints": true
+		},
+		{
+			"idx": 44,
+			"version": "7",
+			"when": 1780600007003,
+			"tag": "0044_invoice_bank_account",
+			"breakpoints": true
+		},
+		{
+			"idx": 45,
+			"version": "7",
+			"when": 1780600007004,
+			"tag": "0045_salary_payments",
+			"breakpoints": true
+		},
+		{
+			"idx": 46,
+			"version": "7",
+			"when": 1780600007005,
+			"tag": "0046_salary_payments_ledger",
+			"breakpoints": true
+		},
+		{
+			"idx": 47,
+			"version": "7",
+			"when": 1780600007006,
+			"tag": "0047_bill_allocations_deleted_at",
+			"breakpoints": true
+		},
+		{
+			"idx": 48,
+			"version": "7",
+			"when": 1780600007007,
+			"tag": "0048_drop_company_bank_upi",
+			"breakpoints": true
+		},
+		{
+			"idx": 49,
+			"version": "7",
+			"when": 1780600090000,
+			"tag": "0049_client_receipts",
+			"breakpoints": true
+		},
+		{
+			"idx": 50,
+			"version": "7",
+			"when": 1780600090001,
+			"tag": "0050_salary_structure_date_range_check",
+			"breakpoints": true
+		},
+		{
+			"idx": 51,
+			"version": "7",
+			"when": 1780600090002,
+			"tag": "0051_company_holidays",
+			"breakpoints": true
+		}
+	]
 }

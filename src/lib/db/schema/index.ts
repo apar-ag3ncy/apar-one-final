@@ -7,6 +7,7 @@ export * from './organizations';
 // Company settings (Apar's own profile docs + bank accounts)
 export * from './company_bank_accounts';
 export * from './company_documents';
+export * from './company_holidays';
 export * from './users';
 export * from './clients';
 export * from './vendors';

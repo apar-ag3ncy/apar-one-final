@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import {
   Building2Icon,
+  CalendarDaysIcon,
   CalendarRangeIcon,
   KeyRoundIcon,
   LandmarkIcon,
@@ -48,6 +49,12 @@ const SECTIONS: readonly SettingsLink[] = [
     title: 'Accounting periods',
     description: 'Open, soft-close, hard-close, and re-open periods.',
     icon: CalendarRangeIcon,
+  },
+  {
+    href: '/settings/holidays',
+    title: 'Holidays',
+    description: 'Company holiday calendar — payroll excludes these from working days.',
+    icon: CalendarDaysIcon,
   },
   {
     href: '/settings/roles',
