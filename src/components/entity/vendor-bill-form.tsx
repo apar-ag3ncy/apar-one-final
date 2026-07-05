@@ -3,7 +3,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
-import { createVendorBillDraft } from '@/lib/server/entities/vendor-bills';
+import {
+  createVendorBillDraft,
+  getDraftVendorBill,
+  updateVendorBillDraft,
+} from '@/lib/server/entities/vendor-bills';
 import {
   listEntityDocuments,
   uploadDocument,
@@ -12,7 +16,7 @@ import {
 import { listClients } from '@/lib/server-stub/entity-actions';
 import { listVendors } from '@/lib/server-stub/entity-actions';
 import { listProjectOptionsForClient, type EntityOption } from '@/lib/server/entities/options';
-import { rupeesToPaise } from '@/lib/money';
+import { paiseToRupees, rupeesToPaise } from '@/lib/money';
 
 type LineItem = { description: string; amountRupees: string; gstRupees: string };
 
@@ -67,7 +71,9 @@ export type VendorBillFormProps = {
   clientName?: string;
   /** Whether the user can change attribution. False on the client side. */
   lockAttributionToClient?: boolean;
-  /** Called after a successful submit. */
+  /** When set, edit this existing DRAFT bill in place instead of creating one. */
+  editTransactionId?: string | null;
+  /** Called after a successful submit (create OR update). */
   onCreated: () => void;
 };
 
@@ -79,6 +85,7 @@ export function VendorBillForm({
   clientId: clientIdProp,
   clientName: clientNameProp,
   lockAttributionToClient = false,
+  editTransactionId = null,
   onCreated,
 }: VendorBillFormProps) {
   const [vendorOptions, setVendorOptions] = useState<Array<{ id: string; name: string }>>([]);
@@ -120,21 +127,80 @@ export function VendorBillForm({
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
-    queueMicrotask(() => {
-      setVendorInvoiceNumber('');
-      setTxnDate(todayISO());
-      setLineItems([{ description: '', amountRupees: '', gstRupees: '' }]);
-      setTdsRupees('');
-      setTdsSection('none');
-      setIsRcm(false);
-      setNotes('');
-      setOtherDescription('');
-      setBillDocumentId('');
-      setVendorId(vendorIdProp ?? '');
-      setClientId(clientIdProp ?? '');
-      setSelectedProjectId('');
-      setAttribution(lockAttributionToClient || clientIdProp ? 'client' : null);
-    });
+
+    if (editTransactionId) {
+      // Edit mode: pre-fill every field from the existing draft. "Other" bills
+      // are stored as opex/6900 with an "Other — …" notes prefix; reconstruct
+      // that label so the round-trip is faithful.
+      void getDraftVendorBill(editTransactionId)
+        .then((d) => {
+          if (cancelled) return;
+          const otherPrefix = 'Other — ';
+          const notesLines = (d.notes ?? '').split('\n');
+          const isOther =
+            d.attribution === 'opex' &&
+            d.expenseAccountCode === '6900' &&
+            (notesLines[0]?.startsWith(otherPrefix) ?? false);
+          if (isOther) {
+            setAttribution('other');
+            setOtherDescription(notesLines[0]!.slice(otherPrefix.length));
+            setNotes(notesLines.slice(1).join('\n'));
+          } else {
+            setAttribution(d.attribution);
+            setOtherDescription('');
+            setNotes(d.notes ?? '');
+          }
+          setVendorId(d.vendorId);
+          setClientId(d.onBehalfOfClientId ?? '');
+          setSelectedProjectId(d.projectId ?? '');
+          if (
+            d.expenseAccountCode &&
+            ['6100', '6200', '6300', '6400', '6900', '8100'].includes(d.expenseAccountCode)
+          ) {
+            setExpenseAccountCode(
+              d.expenseAccountCode as '6100' | '6200' | '6300' | '6400' | '6900' | '8100',
+            );
+          }
+          setBillDocumentId(d.billDocumentId);
+          setVendorInvoiceNumber(d.vendorInvoiceNumber);
+          setTxnDate(d.txnDate);
+          setLineItems(
+            d.lineItems.length > 0
+              ? d.lineItems.map((li) => ({
+                  description: li.description,
+                  amountRupees: paiseToRupees(li.amountPaise),
+                  gstRupees:
+                    li.gstAmountPaiseCaptured > 0n ? paiseToRupees(li.gstAmountPaiseCaptured) : '',
+                }))
+              : [{ description: '', amountRupees: '', gstRupees: '' }],
+          );
+          setTdsRupees(d.tdsAmountPaise > 0n ? paiseToRupees(d.tdsAmountPaise) : '');
+          setTdsSection(d.tdsSection && d.tdsSection.length > 0 ? d.tdsSection : 'none');
+          setIsRcm(d.isRcm);
+        })
+        .catch((e) => {
+          if (!cancelled) {
+            toast.error(e instanceof Error ? e.message : 'Could not load the draft bill');
+          }
+        });
+    } else {
+      queueMicrotask(() => {
+        if (cancelled) return;
+        setVendorInvoiceNumber('');
+        setTxnDate(todayISO());
+        setLineItems([{ description: '', amountRupees: '', gstRupees: '' }]);
+        setTdsRupees('');
+        setTdsSection('none');
+        setIsRcm(false);
+        setNotes('');
+        setOtherDescription('');
+        setBillDocumentId('');
+        setVendorId(vendorIdProp ?? '');
+        setClientId(clientIdProp ?? '');
+        setSelectedProjectId('');
+        setAttribution(lockAttributionToClient || clientIdProp ? 'client' : null);
+      });
+    }
 
     if (!vendorIdProp) {
       listVendors()
@@ -153,7 +219,7 @@ export function VendorBillForm({
     return () => {
       cancelled = true;
     };
-  }, [open, vendorIdProp, clientIdProp, lockAttributionToClient]);
+  }, [open, vendorIdProp, clientIdProp, lockAttributionToClient, editTransactionId]);
 
   // Surface every document that could be the source bill: the vendor's own
   // uploaded docs, plus — when the bill is on behalf of a client — that
@@ -261,12 +327,14 @@ export function VendorBillForm({
       return;
     }
     let cancelled = false;
-    queueMicrotask(() => {
-      if (!cancelled) setSelectedProjectId('');
-    });
     listProjectOptionsForClient(clientId)
       .then((ps) => {
-        if (!cancelled) setProjectOptions(ps);
+        if (cancelled) return;
+        setProjectOptions(ps);
+        // Keep the current selection only if it's still valid for this client
+        // (so an edit-mode pre-filled project survives, but a stale one from a
+        // previously-picked client is dropped).
+        setSelectedProjectId((cur) => (cur && ps.some((p) => p.id === cur) ? cur : ''));
       })
       .catch(() => {
         if (!cancelled) setProjectOptions([]);
@@ -383,7 +451,9 @@ export function VendorBillForm({
       } else {
         payload = { attribution: 'asset', ...common };
       }
-      const result = await createVendorBillDraft(payload);
+      const result = editTransactionId
+        ? await updateVendorBillDraft(editTransactionId, payload)
+        : await createVendorBillDraft(payload);
       if (result.flags.length > 0) {
         const blocks = result.flags.filter((f) => f.severity === 'block').length;
         if (blocks > 0) {
@@ -392,7 +462,7 @@ export function VendorBillForm({
           toast.info(`Saved with ${result.flags.length} flag(s) to acknowledge before posting.`);
         }
       } else {
-        toast.success('Vendor bill draft saved.');
+        toast.success(editTransactionId ? 'Vendor bill updated.' : 'Vendor bill draft saved.');
       }
       onCreated();
     } catch (e) {
@@ -437,7 +507,8 @@ export function VendorBillForm({
       <div className="os-modal" style={{ width: 720 }} onMouseDown={(e) => e.stopPropagation()}>
         <div className="os-modal-head">
           <div className="font-display" style={{ fontSize: 18 }}>
-            New vendor bill{titleSuffix}
+            {editTransactionId ? 'Edit vendor bill' : 'New vendor bill'}
+            {titleSuffix}
           </div>
           <button
             type="button"
@@ -944,7 +1015,13 @@ export function VendorBillForm({
             onClick={submit}
             disabled={submitting || !billDocumentId}
           >
-            {submitting ? 'Saving draft…' : 'Save draft'}
+            {submitting
+              ? editTransactionId
+                ? 'Saving…'
+                : 'Saving draft…'
+              : editTransactionId
+                ? 'Save changes'
+                : 'Save draft'}
           </button>
         </div>
       </div>

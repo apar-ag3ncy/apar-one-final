@@ -1,14 +1,17 @@
 'use server';
 
-import { and, desc, eq, isNull, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { db } from '@/lib/db/client';
-import { documents, entityDocuments, projects, transactions } from '@/lib/db/schema';
+import { accounts, documents, entityDocuments, postings, projects, transactions } from '@/lib/db/schema';
 import { AppError } from '@/lib/errors';
 import { getActorContext } from '@/lib/server/actor';
 import { createDraftTransaction } from '@/lib/server/ledger/transactions';
-import type { VendorBillInput } from '@/lib/server/ledger/postings/vendorBill';
+import { runValidations } from '@/lib/server/ledger/validation';
+import { vendorBill, type VendorBillInput } from '@/lib/server/ledger/postings/vendorBill';
+
+const VENDOR_BILL_KIND = 'vendor_bill';
 
 /**
  * Vendor bill capture — the §0.6 "client attribution is sacred" entry
@@ -332,4 +335,318 @@ async function mirrorBillDocToVendor({
     createdBy: ctx.userId,
     updatedBy: ctx.userId,
   });
+}
+
+/* -------------------------------------------------------------------------- */
+/* Edit / delete a DRAFT vendor bill                                           */
+/* -------------------------------------------------------------------------- */
+//
+// Mirrors the client-invoice draft surface (client-transactions.ts). A vendor
+// bill is a `vendor_bill` transaction; while it is a DRAFT it is fully editable
+// and deletable (LEDGER-SPEC §0.3/§8.5 + migration 0015). Posted/reversed bills
+// are immutable and must be reversed instead — enforced here AND by the ledger
+// triggers as a backstop.
+
+/**
+ * Replace a draft vendor bill in place: re-derive the postings from the new
+ * inputs, re-run validations, swap the postings, and update the header. Refuses
+ * anything that isn't a `vendor_bill` in `draft` status.
+ */
+export async function updateVendorBillDraft(
+  transactionId: string,
+  input: VendorBillFormInput,
+): Promise<{
+  transactionId: string;
+  flags: ReadonlyArray<{ code: string; severity: string; message: string }>;
+}> {
+  const ctx = await getActorContext();
+  const parsed = VendorBillFormSchema.parse(input);
+
+  // Same guard as create: a project tagged on a client bill must belong to
+  // that client, or one client's P&L would absorb another's spend.
+  if (parsed.attribution === 'client' && parsed.projectId) {
+    const [p] = await db
+      .select({ clientId: projects.clientId })
+      .from(projects)
+      .where(and(eq(projects.id, parsed.projectId), isNull(projects.deletedAt)))
+      .limit(1);
+    if (!p) throw new AppError('validation', 'The selected project no longer exists.');
+    if (p.clientId !== parsed.onBehalfOfClientId) {
+      throw new AppError('validation', 'The selected project belongs to a different client.');
+    }
+  }
+
+  const template = vendorBill(parsed as VendorBillInput);
+  const flags = await runValidations(template, {
+    kind: VENDOR_BILL_KIND,
+    attribution: parsed.attribution,
+  });
+
+  try {
+    await db.transaction(async (tx) => {
+      const [existing] = await tx
+        .select({ id: transactions.id, status: transactions.status, kind: transactions.kind })
+        .from(transactions)
+        .where(eq(transactions.id, transactionId))
+        .limit(1);
+      if (!existing) throw new AppError('not_found', `Bill ${transactionId} not found`);
+      if (existing.kind !== VENDOR_BILL_KIND) {
+        throw new AppError('validation', `Transaction ${transactionId} is not a vendor bill`);
+      }
+      if (existing.status !== 'draft') {
+        throw new AppError(
+          'ledger.posted_immutable',
+          `This bill is ${existing.status}, not a draft — reverse it instead of editing.`,
+        );
+      }
+
+      // Resolve account codes via inArray (raw `= ANY(...)` mis-binds — see
+      // the note in createDraftTransaction).
+      const codes = Array.from(new Set(template.postings.map((pp) => pp.accountCode)));
+      const accountRows = await tx
+        .select({ id: accounts.id, code: accounts.code })
+        .from(accounts)
+        .where(inArray(accounts.code, codes));
+      const codeToId = new Map(accountRows.map((a) => [a.code, a.id]));
+      for (const code of codes) {
+        if (!codeToId.has(code)) {
+          throw new AppError('ledger.control_violation', `account code "${code}" not found`);
+        }
+      }
+
+      await tx.delete(postings).where(eq(postings.transactionId, transactionId));
+      await tx
+        .update(transactions)
+        .set({
+          externalRef: template.externalRef,
+          description: template.description,
+          txnDate: template.txnDate,
+          sourceKind: template.sourceKind,
+          sourceDocumentId: template.sourceDocumentId,
+          relatedEntityKind: template.relatedEntityKind,
+          relatedEntityId: template.relatedEntityId,
+          // Explicitly null the client-only tags when attribution changed away
+          // from 'client' (a draft can switch client → opex/asset on edit).
+          onBehalfOfClientId: template.onBehalfOfClientId ?? null,
+          paidToVendorId: template.paidToVendorId ?? null,
+          incurredByEmployeeId: template.incurredByEmployeeId ?? null,
+          projectId: template.projectId ?? null,
+          validationFlags: flags,
+          notes: template.notes ?? null,
+          updatedBy: ctx.userId,
+        })
+        .where(eq(transactions.id, transactionId));
+
+      for (const pp of template.postings) {
+        await tx.insert(postings).values({
+          transactionId,
+          accountId: codeToId.get(pp.accountCode)!,
+          subledgerEntityType: pp.subledger?.entityType,
+          subledgerEntityId: pp.subledger?.entityId,
+          side: pp.side,
+          amountPaise: pp.amountPaise,
+          currency: 'INR',
+          metadata: pp.metadata ?? {},
+        });
+      }
+    });
+
+    // Re-mirror the (possibly changed) source document onto the vendor. Idempotent.
+    await mirrorBillDocToVendor({
+      ctx,
+      vendorId: parsed.vendorId,
+      documentId: parsed.billDocumentId,
+    });
+
+    return {
+      transactionId,
+      flags: flags.map((f) => ({ code: f.code, severity: f.severity, message: f.message })),
+    };
+  } catch (e) {
+    if (e instanceof AppError) throw e;
+    throw new AppError(
+      'internal',
+      e instanceof Error ? e.message : 'Failed to update vendor bill draft',
+    );
+  }
+}
+
+/**
+ * Delete a draft vendor bill (transaction + its postings). Refuses non-draft
+ * bills. The uploaded source document and its vendor-side link are left intact —
+ * the PDF is a legitimate vendor document independent of the bill.
+ */
+export async function deleteVendorBillDraft(transactionId: string): Promise<void> {
+  await getActorContext();
+  await db.transaction(async (tx) => {
+    const [existing] = await tx
+      .select({ id: transactions.id, status: transactions.status, kind: transactions.kind })
+      .from(transactions)
+      .where(eq(transactions.id, transactionId))
+      .limit(1);
+    if (!existing) throw new AppError('not_found', `Bill ${transactionId} not found`);
+    if (existing.kind !== VENDOR_BILL_KIND) {
+      throw new AppError('validation', `Transaction ${transactionId} is not a vendor bill`);
+    }
+    if (existing.status !== 'draft') {
+      throw new AppError(
+        'ledger.posted_immutable',
+        `This bill is ${existing.status}, not a draft — reverse it instead of deleting.`,
+      );
+    }
+    // postings.transaction_id is ON DELETE RESTRICT — remove children first.
+    await tx.delete(postings).where(eq(postings.transactionId, transactionId));
+    await tx.delete(transactions).where(eq(transactions.id, transactionId));
+  });
+}
+
+export type DraftVendorBillFormShape = {
+  transactionId: string;
+  attribution: 'client' | 'opex' | 'asset';
+  vendorId: string;
+  onBehalfOfClientId: string | null;
+  projectId: string | null;
+  /** For opex bills: the 6xxx/8100 expense account code. */
+  expenseAccountCode: string | null;
+  billDocumentId: string;
+  billDocumentName: string | null;
+  vendorInvoiceNumber: string;
+  txnDate: string;
+  lineItems: ReadonlyArray<{
+    description: string;
+    amountPaise: bigint;
+    gstAmountPaiseCaptured: bigint;
+  }>;
+  tdsAmountPaise: bigint;
+  tdsSection: string | null;
+  isRcm: boolean;
+  notes: string | null;
+};
+
+/**
+ * Load a draft vendor bill in the exact shape the form needs to pre-fill.
+ * Postings carry only aggregated totals, so the per-line breakdown is read
+ * back from the net-debit posting's `metadata.line_items` stash (written by
+ * the vendorBill template); older drafts fall back to a single aggregated line.
+ */
+export async function getDraftVendorBill(
+  transactionId: string,
+): Promise<DraftVendorBillFormShape> {
+  await getActorContext();
+
+  const [txn] = await db
+    .select({
+      id: transactions.id,
+      status: transactions.status,
+      kind: transactions.kind,
+      externalRef: transactions.externalRef,
+      txnDate: transactions.txnDate,
+      sourceDocumentId: transactions.sourceDocumentId,
+      onBehalfOfClientId: transactions.onBehalfOfClientId,
+      paidToVendorId: transactions.paidToVendorId,
+      projectId: transactions.projectId,
+      notes: transactions.notes,
+    })
+    .from(transactions)
+    .where(eq(transactions.id, transactionId))
+    .limit(1);
+  if (!txn) throw new AppError('not_found', `Bill ${transactionId} not found`);
+  if (txn.kind !== VENDOR_BILL_KIND) {
+    throw new AppError('validation', `Transaction ${transactionId} is not a vendor bill`);
+  }
+  if (txn.status !== 'draft') {
+    throw new AppError(
+      'ledger.posted_immutable',
+      `This bill is ${txn.status}, not a draft — reverse it instead of editing.`,
+    );
+  }
+  if (!txn.sourceDocumentId) {
+    throw new AppError('validation', 'Draft bill has no source document');
+  }
+
+  const vendorId = txn.paidToVendorId ?? '';
+  // externalRef: `vendor_bill:<vendorId>:<invoiceNumber>` — the invoice number
+  // may itself contain ':' so strip the exact prefix rather than split.
+  const refPrefix = `vendor_bill:${vendorId}:`;
+  const vendorInvoiceNumber = txn.externalRef.startsWith(refPrefix)
+    ? txn.externalRef.slice(refPrefix.length)
+    : txn.externalRef;
+
+  const postingRows = await db
+    .select({
+      accountCode: accounts.code,
+      side: postings.side,
+      amountPaise: postings.amountPaise,
+      metadata: postings.metadata,
+    })
+    .from(postings)
+    .innerJoin(accounts, eq(accounts.id, postings.accountId))
+    .where(eq(postings.transactionId, transactionId));
+
+  // The net-debit posting is the debit that isn't the 1250 GST-input line; it
+  // carries attribution + is_rcm + the line-item stash. Its account code is the
+  // expense account (opex) / 5100 (client) / 1510 (asset).
+  const netPosting = postingRows.find((pp) => pp.side === 'debit' && pp.accountCode !== '1250');
+  const gstPosting = postingRows.find((pp) => pp.side === 'debit' && pp.accountCode === '1250');
+  const tdsPosting = postingRows.find((pp) => pp.side === 'credit' && pp.accountCode === '2130');
+
+  const netMeta = (netPosting?.metadata ?? {}) as Record<string, unknown>;
+  const attributionRaw =
+    typeof netMeta['attribution'] === 'string' ? (netMeta['attribution'] as string) : 'opex';
+  const attribution = (
+    ['client', 'opex', 'asset'].includes(attributionRaw) ? attributionRaw : 'opex'
+  ) as 'client' | 'opex' | 'asset';
+  const isRcm = netMeta['is_rcm'] === true;
+  const expenseAccountCode = attribution === 'opex' ? (netPosting?.accountCode ?? null) : null;
+
+  type LineMeta = {
+    description?: string;
+    amount_paise?: string;
+    gst_amount_paise_captured?: string;
+  };
+  const stashed = Array.isArray(netMeta['line_items']) ? (netMeta['line_items'] as LineMeta[]) : null;
+  let lineItems: DraftVendorBillFormShape['lineItems'];
+  if (stashed && stashed.length > 0) {
+    lineItems = stashed.map((l) => ({
+      description: typeof l.description === 'string' ? l.description : '',
+      amountPaise: l.amount_paise ? BigInt(l.amount_paise) : 0n,
+      gstAmountPaiseCaptured: l.gst_amount_paise_captured ? BigInt(l.gst_amount_paise_captured) : 0n,
+    }));
+  } else {
+    lineItems = [
+      {
+        description: '(aggregated line — original breakdown not recorded)',
+        amountPaise: netPosting?.amountPaise ?? 0n,
+        gstAmountPaiseCaptured: gstPosting?.amountPaise ?? 0n,
+      },
+    ];
+  }
+
+  const tdsMeta = (tdsPosting?.metadata ?? {}) as Record<string, unknown>;
+  const tdsSection =
+    typeof tdsMeta['tds_section'] === 'string' ? (tdsMeta['tds_section'] as string) : null;
+
+  const [doc] = await db
+    .select({ name: documents.originalFilename })
+    .from(documents)
+    .where(eq(documents.id, txn.sourceDocumentId))
+    .limit(1);
+
+  return {
+    transactionId: txn.id,
+    attribution,
+    vendorId,
+    onBehalfOfClientId: txn.onBehalfOfClientId ?? null,
+    projectId: txn.projectId ?? null,
+    expenseAccountCode,
+    billDocumentId: txn.sourceDocumentId,
+    billDocumentName: doc?.name ?? null,
+    vendorInvoiceNumber,
+    txnDate: txn.txnDate,
+    lineItems,
+    tdsAmountPaise: tdsPosting?.amountPaise ?? 0n,
+    tdsSection,
+    isRcm,
+    notes: txn.notes ?? null,
+  };
 }

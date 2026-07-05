@@ -1,7 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { HandshakeIcon, PlusIcon, SendIcon } from 'lucide-react';
+import { HandshakeIcon, PencilIcon, PlusIcon, SendIcon, Trash2Icon } from 'lucide-react';
+import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -13,6 +14,7 @@ import { PostTransactionDialog } from './post-transaction-dialog';
 import { VendorBillForm } from './vendor-bill-form';
 import { useEntityMutation } from '@/components/os/auth/entity-mutation-gate';
 import {
+  deleteVendorBillDraft,
   listVendorBillsForClient,
   listVendorBillsForVendor,
   type VendorBillRow,
@@ -32,6 +34,11 @@ const ATTRIBUTION_TONE: Record<string, 'info' | 'warning' | 'neutral'> = {
   asset: 'neutral',
 };
 
+/** Label for the bill row's actions/toasts. */
+function billRef(b: VendorBillRow): string {
+  return b.vendorInvoiceNumber ?? b.reference;
+}
+
 /**
  * "Expenses on behalf" section for the CLIENT profile. Lists vendor bills
  * where on_behalf_of_client_id = this client AND attribution = client. The
@@ -48,10 +55,12 @@ export function ClientExpensesOnBehalfSection({
   const [rows, setRows] = useState<readonly VendorBillRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [formOpen, setFormOpen] = useState(false);
+  // null = create mode; set = editing that draft in place.
+  const [editingDraft, setEditingDraft] = useState<{ id: string; ref: string } | null>(null);
   const [posting, setPosting] = useState<{ id: string; ref: string } | null>(null);
-  // OS read-only bridge — permissive outside the OS. Recording + posting a
-  // bill are both edits on the clients app.
-  const { canEdit } = useEntityMutation();
+  // OS read-only bridge — permissive outside the OS. Recording/editing + posting
+  // a bill are edits; deleting a draft is a delete on the clients app.
+  const { canEdit, canDelete } = useEntityMutation();
 
   async function reload() {
     try {
@@ -60,6 +69,16 @@ export function ClientExpensesOnBehalfSection({
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not load bills');
+    }
+  }
+
+  async function discard(row: VendorBillRow) {
+    try {
+      await deleteVendorBillDraft(row.id);
+      toast.success(`Deleted draft ${billRef(row)}.`);
+      await reload();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not delete draft bill');
     }
   }
 
@@ -94,7 +113,13 @@ export function ClientExpensesOnBehalfSection({
             <span className="text-muted-foreground text-xs font-normal">({rows.length})</span>
           </CardTitle>
           {canEdit ? (
-            <Button size="sm" onClick={() => setFormOpen(true)}>
+            <Button
+              size="sm"
+              onClick={() => {
+                setEditingDraft(null);
+                setFormOpen(true);
+              }}
+            >
               <PlusIcon className="mr-1.5 size-4" aria-hidden />
               Record expense
             </Button>
@@ -110,11 +135,16 @@ export function ClientExpensesOnBehalfSection({
           ) : (
             <BillsList
               rows={rows}
-              onPost={
+              onEdit={
                 canEdit
-                  ? (r) => setPosting({ id: r.id, ref: r.vendorInvoiceNumber ?? r.reference })
+                  ? (r) => {
+                      setEditingDraft({ id: r.id, ref: billRef(r) });
+                      setFormOpen(true);
+                    }
                   : undefined
               }
+              onDiscard={canDelete ? discard : undefined}
+              onPost={canEdit ? (r) => setPosting({ id: r.id, ref: billRef(r) }) : undefined}
             />
           )}
         </CardContent>
@@ -122,12 +152,17 @@ export function ClientExpensesOnBehalfSection({
 
       <VendorBillForm
         open={formOpen}
-        onOpenChange={setFormOpen}
+        onOpenChange={(v) => {
+          setFormOpen(v);
+          if (!v) setEditingDraft(null);
+        }}
         clientId={clientId}
         clientName={clientName}
         lockAttributionToClient
+        editTransactionId={editingDraft?.id ?? null}
         onCreated={() => {
           setFormOpen(false);
+          setEditingDraft(null);
           void reload();
         }}
       />
@@ -161,10 +196,11 @@ export function VendorBillsSection({
   const [rows, setRows] = useState<readonly VendorBillRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [formOpen, setFormOpen] = useState(false);
+  const [editingDraft, setEditingDraft] = useState<{ id: string; ref: string } | null>(null);
   const [posting, setPosting] = useState<{ id: string; ref: string } | null>(null);
-  // OS read-only bridge — permissive outside the OS. Recording + posting a
-  // bill are both edits on the vendors app.
-  const { canEdit } = useEntityMutation();
+  // OS read-only bridge — permissive outside the OS. Recording/editing + posting
+  // a bill are edits; deleting a draft is a delete on the vendors app.
+  const { canEdit, canDelete } = useEntityMutation();
 
   async function reload() {
     try {
@@ -173,6 +209,16 @@ export function VendorBillsSection({
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not load bills');
+    }
+  }
+
+  async function discard(row: VendorBillRow) {
+    try {
+      await deleteVendorBillDraft(row.id);
+      toast.success(`Deleted draft ${billRef(row)}.`);
+      await reload();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not delete draft bill');
     }
   }
 
@@ -206,7 +252,13 @@ export function VendorBillsSection({
             Bills <span className="text-muted-foreground text-xs font-normal">({rows.length})</span>
           </CardTitle>
           {canEdit ? (
-            <Button size="sm" onClick={() => setFormOpen(true)}>
+            <Button
+              size="sm"
+              onClick={() => {
+                setEditingDraft(null);
+                setFormOpen(true);
+              }}
+            >
               <PlusIcon className="mr-1.5 size-4" aria-hidden />
               New bill
             </Button>
@@ -222,11 +274,16 @@ export function VendorBillsSection({
           ) : (
             <BillsList
               rows={rows}
-              onPost={
+              onEdit={
                 canEdit
-                  ? (r) => setPosting({ id: r.id, ref: r.vendorInvoiceNumber ?? r.reference })
+                  ? (r) => {
+                      setEditingDraft({ id: r.id, ref: billRef(r) });
+                      setFormOpen(true);
+                    }
                   : undefined
               }
+              onDiscard={canDelete ? discard : undefined}
+              onPost={canEdit ? (r) => setPosting({ id: r.id, ref: billRef(r) }) : undefined}
             />
           )}
         </CardContent>
@@ -234,11 +291,16 @@ export function VendorBillsSection({
 
       <VendorBillForm
         open={formOpen}
-        onOpenChange={setFormOpen}
+        onOpenChange={(v) => {
+          setFormOpen(v);
+          if (!v) setEditingDraft(null);
+        }}
         vendorId={vendorId}
         vendorName={vendorName}
+        editTransactionId={editingDraft?.id ?? null}
         onCreated={() => {
           setFormOpen(false);
+          setEditingDraft(null);
           void reload();
         }}
       />
@@ -258,11 +320,19 @@ export function VendorBillsSection({
 
 function BillsList({
   rows,
+  onEdit,
+  onDiscard,
   onPost,
 }: {
   rows: readonly VendorBillRow[];
+  onEdit?: (row: VendorBillRow) => void;
+  onDiscard?: (row: VendorBillRow) => Promise<void> | void;
   onPost?: (row: VendorBillRow) => void;
 }) {
+  // Which draft is mid-delete — disables its buttons so a double-click can't
+  // fire two deletes.
+  const [discardingId, setDiscardingId] = useState<string | null>(null);
+
   return (
     <ul className="divide-y">
       {rows.map((b) => (
@@ -305,11 +375,55 @@ function BillsList({
                 year: 'numeric',
               })}
             </div>
-            {b.status === 'draft' && onPost ? (
-              <Button size="sm" variant="outline" className="h-7 px-2" onClick={() => onPost(b)}>
-                <SendIcon className="mr-1 size-3" aria-hidden />
-                Post
-              </Button>
+            {/* Edit / delete / post are draft-only — posted & reversed bills are
+                immutable (reverse them instead). */}
+            {b.status === 'draft' && (onEdit || onDiscard || onPost) ? (
+              <div className="flex items-center gap-1">
+                {onEdit ? (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 px-2"
+                    onClick={() => onEdit(b)}
+                    disabled={discardingId === b.id}
+                    title="Edit draft"
+                  >
+                    <PencilIcon className="size-3" aria-hidden />
+                  </Button>
+                ) : null}
+                {onDiscard ? (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 px-2"
+                    onClick={async () => {
+                      if (discardingId) return;
+                      setDiscardingId(b.id);
+                      try {
+                        await onDiscard(b);
+                      } finally {
+                        setDiscardingId(null);
+                      }
+                    }}
+                    disabled={discardingId === b.id}
+                    title="Delete draft"
+                  >
+                    <Trash2Icon className="size-3" aria-hidden />
+                  </Button>
+                ) : null}
+                {onPost ? (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 px-2"
+                    onClick={() => onPost(b)}
+                    disabled={discardingId === b.id}
+                  >
+                    <SendIcon className="mr-1 size-3" aria-hidden />
+                    Post
+                  </Button>
+                ) : null}
+              </div>
             ) : null}
           </div>
         </li>
