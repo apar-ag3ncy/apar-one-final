@@ -31,6 +31,8 @@ import {
 import { formatINR, paiseToDecimalRupees, parseRupeesToPaise } from '../format';
 import { Icon } from '../icons';
 import { osActions } from '@/lib/os/store';
+import { exportRows, paiseToRupees, type ExportFormat } from '@/lib/client/export-rows';
+import { OsExportButtons } from './report-window-kit';
 
 type EmployeeOption = { id: string; name: string };
 type VendorOption = { id: string; name: string; category: string | null };
@@ -260,6 +262,39 @@ export function OfficeApp({
     }
   }
 
+  // Export the rows currently in view (respects the search + category +
+  // status filters) as PDF or Excel. Amounts are captured figures, not
+  // computed — `paiseToRupees` is a pure unit conversion for the spreadsheet.
+  function handleExport(format: ExportFormat) {
+    if (filtered.length === 0) return;
+    const headers = [
+      'Date',
+      'Category',
+      'Description',
+      'Reference',
+      'Vendor / Employee',
+      'Payment',
+      'Status',
+      'Amount',
+      'GST',
+      'Total',
+    ];
+    const data: Record<string, string | number>[] = filtered.map((r) => ({
+      Date: r.expenseDate,
+      Category: CATEGORY_INDEX[r.category].label,
+      Description: r.description,
+      Reference: r.referenceNumber ?? '',
+      'Vendor / Employee':
+        r.category === 'reimbursement' ? (r.employeeName ?? '') : (r.vendorName ?? ''),
+      Payment: PAYMENT_LABEL[r.paymentMethod],
+      Status: STATUS_LABEL[r.status],
+      Amount: paiseToRupees(r.amountPaise),
+      GST: paiseToRupees(r.gstPaise),
+      Total: paiseToRupees(r.totalPaise),
+    }));
+    exportRows(data, headers, `office-expenses-${todayIso()}`, format, 'Office Expenses');
+  }
+
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
       <div className="main-header">
@@ -276,6 +311,10 @@ export function OfficeApp({
             onChange={(e) => setSearch(e.target.value)}
           />
         </div>
+        <OsExportButtons
+          onExport={handleExport}
+          disabled={!rows || filtered.length === 0}
+        />
         <button
           className="btn"
           type="button"
