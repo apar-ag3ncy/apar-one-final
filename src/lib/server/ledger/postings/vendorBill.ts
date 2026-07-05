@@ -118,6 +118,16 @@ export function vendorBill(input: VendorBillInput): PostingTemplateResult {
   const externalRef = `vendor_bill:${parsed.vendorId}:${parsed.vendorInvoiceNumber}`;
   const description = `Vendor bill ${parsed.vendorInvoiceNumber} (${parsed.attribution})`;
 
+  // Stash the per-line breakdown on the net-debit posting's metadata, exactly
+  // as clientInvoice() does. Postings only carry aggregated totals (net on the
+  // expense/asset account, GST on 1250), so without this stash an edit could
+  // not reconstruct the original lines. `getDraftVendorBill` reads it back.
+  const lineItemsMeta = parsed.lineItems.map((l) => ({
+    description: l.description,
+    amount_paise: l.amountPaise.toString(),
+    gst_amount_paise_captured: (l.gstAmountPaiseCaptured ?? 0n).toString(),
+  }));
+
   const base = {
     externalRef,
     description,
@@ -149,7 +159,7 @@ export function vendorBill(input: VendorBillInput): PostingTemplateResult {
           side: 'debit',
           amountPaise: netTotal,
           subledger: { entityType: 'vendor', entityId: parsed.vendorId },
-          metadata: { attribution: 'client', is_rcm: parsed.isRcm },
+          metadata: { attribution: 'client', is_rcm: parsed.isRcm, line_items: lineItemsMeta },
         },
         ...(gstTotal > 0n
           ? [
@@ -189,7 +199,7 @@ export function vendorBill(input: VendorBillInput): PostingTemplateResult {
           accountCode: parsed.expenseAccountCode,
           side: 'debit',
           amountPaise: netTotal,
-          metadata: { attribution: 'opex', is_rcm: parsed.isRcm },
+          metadata: { attribution: 'opex', is_rcm: parsed.isRcm, line_items: lineItemsMeta },
         },
         ...(gstTotal > 0n
           ? [
@@ -229,7 +239,7 @@ export function vendorBill(input: VendorBillInput): PostingTemplateResult {
         accountCode: '1510',
         side: 'debit',
         amountPaise: netTotal,
-        metadata: { attribution: 'asset', is_rcm: parsed.isRcm },
+        metadata: { attribution: 'asset', is_rcm: parsed.isRcm, line_items: lineItemsMeta },
       },
       ...(gstTotal > 0n
         ? [
