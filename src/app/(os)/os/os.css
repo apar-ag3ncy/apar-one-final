@@ -212,10 +212,10 @@
   display: none;
 }
 .os-root[data-theme='dark'] .menubar .wordmark-img--light {
-  display: block;
+  display: none;
 }
 .os-root[data-theme='dark'] .menubar .wordmark-img--dark {
-  display: none;
+  display: block;
 }
 .os-root .menubar .active-app {
   font-weight: 600;

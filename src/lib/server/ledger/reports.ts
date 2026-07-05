@@ -135,11 +135,13 @@ export async function getTrialBalance(
       COALESCE(SUM(p.amount_paise) FILTER (WHERE p.side = 'debit'),  0) AS debit_paise,
       COALESCE(SUM(p.amount_paise) FILTER (WHERE p.side = 'credit'), 0) AS credit_paise
     FROM accounts a
-    LEFT JOIN postings p ON p.account_id = a.id
-    LEFT JOIN transactions t ON t.id = p.transaction_id
-      AND t.status = 'posted'
-      AND ${includeReversed ? sql`true` : sql`t.reverses_id IS NULL`}
-      AND t.txn_date <= ${args.asOfDate}::date
+    LEFT JOIN (
+      postings p
+      JOIN transactions t ON t.id = p.transaction_id
+        AND t.status = 'posted'
+        AND ${includeReversed ? sql`true` : sql`t.reverses_id IS NULL`}
+        AND t.txn_date <= ${args.asOfDate}::date
+    ) ON p.account_id = a.id
     WHERE a.is_active = true
     GROUP BY a.code, a.name, a.type
     ORDER BY a.code

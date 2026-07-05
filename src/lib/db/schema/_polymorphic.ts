@@ -14,6 +14,12 @@ import { pgEnum } from 'drizzle-orm/pg-core';
  * Adding a new entity type: add the literal here, ship a migration that
  * `ALTER TYPE entity_type ADD VALUE 'foo'`, then update the deferred
  * polymorphic-CHECK trigger (`_polymorphic_check.sql`).
+ *
+ * NB: the DB enum additionally contains 'period' (migration 0052) so that
+ * period close/reopen can land activity-log events. It is deliberately NOT in
+ * this TS tuple: periods aren't principal entities and must not appear in
+ * entity pickers / Record<EntityType, …> maps. `logActivity` accepts the
+ * wider `EntityType | string` for exactly this case.
  */
 export const entityTypeEnum = pgEnum('entity_type', [
   'client',

@@ -45,13 +45,25 @@ export async function loadBillingSettings(
     .from(billingSettings)
     .where(eq(billingSettings.singleton, true))
     .limit(1);
-  if (!row) {
+  if (row) return row;
+
+  // Self-heal: the 0019 migration seeds the singleton, but there is no UI to
+  // recreate it if it's ever lost (e.g. a manual data wipe). Every column has
+  // a schema default, so recreate it in place rather than dead-ending all
+  // document numbering. onConflictDoNothing covers a concurrent healer.
+  await client.insert(billingSettings).values({ singleton: true }).onConflictDoNothing();
+  const [healed] = await client
+    .select()
+    .from(billingSettings)
+    .where(eq(billingSettings.singleton, true))
+    .limit(1);
+  if (!healed) {
     throw new AppError(
       'internal',
-      'billing_settings singleton row missing; the 0019 migration should have seeded it.',
+      'billing_settings singleton row missing and could not be recreated.',
     );
   }
-  return row;
+  return healed;
 }
 
 function prefixFor(kind: DocKind, s: typeof billingSettings.$inferSelect): string {
