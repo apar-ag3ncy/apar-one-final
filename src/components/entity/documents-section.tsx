@@ -1,7 +1,15 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { CheckCircle2Icon, DownloadIcon, EyeIcon, FileTextIcon, UploadIcon } from 'lucide-react';
+import {
+  CheckCircle2Icon,
+  DownloadIcon,
+  EyeIcon,
+  FileTextIcon,
+  RotateCcwIcon,
+  Trash2Icon,
+  UploadIcon,
+} from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
@@ -30,6 +38,10 @@ import { StatusBadge } from '@/components/shared/status-badge';
 import { DocumentViewer } from '@/components/entity/document-viewer';
 import {
   listEntityDocuments,
+  listTrashedDocuments,
+  permanentlyDeleteDocument,
+  restoreDocument,
+  softDeleteDocument,
   uploadDocument,
   type EntityDocumentEntityType,
   type EntityDocumentRow,
@@ -120,23 +132,33 @@ export function DocumentsSection({
   onUploaded,
 }: DocumentsSectionProps) {
   const [rows, setRows] = useState<readonly EntityDocumentRow[] | null>(null);
+  const [trashRows, setTrashRows] = useState<readonly EntityDocumentRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [uploadOpen, setUploadOpen] = useState(false);
   const [viewing, setViewing] = useState<EntityDocumentRow | null>(null);
+  const [mode, setMode] = useState<'active' | 'trash'>('active');
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState<EntityDocumentRow | null>(null);
 
-  // OS read-only bridge — permissive outside the OS. Upload is the only
-  // mutation here (view / download are reads); gate it on the OS edit grant.
-  const { canEdit } = useEntityMutation();
+  // OS read-only bridge — permissive outside the OS. Upload needs the edit
+  // grant; the trash actions (delete / restore / permanent-delete) need delete.
+  const { canEdit, canDelete } = useEntityMutation();
 
-  // Load + reload on demand.
+  // Load + reload on demand. Trash is only fetched when the user can delete.
   const reload = useRef<() => Promise<void>>(async () => {});
   useEffect(() => {
     let cancelled = false;
     async function load() {
       try {
-        const data = await listEntityDocuments({ entityType, entityId });
+        const [active, trashed] = await Promise.all([
+          listEntityDocuments({ entityType, entityId }),
+          canDelete
+            ? listTrashedDocuments({ entityType, entityId })
+            : Promise.resolve([] as EntityDocumentRow[]),
+        ]);
         if (!cancelled) {
-          setRows(data);
+          setRows(active);
+          setTrashRows(trashed);
           setError(null);
         }
       } catch (e) {
@@ -148,7 +170,48 @@ export function DocumentsSection({
     return () => {
       cancelled = true;
     };
-  }, [entityType, entityId]);
+  }, [entityType, entityId, canDelete]);
+
+  async function moveToTrash(doc: EntityDocumentRow) {
+    if (busyId) return;
+    setBusyId(doc.id);
+    try {
+      await softDeleteDocument(doc.id);
+      toast.success(`Moved "${doc.title ?? doc.originalFilename}" to Trash.`);
+      await reload.current();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not delete document');
+    } finally {
+      setBusyId(null);
+    }
+  }
+  async function restore(doc: EntityDocumentRow) {
+    if (busyId) return;
+    setBusyId(doc.id);
+    try {
+      await restoreDocument(doc.id);
+      toast.success(`Restored "${doc.title ?? doc.originalFilename}".`);
+      await reload.current();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not restore document');
+    } finally {
+      setBusyId(null);
+    }
+  }
+  async function permanentlyDelete(doc: EntityDocumentRow) {
+    if (busyId) return;
+    setBusyId(doc.id);
+    try {
+      await permanentlyDeleteDocument(doc.id);
+      toast.success(`Permanently deleted "${doc.title ?? doc.originalFilename}".`);
+      setConfirming(null);
+      await reload.current();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not permanently delete');
+    } finally {
+      setBusyId(null);
+    }
+  }
 
   if (error) {
     return <EmptyState icon={FileTextIcon} title="Could not load documents" description={error} />;
@@ -162,31 +225,51 @@ export function DocumentsSection({
     );
   }
 
+  const list = mode === 'trash' ? trashRows : rows;
+
   return (
     <>
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle className="text-base">
-            Documents{' '}
-            <span className="text-muted-foreground text-xs font-normal">({rows.length})</span>
+            {mode === 'trash' ? 'Trash' : 'Documents'}{' '}
+            <span className="text-muted-foreground text-xs font-normal">({list.length})</span>
           </CardTitle>
-          {canEdit ? (
-            <Button size="sm" onClick={() => setUploadOpen(true)}>
-              <UploadIcon className="mr-1.5 size-4" aria-hidden />
-              Upload document
-            </Button>
-          ) : null}
+          <div className="flex items-center gap-2">
+            {canDelete ? (
+              mode === 'trash' ? (
+                <Button size="sm" variant="outline" onClick={() => setMode('active')}>
+                  Back to documents
+                </Button>
+              ) : (
+                <Button size="sm" variant="outline" onClick={() => setMode('trash')}>
+                  <Trash2Icon className="mr-1.5 size-4" aria-hidden />
+                  Trash{trashRows.length > 0 ? ` (${trashRows.length})` : ''}
+                </Button>
+              )
+            ) : null}
+            {mode === 'active' && canEdit ? (
+              <Button size="sm" onClick={() => setUploadOpen(true)}>
+                <UploadIcon className="mr-1.5 size-4" aria-hidden />
+                Upload document
+              </Button>
+            ) : null}
+          </div>
         </CardHeader>
         <CardContent className="p-0">
-          {rows.length === 0 ? (
+          {list.length === 0 ? (
             <EmptyState
-              icon={FileTextIcon}
-              title="No documents yet"
-              description={`Upload contracts, invoices, receipts, or other documents related to ${entityName}.`}
+              icon={mode === 'trash' ? Trash2Icon : FileTextIcon}
+              title={mode === 'trash' ? 'Trash is empty' : 'No documents yet'}
+              description={
+                mode === 'trash'
+                  ? 'Deleted documents land here. Restore them, or delete them permanently.'
+                  : `Upload contracts, invoices, receipts, or other documents related to ${entityName}.`
+              }
             />
           ) : (
             <ul className="divide-y">
-              {rows.map((doc) => (
+              {list.map((doc) => (
                 <li
                   key={doc.id}
                   className="hover:bg-muted/30 flex items-center justify-between gap-3 px-4 py-3"
@@ -223,28 +306,68 @@ export function DocumentsSection({
                     </div>
                   </div>
                   <div className="flex shrink-0 items-center gap-1">
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => {
-                        if (onOpenDocument) {
-                          onOpenDocument(doc.documentId);
-                        } else {
-                          setViewing(doc);
-                        }
-                      }}
-                      aria-label="View document"
-                    >
-                      <EyeIcon className="size-4" aria-hidden />
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => void downloadDocument(doc)}
-                      aria-label="Download document"
-                    >
-                      <DownloadIcon className="size-4" aria-hidden />
-                    </Button>
+                    {mode === 'active' ? (
+                      <>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => {
+                            if (onOpenDocument) {
+                              onOpenDocument(doc.documentId);
+                            } else {
+                              setViewing(doc);
+                            }
+                          }}
+                          aria-label="View document"
+                        >
+                          <EyeIcon className="size-4" aria-hidden />
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => void downloadDocument(doc)}
+                          aria-label="Download document"
+                        >
+                          <DownloadIcon className="size-4" aria-hidden />
+                        </Button>
+                        {canDelete ? (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => void moveToTrash(doc)}
+                            disabled={busyId === doc.id}
+                            aria-label="Move to Trash"
+                            title="Move to Trash"
+                          >
+                            <Trash2Icon className="size-4" aria-hidden />
+                          </Button>
+                        ) : null}
+                      </>
+                    ) : (
+                      <>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-8"
+                          onClick={() => void restore(doc)}
+                          disabled={busyId === doc.id}
+                        >
+                          <RotateCcwIcon className="mr-1.5 size-3.5" aria-hidden />
+                          Restore
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="text-destructive hover:text-destructive"
+                          onClick={() => setConfirming(doc)}
+                          disabled={busyId === doc.id}
+                          aria-label="Delete permanently"
+                          title="Delete permanently"
+                        >
+                          <Trash2Icon className="size-4" aria-hidden />
+                        </Button>
+                      </>
+                    )}
                   </div>
                 </li>
               ))}
@@ -271,6 +394,31 @@ export function DocumentsSection({
       />
 
       <ViewDialog doc={viewing} onClose={() => setViewing(null)} />
+
+      <Dialog open={confirming !== null} onOpenChange={(v) => !v && setConfirming(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Delete permanently?</DialogTitle>
+            <DialogDescription>
+              &ldquo;{confirming?.title ?? confirming?.originalFilename}&rdquo; will be deleted for
+              good — the file is removed from storage and cannot be recovered. If it&apos;s attached
+              to a recorded bill or invoice, that copy is kept.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConfirming(null)} disabled={busyId !== null}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => confirming && void permanentlyDelete(confirming)}
+              disabled={busyId !== null}
+            >
+              {busyId ? 'Deleting…' : 'Delete permanently'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }
