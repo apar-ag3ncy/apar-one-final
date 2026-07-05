@@ -5,7 +5,7 @@ import { and, desc, eq, isNull, sql } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { db } from '@/lib/db/client';
-import { documents, entityDocuments, users } from '@/lib/db/schema';
+import { documents, entityDocuments, transactions, users } from '@/lib/db/schema';
 import { AppError } from '@/lib/errors';
 import { requireCapability } from '@/lib/rbac';
 import { sniffMime } from '@/lib/storage';
@@ -543,4 +543,216 @@ export async function listRecentDocuments(limit = 50): Promise<readonly RecentDo
     uploadedBy: r.uploadedBy,
     createdAt: r.createdAt.toISOString(),
   }));
+}
+
+/* -------------------------------------------------------------------------- */
+/* Trash — soft delete / restore / list / permanent delete                    */
+/* -------------------------------------------------------------------------- */
+//
+// A document link (entity_documents row) can be moved to Trash (status flips
+// to 'soft_deleted' — hidden from the normal list, file untouched), restored,
+// or permanently deleted. Permanent delete removes the link; the underlying
+// file + `documents` row are removed too, but ONLY if nothing else still
+// references the file (another entity link, or a recorded bill/invoice
+// transaction whose source document this is).
+
+async function loadEntityDocForTrash(entityDocumentId: string) {
+  const [row] = await db
+    .select({
+      id: entityDocuments.id,
+      status: entityDocuments.status,
+      entityType: entityDocuments.entityType,
+      entityId: entityDocuments.entityId,
+      documentId: entityDocuments.documentId,
+      kind: entityDocuments.kind,
+    })
+    .from(entityDocuments)
+    .where(eq(entityDocuments.id, entityDocumentId))
+    .limit(1);
+  return row ?? null;
+}
+
+/** Move an active document to Trash (recoverable). */
+export async function softDeleteDocument(entityDocumentId: string): Promise<void> {
+  const ctx = await getActorContext();
+  requireCapability(ctx, 'delete_document');
+  const row = await loadEntityDocForTrash(entityDocumentId);
+  if (!row) throw new AppError('not_found', `Document ${entityDocumentId} not found`);
+  if (row.status !== 'active') {
+    throw new AppError(
+      'conflict',
+      `Only active documents can be moved to Trash (this one is ${row.status}).`,
+    );
+  }
+  await db
+    .update(entityDocuments)
+    .set({ status: 'soft_deleted', updatedBy: ctx.userId })
+    .where(eq(entityDocuments.id, entityDocumentId));
+
+  await logActivity({
+    entityType: row.entityType,
+    entityId: row.entityId,
+    actorId: ctx.userId,
+    kind: 'document.deleted',
+    summary: `Moved ${row.kind.replace('_', ' ')} to Trash`,
+    payload: { entityDocumentId, documentId: row.documentId, kind: row.kind, trashed: true },
+  });
+  revalidateEntityDetail(DocumentEntityType.parse(row.entityType), row.entityId);
+}
+
+/** Restore a trashed document back to the active list. */
+export async function restoreDocument(entityDocumentId: string): Promise<void> {
+  const ctx = await getActorContext();
+  requireCapability(ctx, 'delete_document');
+  const row = await loadEntityDocForTrash(entityDocumentId);
+  if (!row) throw new AppError('not_found', `Document ${entityDocumentId} not found`);
+  if (row.status !== 'soft_deleted') {
+    throw new AppError('conflict', `Only items in Trash can be restored (this one is ${row.status}).`);
+  }
+  await db
+    .update(entityDocuments)
+    .set({ status: 'active', updatedBy: ctx.userId })
+    .where(eq(entityDocuments.id, entityDocumentId));
+
+  await logActivity({
+    entityType: row.entityType,
+    entityId: row.entityId,
+    actorId: ctx.userId,
+    kind: 'document.deleted',
+    summary: `Restored ${row.kind.replace('_', ' ')} from Trash`,
+    payload: { entityDocumentId, documentId: row.documentId, kind: row.kind, restored: true },
+  });
+  revalidateEntityDetail(DocumentEntityType.parse(row.entityType), row.entityId);
+}
+
+/** List an entity's trashed documents (status = soft_deleted). */
+export async function listTrashedDocuments(args: {
+  entityType: EntityDocumentEntityType;
+  entityId: string;
+}): Promise<readonly EntityDocumentRow[]> {
+  await getActorContext();
+  const rows = await db
+    .select({
+      id: entityDocuments.id,
+      documentId: entityDocuments.documentId,
+      kind: entityDocuments.kind,
+      title: entityDocuments.title,
+      description: entityDocuments.description,
+      status: entityDocuments.status,
+      version: entityDocuments.version,
+      signedAt: entityDocuments.signedAt,
+      expiresAt: entityDocuments.expiresAt,
+      signedByUs: entityDocuments.signedByUs,
+      signedByThem: entityDocuments.signedByThem,
+      mimeType: documents.mimeType,
+      sizeBytes: documents.sizeBytes,
+      originalFilename: documents.originalFilename,
+      createdAt: entityDocuments.createdAt,
+      updatedAt: entityDocuments.updatedAt,
+      supersedesId: entityDocuments.supersedesId,
+    })
+    .from(entityDocuments)
+    .innerJoin(documents, eq(documents.id, entityDocuments.documentId))
+    .where(
+      and(
+        eq(entityDocuments.entityType, args.entityType),
+        eq(entityDocuments.entityId, args.entityId),
+        eq(entityDocuments.status, 'soft_deleted'),
+      ),
+    )
+    .orderBy(desc(entityDocuments.updatedAt))
+    .limit(200);
+
+  return rows.map(
+    (r): EntityDocumentRow => ({
+      id: r.id,
+      documentId: r.documentId,
+      kind: r.kind,
+      title: r.title,
+      description: r.description,
+      status: r.status,
+      version: r.version,
+      signedAt: r.signedAt,
+      expiresAt: r.expiresAt,
+      signedByUs: r.signedByUs,
+      signedByThem: r.signedByThem,
+      mimeType: r.mimeType,
+      sizeBytes: r.sizeBytes,
+      originalFilename: r.originalFilename,
+      createdAt: r.createdAt.toISOString(),
+      supersedesId: r.supersedesId,
+    }),
+  );
+}
+
+/**
+ * Permanently delete a trashed document. Removes the entity link; the file +
+ * `documents` row are destroyed too, but only when nothing else references the
+ * file (another active/trashed link, or a transaction's source document — e.g.
+ * a recorded bill/invoice, which must keep its copy). Returns whether the file
+ * itself was removed.
+ */
+export async function permanentlyDeleteDocument(
+  entityDocumentId: string,
+): Promise<{ fileRemoved: boolean }> {
+  const ctx = await getActorContext();
+  requireCapability(ctx, 'hard_delete_document');
+  const row = await loadEntityDocForTrash(entityDocumentId);
+  if (!row) throw new AppError('not_found', `Document ${entityDocumentId} not found`);
+  if (row.status !== 'soft_deleted') {
+    throw new AppError(
+      'conflict',
+      'Only items in Trash can be permanently deleted. Move it to Trash first.',
+    );
+  }
+
+  const [doc] = await db
+    .select({ bucket: documents.bucket, storagePath: documents.storagePath })
+    .from(documents)
+    .where(eq(documents.id, row.documentId))
+    .limit(1);
+
+  let fileRemoved = false;
+  await db.transaction(async (tx) => {
+    await tx.delete(entityDocuments).where(eq(entityDocuments.id, entityDocumentId));
+
+    const otherLinkRows = await tx
+      .select({ n: sql<number>`count(*)::int` })
+      .from(entityDocuments)
+      .where(eq(entityDocuments.documentId, row.documentId));
+    const txnRefRows = await tx
+      .select({ n: sql<number>`count(*)::int` })
+      .from(transactions)
+      .where(eq(transactions.sourceDocumentId, row.documentId));
+    const otherLinks = otherLinkRows[0]?.n ?? 0;
+    const txnRefs = txnRefRows[0]?.n ?? 0;
+
+    if (otherLinks === 0 && txnRefs === 0) {
+      await tx.delete(documents).where(eq(documents.id, row.documentId));
+      fileRemoved = true;
+    }
+  });
+
+  // Remove the storage object only after the DB rows are gone (best-effort —
+  // an orphaned object is acceptable; a dangling row pointing at a missing
+  // file is not).
+  if (fileRemoved && doc?.bucket && doc.storagePath) {
+    try {
+      const admin = createAdminClient();
+      await admin.storage.from(doc.bucket).remove([doc.storagePath]);
+    } catch {
+      // best-effort
+    }
+  }
+
+  await logActivity({
+    entityType: row.entityType,
+    entityId: row.entityId,
+    actorId: ctx.userId,
+    kind: 'document.deleted',
+    summary: `Permanently deleted ${row.kind.replace('_', ' ')}`,
+    payload: { documentId: row.documentId, kind: row.kind, permanentDelete: true, fileRemoved },
+  });
+  revalidateEntityDetail(DocumentEntityType.parse(row.entityType), row.entityId);
+  return { fileRemoved };
 }
