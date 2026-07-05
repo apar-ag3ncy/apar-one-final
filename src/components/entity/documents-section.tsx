@@ -395,7 +395,15 @@ export function DocumentsSection({
 
       <ViewDialog doc={viewing} onClose={() => setViewing(null)} />
 
-      <Dialog open={confirming !== null} onOpenChange={(v) => !v && setConfirming(null)}>
+      <Dialog
+        open={confirming !== null}
+        onOpenChange={(v) => {
+          // Don't let Escape / overlay-click dismiss the dialog mid-delete —
+          // the operation would finish in the background and the user would
+          // think it was cancelled.
+          if (!v && busyId === null) setConfirming(null);
+        }}
+      >
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Delete permanently?</DialogTitle>
