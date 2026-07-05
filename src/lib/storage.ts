@@ -284,22 +284,27 @@ const MIME_MAGIC: Array<{
 export function sniffMime(bytes: Uint8Array, expected?: string): string {
   for (const { mime, test } of MIME_MAGIC) {
     if (test(bytes)) {
-      if (expected && expected !== mime) {
-        // ZIP containers map to many specific docx/xlsx/pptx MIMEs.
-        // Accept as-long-as both are zip-family or both are pdf-family.
-        if (expected.includes('zip') || expected.includes('officedocument')) {
-          if (mime === 'application/zip') return expected;
-        }
-        throw new AppError(
-          'storage.mime_mismatch',
-          `MIME mismatch: client claimed "${expected}" but bytes are "${mime}".`,
-        );
+      // Magic bytes win — return the TRUE detected type. We deliberately do
+      // NOT reject a mismatch against the browser-declared type: real files
+      // routinely arrive with a generic ("application/octet-stream") or
+      // slightly-wrong MIME (from email, messaging apps, downloads, or an odd
+      // extension), and rejecting them threw a 500 in the user's face when
+      // uploading a perfectly valid bill/invoice. The sniff's job is to
+      // identify the type, not to gatekeep on a declared string.
+      //
+      // ZIP containers (docx/xlsx/pptx/odt) all fingerprint as
+      // application/zip; we can't tell them apart from the header alone, so
+      // keep the caller's specific Office/OpenDocument MIME when declared.
+      if (
+        mime === 'application/zip' &&
+        expected &&
+        (expected.includes('officedocument') || expected.includes('opendocument'))
+      ) {
+        return expected;
       }
       return mime;
     }
   }
-  // No fingerprint matched — we can't confirm the type, but that is not proof
-  // of a lie. Fall back to the browser-declared type so we don't reject the
-  // many valid formats outside the small magic table above.
+  // No fingerprint matched — trust the browser-declared type (or generic).
   return expected ?? 'application/octet-stream';
 }

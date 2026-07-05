@@ -147,7 +147,9 @@ export async function uploadDocument(formData: FormData): Promise<{
   const detectedMime = sniffMime(headerBytes, file.type || undefined);
   // Use the detected MIME for storage Content-Type so downloads come back
   // with the right header.
-  const effectiveMime = file.type || detectedMime;
+  // Use the sniffed (true) type — detectedMime already falls back to the
+  // browser-declared type when the bytes aren't recognized.
+  const effectiveMime = detectedMime;
 
   const { bucket, visibility } = bucketForKind(kind);
   const safeName = safeFilename(file.name);
@@ -307,7 +309,9 @@ export async function replaceDocument(
 
   const headerBytes = new Uint8Array(await file.slice(0, 16).arrayBuffer());
   const detectedMime = sniffMime(headerBytes, file.type || undefined);
-  const effectiveMime = file.type || detectedMime;
+  // Use the sniffed (true) type — detectedMime already falls back to the
+  // browser-declared type when the bytes aren't recognized.
+  const effectiveMime = detectedMime;
 
   const { bucket, visibility } = bucketForKind(existing.kind);
   const safeName = safeFilename(file.name);
