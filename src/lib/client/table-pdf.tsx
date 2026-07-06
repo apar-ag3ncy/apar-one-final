@@ -74,8 +74,22 @@ function TableDoc({
 }) {
   // Wide tables breathe better on landscape A4.
   const landscape = headers.length > 6;
-  const widthPct = `${100 / Math.max(1, headers.length)}%`;
-  const colStyle = { width: widthPct };
+
+  // Column widths as percentages that always sum to 100%. Default is an even
+  // split; when there are enough columns to make an even split cramped (>3),
+  // give the first column — typically a description/name — a modest extra share
+  // so long text there wraps over fewer lines. @react-pdf wraps cell <Text> by
+  // default (no numberOfLines), so nothing here clips; this only trades width.
+  const n = Math.max(1, headers.length);
+  const colStyles = React.useMemo(() => {
+    if (n <= 3) {
+      const even = `${100 / n}%`;
+      return headers.map(() => ({ width: even }));
+    }
+    const firstShare = 100 / n + 6; // modest boost for the first column
+    const restShare = (100 - firstShare) / (n - 1);
+    return headers.map((_, i) => ({ width: `${i === 0 ? firstShare : restShare}%` }));
+  }, [headers, n]);
 
   return (
     <Document>
@@ -88,7 +102,7 @@ function TableDoc({
         <View style={styles.table}>
           <View style={[styles.row, styles.headerRow]} fixed>
             {headers.map((h, i) => (
-              <Text key={i} style={[styles.cell, styles.headerCell, colStyle]}>
+              <Text key={i} style={[styles.cell, styles.headerCell, colStyles[i]!]}>
                 {h}
               </Text>
             ))}
@@ -106,7 +120,9 @@ function TableDoc({
                   <Text
                     key={ci}
                     style={
-                      right ? [styles.cell, colStyle, styles.cellRight] : [styles.cell, colStyle]
+                      right
+                        ? [styles.cell, colStyles[ci]!, styles.cellRight]
+                        : [styles.cell, colStyles[ci]!]
                     }
                   >
                     {fmtCell(v)}

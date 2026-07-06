@@ -9,10 +9,12 @@
 import { useEffect, useState } from 'react';
 
 import { ActivityFeed } from '@/components/entity/activity-feed';
+import { EntityRef } from '@/components/entity/entity-ref';
 import { EntitySettingsSection } from '@/components/entity/entity-settings-section';
 import { DocumentsSection } from '@/components/entity/documents-section';
 import { TransactionList, type Transaction } from '@/components/entity/transaction-list';
 import { ProjectStatusChanger } from '@/components/projects/project-status-changer';
+import { Icon } from '../icons';
 import { useEntityMutation } from '../auth/entity-mutation-gate';
 import {
   PROJECT_DB_STATUS_LABELS,
@@ -21,19 +23,42 @@ import {
 } from '@/components/projects/types';
 import { useRealtimeActivity } from '@/lib/client/use-realtime-activity';
 import { getEntityActivity } from '@/lib/server/entities/activity';
-import { getProject, listProjectTransactions } from '@/lib/server-stub/entity-actions';
+import { getProject, listProjectTransactions, listEmployees } from '@/lib/server-stub/entity-actions';
+import {
+  listProjectMembers,
+  addProjectMember,
+  removeProjectMember,
+  listProjectTasks,
+  createProjectTask,
+  updateProjectTask,
+  deleteProjectTask,
+  type ProjectMemberRow,
+  type ProjectTaskRow,
+  type ProjectTaskStatus,
+} from '@/lib/server/entities/project-tasks';
 import { osActions } from '@/lib/os/store';
 import { navigateBesideFocused } from './navigate';
+
+type EmployeeOption = { id: string; name: string };
 
 export type ProjectWindowProps = {
   projectId: string;
   onClose?: () => void;
 };
 
-type ProjectTab = 'overview' | 'transactions' | 'documents' | 'activity' | 'settings';
+type ProjectTab =
+  | 'overview'
+  | 'team'
+  | 'tasks'
+  | 'transactions'
+  | 'documents'
+  | 'activity'
+  | 'settings';
 
 const TAB_LABELS: Record<ProjectTab, string> = {
   overview: 'Overview',
+  team: 'Team',
+  tasks: 'Tasks',
   transactions: 'Transactions',
   documents: 'Documents',
   activity: 'Activity',
@@ -102,6 +127,8 @@ export function ProjectWindow({ projectId, onClose }: ProjectWindowProps) {
   const { project, feed } = state;
   const tabs: readonly ProjectTab[] = [
     'overview',
+    'team',
+    'tasks',
     'transactions',
     'documents',
     'activity',
@@ -127,6 +154,8 @@ export function ProjectWindow({ projectId, onClose }: ProjectWindowProps) {
       </div>
       <div style={{ flex: 1, overflow: 'auto', padding: 20 }}>
         {tab === 'overview' ? <OverviewBody project={project} feed={feed} /> : null}
+        {tab === 'team' ? <TeamBody projectId={project.id} canEdit={canEdit} /> : null}
+        {tab === 'tasks' ? <TasksBody projectId={project.id} canEdit={canEdit} /> : null}
         {tab === 'transactions' ? <TransactionsBody project={project} feed={feed} /> : null}
         {tab === 'documents' ? (
           <DocumentsSection
@@ -343,6 +372,464 @@ function TransactionsBody({ project, feed }: { project: Project; feed: Feed }) {
         entityName={project.code || project.name}
         onNavigate={navigateBesideFocused}
       />
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Team                                                                        */
+/* -------------------------------------------------------------------------- */
+
+function TeamBody({ projectId, canEdit }: { projectId: string; canEdit: boolean }) {
+  const [members, setMembers] = useState<readonly ProjectMemberRow[]>([]);
+  const [employees, setEmployees] = useState<readonly EmployeeOption[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [pick, setPick] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    Promise.all([listProjectMembers(projectId), listEmployees()])
+      .then(([m, emps]) => {
+        if (cancelled) return;
+        setMembers(m);
+        setEmployees(emps.map((e) => ({ id: e.id, name: e.fullName })));
+        setLoading(false);
+      })
+      .catch((e: unknown) => {
+        if (cancelled) return;
+        setError(e instanceof Error ? e.message : 'Failed to load team');
+        setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId]);
+
+  const memberIds = new Set(members.map((m) => m.employeeId));
+  const available = employees.filter((e) => !memberIds.has(e.id));
+
+  async function add() {
+    if (!pick || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const row = await addProjectMember({ projectId, employeeId: pick });
+      setMembers((prev) =>
+        prev.some((m) => m.id === row.id)
+          ? prev
+          : [...prev, row].sort((a, b) => a.employeeName.localeCompare(b.employeeName)),
+      );
+      setPick('');
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Failed to add member');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function remove(id: string) {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await removeProjectMember({ id });
+      setMembers((prev) => prev.filter((m) => m.id !== id));
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Failed to remove member');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (loading) {
+    return <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0 }}>Loading team…</p>;
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      {canEdit ? (
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <select
+            className="input"
+            value={pick}
+            onChange={(e) => setPick(e.target.value)}
+            disabled={busy || available.length === 0}
+          >
+            <option value="">
+              {available.length === 0 ? 'All employees added' : 'Add member…'}
+            </option>
+            {available.map((e) => (
+              <option key={e.id} value={e.id}>
+                {e.name}
+              </option>
+            ))}
+          </select>
+          <button
+            className="btn primary"
+            type="button"
+            onClick={() => void add()}
+            disabled={busy || !pick}
+          >
+            <Icon name="plus" size={13} />
+            Add member
+          </button>
+        </div>
+      ) : null}
+
+      {error ? <div style={{ fontSize: 12, color: 'var(--text-error, #c33)' }}>{error}</div> : null}
+
+      {members.length === 0 ? (
+        <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0 }}>
+          No team members assigned yet.
+        </p>
+      ) : (
+        <ul
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 6,
+            listStyle: 'none',
+            padding: 0,
+            margin: 0,
+          }}
+        >
+          {members.map((m) => (
+            <li
+              key={m.id}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                padding: '6px 10px',
+                borderRadius: 8,
+                border: '1px solid var(--border)',
+                fontSize: 13,
+              }}
+            >
+              <div style={{ flex: 1 }}>
+                <EntityRef
+                  type="employee"
+                  id={m.employeeId}
+                  label={m.employeeName}
+                  hideIcon
+                  onNavigate={navigateBesideFocused}
+                />
+              </div>
+              {m.roleNote ? (
+                <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{m.roleNote}</span>
+              ) : null}
+              {canEdit ? (
+                <button
+                  className="btn row-action row-delete"
+                  type="button"
+                  title="Remove member"
+                  onClick={() => void remove(m.id)}
+                  disabled={busy}
+                >
+                  <Icon name="close" size={13} />
+                </button>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Tasks                                                                       */
+/* -------------------------------------------------------------------------- */
+
+const TASK_STATUSES: ReadonlyArray<{ value: ProjectTaskStatus; label: string }> = [
+  { value: 'todo', label: 'To do' },
+  { value: 'in_progress', label: 'In progress' },
+  { value: 'done', label: 'Done' },
+];
+
+function TasksBody({ projectId, canEdit }: { projectId: string; canEdit: boolean }) {
+  const [tasks, setTasks] = useState<readonly ProjectTaskRow[]>([]);
+  const [employees, setEmployees] = useState<readonly EmployeeOption[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  // Add-task inline form state.
+  const [title, setTitle] = useState('');
+  const [assignee, setAssignee] = useState('');
+  const [dueOn, setDueOn] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    Promise.all([listProjectTasks(projectId), listEmployees()])
+      .then(([t, emps]) => {
+        if (cancelled) return;
+        setTasks(t);
+        setEmployees(emps.map((e) => ({ id: e.id, name: e.fullName })));
+        setLoading(false);
+      })
+      .catch((e: unknown) => {
+        if (cancelled) return;
+        setError(e instanceof Error ? e.message : 'Failed to load tasks');
+        setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId]);
+
+  function replaceTask(row: ProjectTaskRow) {
+    setTasks((prev) => prev.map((t) => (t.id === row.id ? row : t)));
+  }
+
+  async function addTask() {
+    const t = title.trim();
+    if (!t || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const row = await createProjectTask({
+        projectId,
+        title: t,
+        assigneeEmployeeId: assignee || null,
+        dueOn: dueOn || null,
+      });
+      setTasks((prev) => [...prev, row]);
+      setTitle('');
+      setAssignee('');
+      setDueOn('');
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Failed to add task');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function changeStatus(id: string, status: ProjectTaskStatus) {
+    setBusy(true);
+    setError(null);
+    try {
+      const row = await updateProjectTask({ id, status });
+      replaceTask(row);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Failed to update task');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function changeAssignee(id: string, assigneeEmployeeId: string) {
+    setBusy(true);
+    setError(null);
+    try {
+      const row = await updateProjectTask({ id, assigneeEmployeeId: assigneeEmployeeId || null });
+      replaceTask(row);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Failed to update task');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function remove(id: string) {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await deleteProjectTask({ id });
+      setTasks((prev) => prev.filter((t) => t.id !== id));
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Failed to delete task');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (loading) {
+    return <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0 }}>Loading tasks…</p>;
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      {canEdit ? (
+        <div
+          style={{
+            display: 'flex',
+            gap: 8,
+            alignItems: 'center',
+            flexWrap: 'wrap',
+            padding: 12,
+            borderRadius: 10,
+            border: '1px solid var(--border)',
+            background: 'var(--content-2)',
+          }}
+        >
+          <input
+            className="input"
+            style={{ flex: '1 1 200px' }}
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="New task title…"
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                void addTask();
+              }
+            }}
+          />
+          <select
+            className="input"
+            value={assignee}
+            onChange={(e) => setAssignee(e.target.value)}
+            title="Assignee (optional)"
+          >
+            <option value="">Unassigned</option>
+            {employees.map((e) => (
+              <option key={e.id} value={e.id}>
+                {e.name}
+              </option>
+            ))}
+          </select>
+          <input
+            className="input"
+            type="date"
+            value={dueOn}
+            onChange={(e) => setDueOn(e.target.value)}
+            title="Due date (optional)"
+          />
+          <button
+            className="btn primary"
+            type="button"
+            onClick={() => void addTask()}
+            disabled={busy || title.trim().length === 0}
+          >
+            <Icon name="plus" size={13} />
+            Add task
+          </button>
+        </div>
+      ) : null}
+
+      {error ? <div style={{ fontSize: 12, color: 'var(--text-error, #c33)' }}>{error}</div> : null}
+
+      {tasks.length === 0 ? (
+        <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0 }}>No tasks yet.</p>
+      ) : (
+        <ul
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 6,
+            listStyle: 'none',
+            padding: 0,
+            margin: 0,
+          }}
+        >
+          {tasks.map((t) => {
+            const done = t.status === 'done';
+            return (
+              <li
+                key={t.id}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 10,
+                  padding: '7px 10px',
+                  borderRadius: 8,
+                  border: '1px solid var(--border)',
+                  fontSize: 13,
+                  opacity: done ? 0.7 : 1,
+                }}
+              >
+                <span
+                  style={{
+                    flex: 1,
+                    minWidth: 0,
+                    textDecoration: done ? 'line-through' : 'none',
+                    color: done ? 'var(--text-muted)' : 'inherit',
+                  }}
+                >
+                  {t.title}
+                  {t.dueOn ? (
+                    <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--text-muted)' }}>
+                      due{' '}
+                      {new Date(t.dueOn).toLocaleDateString('en-IN', {
+                        day: '2-digit',
+                        month: 'short',
+                      })}
+                    </span>
+                  ) : null}
+                </span>
+                {canEdit ? (
+                  <>
+                    <select
+                      className="input"
+                      value={t.assigneeEmployeeId ?? ''}
+                      onChange={(e) => void changeAssignee(t.id, e.target.value)}
+                      disabled={busy}
+                      title="Assignee"
+                    >
+                      <option value="">Unassigned</option>
+                      {employees.map((e) => (
+                        <option key={e.id} value={e.id}>
+                          {e.name}
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      className="input"
+                      value={t.status}
+                      onChange={(e) => void changeStatus(t.id, e.target.value as ProjectTaskStatus)}
+                      disabled={busy}
+                      title="Status"
+                    >
+                      {TASK_STATUSES.map((s) => (
+                        <option key={s.value} value={s.value}>
+                          {s.label}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      className="btn row-action row-delete"
+                      type="button"
+                      title="Delete task"
+                      onClick={() => void remove(t.id)}
+                      disabled={busy}
+                    >
+                      <Icon name="trash" size={13} />
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    {t.assigneeName ? (
+                      <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                        {t.assigneeName}
+                      </span>
+                    ) : null}
+                    <span
+                      style={{
+                        fontSize: 10.5,
+                        fontWeight: 600,
+                        padding: '2px 8px',
+                        borderRadius: 999,
+                        border: '1px solid var(--border)',
+                        color: 'var(--text-muted)',
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.05em',
+                      }}
+                    >
+                      {TASK_STATUSES.find((s) => s.value === t.status)?.label ?? t.status}
+                    </span>
+                  </>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
     </div>
   );
 }

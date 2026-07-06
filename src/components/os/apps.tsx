@@ -6,6 +6,7 @@ import { navigateBesideFocused } from './apps/navigate';
 import { CompanySettingsPane } from './apps/company-settings-pane';
 import { BillingSettingsPane } from './apps/billing-settings-pane';
 import { VaultPane } from './apps/vault-pane';
+import { TrashPane } from './apps/trash-pane';
 import { ImportEmployeesDialog } from '@/components/employees/import-employees-dialog';
 import { InvoiceFormatEditor } from '@/components/settings/invoice-format-editor';
 import { exportRows, type ExportFormat } from '@/lib/client/export-rows';
@@ -1779,6 +1780,7 @@ export function EmployeesApp({
   const [showDepts, setShowDepts] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [confirmDel, setConfirmDel] = useState<DirRow | null>(null);
+  const [togglingId, setTogglingId] = useState<string | null>(null);
 
   // Real DB-backed list. Clicking a card passes a real UUID into the
   // openWindow route → EmployeeWindow renders the §8.4 dashboard. Edits go
@@ -1796,6 +1798,28 @@ export function EmployeesApp({
   async function refreshEmployeeList() {
     const next = await fetchEmployeeList().catch(() => null);
     if (next) setRows(next);
+  }
+
+  // Active/Inactive quick toggle. Reuses the profile editor's save path
+  // (updateEmployee({ id, status })). Active → deactivate to 'on_leave';
+  // anything else → reactivate to 'active'. Optimistic reload after.
+  async function toggleStatus(e: DirRow) {
+    const activating = e.status !== 'active';
+    const nextStatus: EmpStatus = activating ? 'active' : 'on_leave';
+    setTogglingId(e.id);
+    try {
+      const res = await updateEmployee({ id: e.id, status: nextStatus });
+      if (!res.ok) {
+        toast.error(res.message);
+        return;
+      }
+      await refreshEmployeeList();
+      toast.success(`${e.fullName} ${activating ? 'reactivated' : 'set inactive'}.`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not update status.');
+    } finally {
+      setTogglingId(null);
+    }
   }
 
   function exportEmployees(format: ExportFormat) {
@@ -1864,6 +1888,180 @@ export function EmployeesApp({
   });
   const activeCount = all.filter((e) => e.status === 'active').length;
   const roster = all.map((e) => ({ id: e.id, name: e.fullName }));
+
+  // Primary split: Active (status==='active', which already excludes archived/
+  // separated/notice) vs Inactive (everyone else). Both honour the search +
+  // filter chain above via `visible`.
+  const activeGroup = visible.filter((e) => e.status === 'active');
+  const inactiveGroup = visible.filter((e) => e.status !== 'active');
+
+  // One card render, shared by both groups. Footer action bar is always
+  // visible (not hover-revealed): Edit + Active/Inactive toggle (canEdit) and
+  // Delete/Archive (canDelete). stopPropagation keeps the buttons from opening
+  // the profile window.
+  const renderCard = (e: DirRow) => {
+    const sm = EMP_STATUS_META[e.status];
+    const isActive = e.status === 'active';
+    return (
+      <div
+        key={e.id}
+        className="emp-card emp-card-actionable"
+        role="button"
+        tabIndex={0}
+        onClick={() => navigateBesideFocused({ type: 'employee', id: e.id })}
+        onKeyDown={(ev) => {
+          if (ev.key === 'Enter' || ev.key === ' ') {
+            ev.preventDefault();
+            navigateBesideFocused({ type: 'employee', id: e.id });
+          }
+        }}
+        style={{
+          cursor: 'pointer',
+          flexDirection: 'column',
+          alignItems: 'stretch',
+          gap: 0,
+          opacity: e.status === 'separated' ? 0.7 : 1,
+        }}
+        title={`Open ${e.fullName}'s profile`}
+      >
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+          <div
+            className="avatar"
+            style={{
+              width: 44,
+              height: 44,
+              fontSize: 14,
+              background: e.tone,
+              borderRadius: 12,
+              flexShrink: 0,
+            }}
+          >
+            {initials(e.fullName)}
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <div
+                className="name"
+                title={e.fullName}
+                style={{
+                  // Full name is the dominant element — larger/bolder, wrapping
+                  // up to two lines instead of hard-truncating (backlog: "full
+                  // names to be visible"); title surfaces the whole name on hover.
+                  flex: 1,
+                  minWidth: 0,
+                  fontSize: 14.5,
+                  fontWeight: 700,
+                  lineHeight: 1.25,
+                  overflow: 'hidden',
+                  display: '-webkit-box',
+                  WebkitLineClamp: 2,
+                  WebkitBoxOrient: 'vertical',
+                  overflowWrap: 'anywhere',
+                }}
+              >
+                {e.fullName}
+              </div>
+              <span
+                style={{
+                  fontSize: 10,
+                  fontWeight: 600,
+                  padding: '1px 7px',
+                  borderRadius: 999,
+                  color: sm.fg,
+                  background: sm.bg,
+                  whiteSpace: 'nowrap',
+                  flexShrink: 0,
+                }}
+              >
+                {sm.label}
+              </span>
+            </div>
+            <div className="role">{e.designation || '—'}</div>
+            <div className="dept">
+              {departmentLabel(e.department)} ·{' '}
+              {EMP_TYPE_LABEL[e.employmentType] ?? e.employmentType}
+            </div>
+            <div
+              style={{
+                fontSize: 11,
+                color: 'var(--text-muted)',
+                marginTop: 3,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 1,
+              }}
+            >
+              {e.workEmail ? (
+                <span
+                  style={{
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {e.workEmail}
+                </span>
+              ) : null}
+              <span>
+                Joined{' '}
+                {e.joinedAt.toLocaleDateString('en-IN', { month: 'short', year: 'numeric' })}
+                {e.managerName ? ` · ↳ ${e.managerName}` : ''}
+              </span>
+            </div>
+          </div>
+        </div>
+        {(canEdit || canDelete) && (
+          <div
+            className="emp-card-actions"
+            onClick={(ev) => ev.stopPropagation()}
+            style={{
+              // Persistent footer row (override the hover-reveal opacity).
+              opacity: 1,
+              marginTop: 10,
+              paddingTop: 8,
+              borderTop: '1px solid var(--border)',
+              alignItems: 'center',
+            }}
+          >
+            {canEdit && (
+              <button
+                type="button"
+                className="emp-card-btn"
+                title="Edit profile"
+                onClick={() => setEditingId(e.id)}
+              >
+                <Icon name="edit" size={12} />
+              </button>
+            )}
+            {canEdit && e.status !== 'separated' && (
+              <button
+                type="button"
+                className="btn"
+                style={{ marginLeft: 'auto', fontSize: 11 }}
+                disabled={togglingId === e.id}
+                title={isActive ? 'Set this teammate inactive' : 'Reactivate this teammate'}
+                onClick={() => void toggleStatus(e)}
+              >
+                <Icon name={isActive ? 'minus' : 'check'} size={12} />
+                {isActive ? 'Deactivate' : 'Activate'}
+              </button>
+            )}
+            {canDelete && e.status !== 'separated' && (
+              <button
+                type="button"
+                className="emp-card-btn emp-card-delete"
+                style={canEdit ? undefined : { marginLeft: 'auto' }}
+                title="Remove from team"
+                onClick={() => setConfirmDel(e)}
+              >
+                <Icon name="trash" size={12} />
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
@@ -1995,18 +2193,10 @@ export function EmployeesApp({
         <span style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>Show inactive</span>
       </div>
 
-      <div
-        className="card-grid"
-        style={{
-          gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))',
-          flex: 1,
-          minHeight: 0,
-        }}
-      >
+      <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
         {rows === null ? (
           <div
             style={{
-              gridColumn: '1 / -1',
               padding: 28,
               textAlign: 'center',
               color: 'var(--text-muted)',
@@ -2014,140 +2204,9 @@ export function EmployeesApp({
           >
             Loading team…
           </div>
-        ) : (
-          visible.map((e) => {
-            const sm = EMP_STATUS_META[e.status];
-            return (
-              <div
-                key={e.id}
-                className="emp-card emp-card-actionable"
-                role="button"
-                tabIndex={0}
-                onClick={() => navigateBesideFocused({ type: 'employee', id: e.id })}
-                onKeyDown={(ev) => {
-                  if (ev.key === 'Enter' || ev.key === ' ') {
-                    ev.preventDefault();
-                    navigateBesideFocused({ type: 'employee', id: e.id });
-                  }
-                }}
-                style={{
-                  cursor: 'pointer',
-                  alignItems: 'flex-start',
-                  opacity: e.status === 'separated' ? 0.7 : 1,
-                }}
-                title={`Open ${e.fullName}'s profile`}
-              >
-                <div
-                  className="avatar"
-                  style={{
-                    width: 44,
-                    height: 44,
-                    fontSize: 14,
-                    background: e.tone,
-                    borderRadius: 12,
-                  }}
-                >
-                  {initials(e.fullName)}
-                </div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <div
-                      className="name"
-                      title={e.fullName}
-                      style={{
-                        // Show the full name — wrap up to two lines instead of
-                        // hard-truncating to one (backlog: "full names to be
-                        // visible"); the title still surfaces the whole name on
-                        // hover for the rare 3-line name.
-                        minWidth: 0,
-                        overflow: 'hidden',
-                        display: '-webkit-box',
-                        WebkitLineClamp: 2,
-                        WebkitBoxOrient: 'vertical',
-                        overflowWrap: 'anywhere',
-                      }}
-                    >
-                      {e.fullName}
-                    </div>
-                    <span
-                      style={{
-                        fontSize: 10,
-                        fontWeight: 600,
-                        padding: '1px 7px',
-                        borderRadius: 999,
-                        color: sm.fg,
-                        background: sm.bg,
-                        whiteSpace: 'nowrap',
-                      }}
-                    >
-                      {sm.label}
-                    </span>
-                  </div>
-                  <div className="role">{e.designation || '—'}</div>
-                  <div className="dept">
-                    {departmentLabel(e.department)} ·{' '}
-                    {EMP_TYPE_LABEL[e.employmentType] ?? e.employmentType}
-                  </div>
-                  <div
-                    style={{
-                      fontSize: 11,
-                      color: 'var(--text-muted)',
-                      marginTop: 3,
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: 1,
-                    }}
-                  >
-                    {e.workEmail ? (
-                      <span
-                        style={{
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                          whiteSpace: 'nowrap',
-                        }}
-                      >
-                        {e.workEmail}
-                      </span>
-                    ) : null}
-                    <span>
-                      Joined{' '}
-                      {e.joinedAt.toLocaleDateString('en-IN', { month: 'short', year: 'numeric' })}
-                      {e.managerName ? ` · ↳ ${e.managerName}` : ''}
-                    </span>
-                  </div>
-                </div>
-                {(canEdit || canDelete) && (
-                  <div className="emp-card-actions" onClick={(ev) => ev.stopPropagation()}>
-                    {canEdit && (
-                      <button
-                        type="button"
-                        className="emp-card-btn"
-                        title="Edit profile"
-                        onClick={() => setEditingId(e.id)}
-                      >
-                        <Icon name="edit" size={12} />
-                      </button>
-                    )}
-                    {canDelete && e.status !== 'separated' && (
-                      <button
-                        type="button"
-                        className="emp-card-btn emp-card-delete"
-                        title="Remove from team"
-                        onClick={() => setConfirmDel(e)}
-                      >
-                        <Icon name="trash" size={12} />
-                      </button>
-                    )}
-                  </div>
-                )}
-              </div>
-            );
-          })
-        )}
-        {rows !== null && visible.length === 0 && (
+        ) : visible.length === 0 ? (
           <div
             style={{
-              gridColumn: '1 / -1',
               padding: 28,
               textAlign: 'center',
               color: 'var(--text-muted)',
@@ -2157,6 +2216,23 @@ export function EmployeesApp({
               ? 'No teammates yet — click "Invite" to add the first.'
               : 'No teammates match these filters.'}
           </div>
+        ) : (
+          <>
+            <EmployeeGroup
+              label="Active"
+              count={activeGroup.length}
+              empty="No active teammates match these filters."
+            >
+              {activeGroup.map((e) => renderCard(e))}
+            </EmployeeGroup>
+            <EmployeeGroup
+              label="Inactive"
+              count={inactiveGroup.length}
+              empty="No inactive teammates match these filters."
+            >
+              {inactiveGroup.map((e) => renderCard(e))}
+            </EmployeeGroup>
+          </>
         )}
       </div>
 
@@ -2214,6 +2290,49 @@ export function EmployeesApp({
             }
           }}
         />
+      )}
+    </div>
+  );
+}
+
+/** Labelled card-grid section with a count header — one per Active/Inactive. */
+function EmployeeGroup({
+  label,
+  count,
+  empty,
+  children,
+}: {
+  label: string;
+  count: number;
+  empty: string;
+  children: ReactNode;
+}) {
+  return (
+    <div>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'baseline',
+          gap: 8,
+          padding: '14px 20px 2px',
+        }}
+      >
+        <h3 style={{ margin: 0, fontSize: 12, fontWeight: 700, letterSpacing: '0.04em' }}>
+          {label.toUpperCase()}
+        </h3>
+        <span style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>{count}</span>
+      </div>
+      {count === 0 ? (
+        <div style={{ padding: '6px 20px 14px', color: 'var(--text-muted)', fontSize: 12 }}>
+          {empty}
+        </div>
+      ) : (
+        <div
+          className="card-grid"
+          style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))' }}
+        >
+          {children}
+        </div>
       )}
     </div>
   );
@@ -3208,7 +3327,8 @@ type SettingsSection = {
     | 'Account'
     | 'Team'
     | 'Notifications'
-    | 'Security';
+    | 'Security'
+    | 'Trash';
   icon: IconName;
 };
 
@@ -3220,6 +3340,7 @@ const ADMIN_SETTINGS_SECTIONS: ReadonlySet<SettingsSection['name']> = new Set([
   'Bank accounts',
   'Invoice format',
   'Vault',
+  'Trash',
 ]);
 
 export function SettingsApp({
@@ -3254,6 +3375,7 @@ export function SettingsApp({
     'Team',
     'Notifications',
     'Security',
+    'Trash',
   ];
   const requestedSection: SettingsSection['name'] = SECTION_NAMES.some((n) => n === initialSection)
     ? (initialSection as SettingsSection['name'])
@@ -3277,6 +3399,7 @@ export function SettingsApp({
     { name: 'Team', icon: 'users' },
     { name: 'Notifications', icon: 'bell' },
     { name: 'Security', icon: 'shield' },
+    { name: 'Trash', icon: 'trash' },
   ];
   // Hide the admin-tier panes from the sidebar for users without settings edit.
   const sections = canEditSettings
@@ -3475,6 +3598,8 @@ export function SettingsApp({
             onSettingsChange={onSettingsChange}
             currentUserRole={currentUserRole}
           />
+        ) : section === 'Trash' ? (
+          <TrashPane />
         ) : (
           <SecurityPanel onSignOut={onSignOut} />
         )}
