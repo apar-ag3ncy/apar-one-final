@@ -14,6 +14,8 @@ import {
   listVendors as listDbVendors,
 } from '@/lib/server-stub/entity-actions';
 import {
+  backfillOfficeExpenseLedgerPostings,
+  countUnpostedOfficeExpenses,
   createOfficeExpense,
   createOfficeExpenseCategory,
   deleteOfficeExpense,
@@ -175,6 +177,10 @@ export function OfficeApp({
   const [confirmDel, setConfirmDel] = useState<OfficeExpenseRow | null>(null);
   const [showOpening, setShowOpening] = useState(false);
   const [busy, setBusy] = useState(false);
+  // Expenses captured before ledger auto-posting (or import-failed) that can
+  // still be back-posted to the GL. Drives the "Post N to ledger" button.
+  const [unpostedCount, setUnpostedCount] = useState(0);
+  const [backfilling, setBackfilling] = useState(false);
 
   // Re-fetch just the custom categories — called by the inline "create
   // category" flow inside the expense form so a fresh category shows up
@@ -191,18 +197,49 @@ export function OfficeApp({
 
   async function reload() {
     try {
-      const [list, sum, sal, cats] = await Promise.all([
+      const [list, sum, sal, cats, unposted] = await Promise.all([
         listOfficeExpenses({}),
         getOfficeExpenseSummary(),
         getSalaryPaymentsSummary(),
         listOfficeExpenseCategories(),
+        countUnpostedOfficeExpenses(),
       ]);
       setRows(list);
       setSummary(sum);
       setSalary(sal);
       setCustomCategories(cats);
+      setUnpostedCount(unposted);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Could not load office expenses');
+    }
+  }
+
+  async function handleBackfill() {
+    setBackfilling(true);
+    try {
+      // Post in small batches, looping client-side, so no single request runs
+      // long enough to hit the serverless timeout. Stops when a batch posts
+      // nothing new (only unpostable rows remain) or everything is done.
+      let posted = 0;
+      let skipped = 0;
+      for (let guard = 0; guard < 500; guard++) {
+        const res = await backfillOfficeExpenseLedgerPostings({ limit: 4 });
+        posted += res.posted;
+        skipped += res.skipped;
+        const remaining = await countUnpostedOfficeExpenses();
+        setUnpostedCount(remaining);
+        if (res.posted === 0 || remaining === 0) break;
+      }
+      toast.success(
+        skipped > 0
+          ? `Posted ${posted} to the ledger · ${skipped} skipped`
+          : `Posted ${posted} expense${posted === 1 ? '' : 's'} to the ledger`,
+      );
+      await reload();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not post to ledger');
+    } finally {
+      setBackfilling(false);
     }
   }
 
@@ -213,12 +250,14 @@ export function OfficeApp({
       getOfficeExpenseSummary(),
       getSalaryPaymentsSummary(),
       listOfficeExpenseCategories(),
+      countUnpostedOfficeExpenses(),
     ])
-      .then(([list, sum, sal, cats]) => {
+      .then(([list, sum, sal, cats, unposted]) => {
         if (cancelled) return;
         setRows(list);
         setSummary(sum);
         setSalary(sal);
+        setUnpostedCount(unposted);
         setCustomCategories(cats);
       })
       .catch((e) => {
@@ -418,6 +457,19 @@ export function OfficeApp({
           onExport={handleExport}
           disabled={!rows || filtered.length === 0}
         />
+        {canEdit && unpostedCount > 0 && (
+          <button
+            className="btn"
+            type="button"
+            disabled={backfilling}
+            onClick={() => void handleBackfill()}
+            title={`Post ${unpostedCount} captured expense${unpostedCount === 1 ? '' : 's'} that aren't in the ledger yet (Dr expense / Cr Cash on Hand)`}
+            style={{ color: 'var(--apar-green, #2E8F5A)' }}
+          >
+            <Icon name="check" size={13} />
+            {backfilling ? 'Posting…' : `Post ${unpostedCount} to ledger`}
+          </button>
+        )}
         <button
           className="btn"
           type="button"
