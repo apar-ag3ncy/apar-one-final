@@ -80,7 +80,7 @@ export function EntityRef({
   const inner = (
     <>
       {!hideIcon ? <Icon className="size-3.5 shrink-0 opacity-70" aria-hidden /> : null}
-      <span className="truncate">
+      <span className="min-w-0 break-words [overflow-wrap:anywhere]">
         {label}
         {archived ? <span className="text-muted-foreground ml-1">{EX_SUFFIX[type]}</span> : null}
       </span>

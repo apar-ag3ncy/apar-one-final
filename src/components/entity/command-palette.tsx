@@ -186,9 +186,9 @@ export function CommandPalette({
                       >
                         <Icon className="mr-2 size-3.5 opacity-60" aria-hidden />
                         <div className="flex min-w-0 flex-col">
-                          <span className="truncate">{r.title}</span>
+                          <span className="break-words [overflow-wrap:anywhere]">{r.title}</span>
                           {r.subtitle ? (
-                            <span className="text-muted-foreground truncate text-xs">
+                            <span className="text-muted-foreground text-xs break-words [overflow-wrap:anywhere]">
                               {r.subtitle}
                             </span>
                           ) : null}
