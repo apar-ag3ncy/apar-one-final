@@ -43,7 +43,7 @@ export function StatementOfAccount({
   if (!statement) {
     return <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0 }}>Loading {noun}…</p>;
   }
-  const { closingBalancePaise, lines } = statement;
+  const { closingBalancePaise, lines, totalGstPaise, totalTdsPaise } = statement;
 
   function handleExport(format: ExportFormat) {
     const headers = [
@@ -199,6 +199,36 @@ export function StatementOfAccount({
               />
             ))}
           </tbody>
+          {/* Ledger tax totals — the GST + TDS that flowed through this ledger's
+              transactions, summed at the foot of the statement. */}
+          <tfoot>
+            <tr style={{ borderTop: '2px solid var(--border)' }}>
+              <td
+                colSpan={5}
+                style={{ textAlign: 'right', fontWeight: 600, color: 'var(--text-muted)' }}
+              >
+                Total GST
+              </td>
+              <td
+                style={{ textAlign: 'right', fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}
+              >
+                {formatINR(totalGstPaise)}
+              </td>
+            </tr>
+            <tr>
+              <td
+                colSpan={5}
+                style={{ textAlign: 'right', fontWeight: 600, color: 'var(--text-muted)' }}
+              >
+                Total TDS
+              </td>
+              <td
+                style={{ textAlign: 'right', fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}
+              >
+                {formatINR(totalTdsPaise)}
+              </td>
+            </tr>
+          </tfoot>
         </table>
       )}
     </div>

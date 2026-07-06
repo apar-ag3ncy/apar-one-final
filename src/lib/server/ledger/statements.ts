@@ -89,6 +89,11 @@ export type Statement = {
   /** Sum of all lines' signed contributions to balance. */
   closingBalancePaise: bigint;
   lines: readonly StatementLine[];
+  /** Total GST across this ledger's transactions (input 1250 + output 2120 +
+   * advance 1252), for the summary shown at the foot of the ledger. */
+  totalGstPaise: bigint;
+  /** Total TDS across this ledger's transactions (receivable 1260 + payable 2130). */
+  totalTdsPaise: bigint;
 };
 
 type RawLine = {
@@ -124,7 +129,50 @@ function rollUp(
     running += signFor(r.side) * r.amountPaise;
     lines.push({ ...r, runningBalancePaise: running });
   }
-  return { closingBalancePaise: running, lines };
+  return { closingBalancePaise: running, lines, totalGstPaise: 0n, totalTdsPaise: 0n };
+}
+
+/** GST / TDS chart-of-accounts codes summed for a ledger's tax totals. */
+const GST_ACCOUNT_CODES = ['1250', '2120', '1252'] as const;
+const TDS_ACCOUNT_CODES = ['1260', '2130'] as const;
+
+/** Sum GST + TDS postings across a set of transactions (the ledger's scope). */
+async function statementTaxTotals(
+  txnIds: readonly string[],
+): Promise<{ gst: bigint; tds: bigint }> {
+  if (txnIds.length === 0) return { gst: 0n, tds: 0n };
+  const rows = await db
+    .select({
+      code: accounts.code,
+      total: sql<string>`COALESCE(SUM(${postings.amountPaise}), 0)::text`,
+    })
+    .from(postings)
+    .innerJoin(accounts, eq(accounts.id, postings.accountId))
+    .where(
+      and(
+        inArray(postings.transactionId, txnIds as string[]),
+        inArray(accounts.code, [...GST_ACCOUNT_CODES, ...TDS_ACCOUNT_CODES] as string[]),
+      ),
+    )
+    .groupBy(accounts.code);
+  let gst = 0n;
+  let tds = 0n;
+  for (const r of rows) {
+    if ((GST_ACCOUNT_CODES as readonly string[]).includes(r.code)) gst += BigInt(r.total);
+    else tds += BigInt(r.total);
+  }
+  return { gst, tds };
+}
+
+/** rollUp + the ledger's GST/TDS totals (computed from the lines' transactions). */
+async function finalizeStatement(
+  lines: readonly RawLine[],
+  signFor: (side: 'debit' | 'credit') => 1n | -1n,
+): Promise<Statement> {
+  const base = rollUp(lines, signFor);
+  const txnIds = Array.from(new Set(lines.map((l) => l.txnId)));
+  const { gst, tds } = await statementTaxTotals(txnIds);
+  return { ...base, totalGstPaise: gst, totalTdsPaise: tds };
 }
 
 async function fetchSubledgerLines(
@@ -282,7 +330,7 @@ export async function getClientStatement(args: {
     },
     { from: args.from, to: args.to, includeReversed: args.includeReversed },
   );
-  return rollUp(lines, (side) => (side === 'debit' ? 1n : -1n));
+  return finalizeStatement(lines, (side) => (side === 'debit' ? 1n : -1n));
 }
 
 /**
@@ -312,7 +360,7 @@ export async function getVendorStatement(args: {
     },
     { from: args.from, to: args.to, includeReversed: args.includeReversed },
   );
-  return rollUp(lines, (side) => (side === 'credit' ? 1n : -1n));
+  return finalizeStatement(lines, (side) => (side === 'credit' ? 1n : -1n));
 }
 
 /**
@@ -338,7 +386,7 @@ export async function getEmployeeStatement(args: {
     { kind: 'incurredByEmployee', employeeId: args.employeeId },
     { from: args.from, to: args.to, includeReversed: args.includeReversed },
   );
-  return rollUp(lines, (side) => (side === 'debit' ? 1n : -1n));
+  return finalizeStatement(lines, (side) => (side === 'debit' ? 1n : -1n));
 }
 
 /**
@@ -361,7 +409,7 @@ export async function getOfficeStatement(args: {
     { kind: 'accountCodes', codes: ['1110', '1120'] },
     { from: args.from, to: args.to, includeReversed: args.includeReversed },
   );
-  return rollUp(lines, (side) => (side === 'debit' ? 1n : -1n));
+  return finalizeStatement(lines, (side) => (side === 'debit' ? 1n : -1n));
 }
 
 /**
@@ -391,7 +439,7 @@ export async function getOfficeUtilitiesStatement(args: {
     { kind: 'accountCodes', codes: ['6200'] },
     { from: args.from, to: args.to, includeReversed: args.includeReversed },
   );
-  return rollUp(lines, (side) => (side === 'debit' ? 1n : -1n));
+  return finalizeStatement(lines, (side) => (side === 'debit' ? 1n : -1n));
 }
 
 /**
@@ -411,7 +459,7 @@ export async function getTdsReceivableStatement(args: {
     { kind: 'accountCodes', codes: ['1260'] },
     { from: args.from, to: args.to, includeReversed: args.includeReversed },
   );
-  return rollUp(lines, (side) => (side === 'debit' ? 1n : -1n));
+  return finalizeStatement(lines, (side) => (side === 'debit' ? 1n : -1n));
 }
 
 /**
@@ -430,7 +478,7 @@ export async function getTdsPayableStatement(args: {
     { kind: 'accountCodes', codes: ['2130'] },
     { from: args.from, to: args.to, includeReversed: args.includeReversed },
   );
-  return rollUp(lines, (side) => (side === 'credit' ? 1n : -1n));
+  return finalizeStatement(lines, (side) => (side === 'credit' ? 1n : -1n));
 }
 
 export type BankBook = Statement & {
@@ -484,5 +532,13 @@ export async function getBankBook(args: {
     running += sign(r.side) * r.amountPaise;
     lines.push({ ...r, runningBalancePaise: running });
   }
-  return { closingBalancePaise: running, lines, openingCarryPaise };
+  const txnIds = Array.from(new Set(windowed.map((r) => r.txnId)));
+  const { gst, tds } = await statementTaxTotals(txnIds);
+  return {
+    closingBalancePaise: running,
+    lines,
+    openingCarryPaise,
+    totalGstPaise: gst,
+    totalTdsPaise: tds,
+  };
 }
