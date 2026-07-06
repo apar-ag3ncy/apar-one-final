@@ -10,7 +10,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/shared/empty-state';
 import { StatusBadge } from '@/components/shared/status-badge';
 import { formatINR } from '@/components/shared/format-inr';
-import { rupeesToPaise } from '@/lib/money';
+import { paiseToRupees, rupeesToPaise } from '@/lib/money';
 import { getDocumentSignedUrl } from '@/lib/server/entities/documents';
 import {
   listAgencyBankAccounts,
@@ -18,7 +18,11 @@ import {
 } from '@/lib/server/billing/agency-banks';
 import { listBankAccounts, type BankAccountRow } from '@/lib/server/entities/bank-accounts';
 import { useEntityMutation } from '@/components/os/auth/entity-mutation-gate';
-import { recordCustomerAdvance } from '@/lib/server/billing/advances';
+import {
+  adjustAdvanceToInvoice,
+  listCustomerAdvances,
+  recordCustomerAdvance,
+} from '@/lib/server/billing/advances';
 import {
   getClientReceivablesByProject,
   listClientReceipts,
@@ -57,6 +61,9 @@ export function ClientPaymentsSection({
   const [error, setError] = useState<string | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [balanceOpen, setBalanceOpen] = useState(false);
+  const [allocateOpen, setAllocateOpen] = useState(false);
+  // The client's advance balance rows (2180 Client Advances) with money left.
+  const [advances, setAdvances] = useState<Awaited<ReturnType<typeof listCustomerAdvances>>>([]);
   const [reversing, setReversing] = useState<{ id: string; amount: bigint } | null>(null);
   // OS read-only bridge — permissive outside the OS. Recording a receipt is an
   // edit; reversing a posted receipt is destructive (delete grant).
@@ -64,14 +71,16 @@ export function ClientPaymentsSection({
 
   async function reload() {
     try {
-      const [r, d, inv] = await Promise.all([
+      const [r, d, inv, adv] = await Promise.all([
         listClientReceipts(clientId),
         getClientReceivablesByProject(clientId),
         listOpenInvoicesForClient(clientId),
+        listCustomerAdvances({ clientId, withBalance: true }),
       ]);
       setReceipts(r);
       setDue(d);
       setInvoices(inv);
+      setAdvances(adv);
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not load transactions');
@@ -84,12 +93,14 @@ export function ClientPaymentsSection({
       listClientReceipts(clientId),
       getClientReceivablesByProject(clientId),
       listOpenInvoicesForClient(clientId),
+      listCustomerAdvances({ clientId, withBalance: true }),
     ])
-      .then(([r, d, inv]) => {
+      .then(([r, d, inv, adv]) => {
         if (cancelled) return;
         setReceipts(r);
         setDue(d);
         setInvoices(inv);
+        setAdvances(adv);
         setError(null);
       })
       .catch((e) => {
@@ -120,10 +131,20 @@ export function ClientPaymentsSection({
     return <Skeleton className="h-40 w-full" />;
   }
 
+  const advanceBalancePaise = advances.reduce((sum, a) => sum + a.balancePaise, 0n);
+
   return (
     <div className="flex flex-col gap-4">
       {due.creditPaise > 0n ? (
         <CreditAvailableCard creditPaise={due.creditPaise} clientName={clientName} />
+      ) : null}
+
+      {advanceBalancePaise > 0n ? (
+        <ClientBalanceCard
+          balancePaise={advanceBalancePaise}
+          canAllocate={canEdit && invoices.length > 0}
+          onAllocate={() => setAllocateOpen(true)}
+        />
       ) : null}
 
       <DueToCollectCard due={due} />
@@ -249,6 +270,18 @@ export function ClientPaymentsSection({
         clientName={clientName}
         onRecorded={() => {
           setBalanceOpen(false);
+          void reload();
+        }}
+      />
+
+      <AllocateBalanceDialog
+        open={allocateOpen}
+        onOpenChange={setAllocateOpen}
+        clientName={clientName}
+        advances={advances}
+        invoices={invoices}
+        onAllocated={() => {
+          setAllocateOpen(false);
           void reload();
         }}
       />
@@ -432,6 +465,9 @@ function RecordReceiptDialog({
   const [tdsSection, setTdsSection] = useState('');
   const [gstRupees, setGstRupees] = useState('');
   const [allocs, setAllocs] = useState<Record<string, string>>({});
+  // Default: auto-apply the receipt FIFO to the oldest open invoices. Turn off
+  // to keep the money as an unallocated credit on the client's account.
+  const [autoAllocate, setAutoAllocate] = useState(true);
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
@@ -448,6 +484,7 @@ function RecordReceiptDialog({
       setTdsSection('');
       setGstRupees('');
       setAllocs({});
+      setAutoAllocate(true);
     });
     listAgencyBankAccounts()
       .then((b) => {
@@ -538,9 +575,12 @@ function RecordReceiptDialog({
         tdsSection: tdsSection.trim() || null,
         gstPaise,
         allocations,
+        autoAllocate,
       });
       toast.success(
-        `Receipt ${result.receiptNumber} posted — ${formatINR(result.allocatedPaise)} applied.`,
+        result.unallocatedPaise > 0n
+          ? `Receipt ${result.receiptNumber} posted — ${formatINR(result.allocatedPaise)} applied, ${formatINR(result.unallocatedPaise)} left as client credit.`
+          : `Receipt ${result.receiptNumber} posted — ${formatINR(result.allocatedPaise)} applied.`,
       );
       onRecorded();
     } catch (e) {
@@ -743,10 +783,30 @@ function RecordReceiptDialog({
           ) : null}
 
           <div className="os-field">
+            <label
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                cursor: 'pointer',
+                fontSize: 13,
+                marginBottom: 8,
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={autoAllocate}
+                onChange={(e) => setAutoAllocate(e.target.checked)}
+                disabled={submitting}
+              />
+              Auto-apply to oldest open invoices
+            </label>
             <span className="os-field-label">
               Allocate to invoices{' '}
               <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>
-                (blank = auto oldest-first)
+                {autoAllocate
+                  ? '(blank = auto oldest-first)'
+                  : '(off — anything you leave blank stays as client credit)'}
               </span>
             </span>
             {invoices.length === 0 ? (
@@ -1213,3 +1273,274 @@ const osInputStyle: React.CSSProperties = {
   fontFamily: 'inherit',
   outline: 'none',
 };
+
+/* -------------------------------------------------------------------------- */
+/* Client balance — available advance/credit + allocate to invoices           */
+/* -------------------------------------------------------------------------- */
+
+/** Shows the client's held advance/credit balance with an "Allocate" action. */
+function ClientBalanceCard({
+  balancePaise,
+  canAllocate,
+  onAllocate,
+}: {
+  balancePaise: bigint;
+  canAllocate: boolean;
+  onAllocate: () => void;
+}) {
+  return (
+    <Card>
+      <CardContent className="flex flex-row items-center justify-between gap-3 py-4">
+        <div className="min-w-0">
+          <div className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+            Client balance available
+          </div>
+          <div className="text-2xl font-semibold tabular-nums">{formatINR(balancePaise)}</div>
+          <div className="text-muted-foreground text-xs">
+            Advance / credit held for this client — apply it to their open invoices.
+          </div>
+        </div>
+        {canAllocate ? (
+          <Button size="sm" onClick={onAllocate}>
+            <WalletIcon className="mr-1.5 size-4" aria-hidden />
+            Allocate to invoices
+          </Button>
+        ) : null}
+      </CardContent>
+    </Card>
+  );
+}
+
+/**
+ * Apply the client's advance/credit balance to one of their open invoices.
+ * Draws from a chosen advance (customer_advances) and posts the standard
+ * advance→invoice journal (Dr 2180 Client Advances / Cr 1200 Trade Receivables,
+ * plus the Rule-50 GST unwind) via the existing `adjustAdvanceToInvoice`.
+ */
+function AllocateBalanceDialog({
+  open,
+  onOpenChange,
+  clientName,
+  advances,
+  invoices,
+  onAllocated,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  clientName: string;
+  advances: Awaited<ReturnType<typeof listCustomerAdvances>>;
+  invoices: readonly OpenInvoiceRow[];
+  onAllocated: () => void;
+}) {
+  const withBalance = advances.filter((a) => a.balancePaise > 0n);
+  const [advanceId, setAdvanceId] = useState('');
+  const [invoiceId, setInvoiceId] = useState('');
+  const [amountRupees, setAmountRupees] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    queueMicrotask(() => {
+      setAdvanceId(withBalance[0]?.id ?? '');
+      setInvoiceId('');
+      setAmountRupees('');
+    });
+    // withBalance is derived from props; resetting on open is intentional.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !submitting) onOpenChange(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open, submitting, onOpenChange]);
+
+  if (!open) return null;
+
+  const advance = withBalance.find((a) => a.id === advanceId) ?? null;
+  const invoice = invoices.find((i) => i.invoiceId === invoiceId) ?? null;
+  const maxPaise =
+    advance && invoice
+      ? advance.balancePaise < invoice.outstandingPaise
+        ? advance.balancePaise
+        : invoice.outstandingPaise
+      : 0n;
+
+  async function submit() {
+    if (!advance) {
+      toast.error('Pick which balance to allocate from.');
+      return;
+    }
+    if (!invoice) {
+      toast.error('Pick the invoice to apply it to.');
+      return;
+    }
+    let amountPaise: bigint;
+    try {
+      amountPaise = parsePaise(amountRupees);
+    } catch {
+      toast.error('Enter a valid amount.');
+      return;
+    }
+    if (amountPaise <= 0n) {
+      toast.error('Amount must be positive.');
+      return;
+    }
+    if (amountPaise > advance.balancePaise) {
+      toast.error(`Only ${formatINR(advance.balancePaise)} available in that balance.`);
+      return;
+    }
+    if (amountPaise > invoice.outstandingPaise) {
+      toast.error(
+        `Invoice ${invoice.documentNumber} only has ${formatINR(invoice.outstandingPaise)} outstanding.`,
+      );
+      return;
+    }
+    setSubmitting(true);
+    try {
+      await adjustAdvanceToInvoice({
+        advanceId: advance.id,
+        invoiceId: invoice.invoiceId,
+        amountPaise,
+      });
+      toast.success(`Applied ${formatINR(amountPaise)} from balance to ${invoice.documentNumber}.`);
+      onAllocated();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not allocate the balance.');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div
+      className="os-modal-overlay"
+      style={modalOverlayStyle}
+      onMouseDown={() => {
+        if (!submitting) onOpenChange(false);
+      }}
+    >
+      <div className="os-modal" style={{ width: 520 }} onMouseDown={(e) => e.stopPropagation()}>
+        <div className="os-modal-head">
+          <div className="font-display" style={{ fontSize: 18 }}>
+            Allocate balance — {clientName}
+          </div>
+          <button
+            type="button"
+            className="btn"
+            onClick={() => onOpenChange(false)}
+            disabled={submitting}
+            aria-label="Close"
+          >
+            ×
+          </button>
+        </div>
+        <div style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0, lineHeight: 1.5 }}>
+            Apply the client&apos;s held advance/credit to one of their open invoices. Posts a
+            journal (Dr 2180 Client Advances → Cr 1200 Trade Receivables).
+          </p>
+          {withBalance.length === 0 ? (
+            <p className="os-field-hint">No balance available to allocate.</p>
+          ) : invoices.length === 0 ? (
+            <p className="os-field-hint">No open invoices to apply the balance to.</p>
+          ) : (
+            <>
+              <div className="os-field">
+                <span className="os-field-label">From balance</span>
+                <select
+                  value={advanceId}
+                  onChange={(e) => setAdvanceId(e.target.value)}
+                  disabled={submitting}
+                  style={osInputStyle}
+                >
+                  {withBalance.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {formatINR(a.balancePaise)} available
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="os-field">
+                <span className="os-field-label">Apply to invoice</span>
+                <select
+                  value={invoiceId}
+                  onChange={(e) => setInvoiceId(e.target.value)}
+                  disabled={submitting}
+                  style={osInputStyle}
+                >
+                  <option value="">Pick an invoice</option>
+                  {invoices.map((i) => (
+                    <option key={i.invoiceId} value={i.invoiceId}>
+                      {i.documentNumber} — due {formatINR(i.outstandingPaise)}
+                      {i.projectName ? ` (${i.projectName})` : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="os-field">
+                <span className="os-field-label">
+                  Amount{' '}
+                  {maxPaise > 0n ? (
+                    <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>
+                      (max {formatINR(maxPaise)})
+                    </span>
+                  ) : null}
+                </span>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  placeholder="₹"
+                  value={amountRupees}
+                  onChange={(e) => setAmountRupees(e.target.value)}
+                  disabled={submitting}
+                  style={osInputStyle}
+                />
+                {maxPaise > 0n ? (
+                  <button
+                    type="button"
+                    className="btn"
+                    style={{ alignSelf: 'flex-start', fontSize: 11, padding: '2px 8px', marginTop: 4 }}
+                    onClick={() => setAmountRupees(paiseToRupees(maxPaise))}
+                    disabled={submitting}
+                  >
+                    Use max
+                  </button>
+                ) : null}
+              </div>
+            </>
+          )}
+        </div>
+        <div
+          style={{
+            display: 'flex',
+            gap: 8,
+            justifyContent: 'flex-end',
+            padding: '12px 18px 14px',
+            borderTop: '1px solid var(--border, #e5e7eb)',
+          }}
+        >
+          <button
+            type="button"
+            className="btn"
+            onClick={() => onOpenChange(false)}
+            disabled={submitting}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="btn primary"
+            onClick={submit}
+            disabled={submitting || withBalance.length === 0 || invoices.length === 0}
+          >
+            {submitting ? 'Allocating…' : 'Allocate'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}

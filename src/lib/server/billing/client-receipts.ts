@@ -57,8 +57,15 @@ const RecordClientReceiptInputSchema = z.object({
   tdsSection: z.string().trim().max(20).nullish(),
   gstPaise: z.bigint().nonnegative().default(0n),
   notes: z.string().trim().max(2000).nullish(),
-  /** Explicit allocation to posted client_invoice txns. Empty → FIFO over open invoices. */
+  /** Explicit allocation to posted client_invoice txns. */
   allocations: z.array(ReceiptAllocationSchema).default([]),
+  /**
+   * When true (default) and no explicit `allocations` are given, the receipt
+   * is auto-applied FIFO to the client's oldest open invoices. Set false to
+   * record the receipt WITHOUT auto-allocating — the money sits as an
+   * unallocated credit on the client's account, to be applied later.
+   */
+  autoAllocate: z.boolean().default(true),
 });
 
 export type RecordClientReceiptInput = z.input<typeof RecordClientReceiptInputSchema>;
@@ -147,11 +154,15 @@ export async function recordClientReceipt(
     return draft.transactionId;
   });
 
-  // Step 3 — allocate against open client_invoice txns (explicit, else FIFO).
+  // Step 3 — allocate against open client_invoice txns. Explicit allocations
+  // win; otherwise auto-apply FIFO — unless autoAllocate is off, in which case
+  // the receipt stays unallocated (a credit on the client's account).
   const allocations =
     v.allocations.length > 0
       ? v.allocations.map((a) => ({ invoiceTxnId: a.invoiceTxnId, amountPaise: a.amountPaise }))
-      : await computeFifoAllocations(v.clientId, v.totalPaise);
+      : v.autoAllocate
+        ? await computeFifoAllocations(v.clientId, v.totalPaise)
+        : [];
 
   let allocatedPaise = 0n;
   if (allocations.length > 0) {
