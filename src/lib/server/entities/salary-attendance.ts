@@ -94,6 +94,26 @@ function sumAllowances(raw: unknown): bigint {
   return total;
 }
 
+/**
+ * The monthly amount to prorate for a salary structure: the sum of its pay
+ * components (basic + HRA + special + other allowances) when they're filled in,
+ * otherwise the CTC. Many structures are captured as a lump CTC with zero
+ * components — treating that as ₹0 gross would prorate to ₹0 and (via the
+ * caller's "no data → show full CTC" fallback) end up paying the *undeducted*
+ * amount, which is exactly the bug this avoids.
+ */
+function monthlyBaseForStructure(s: {
+  basicPaise: bigint;
+  hraPaise: bigint;
+  specialAllowancePaise: bigint;
+  otherAllowances: unknown;
+  ctcMonthlyPaise: bigint;
+}): bigint {
+  const componentGross =
+    s.basicPaise + s.hraPaise + s.specialAllowancePaise + sumAllowances(s.otherAllowances);
+  return componentGross > 0n ? componentGross : s.ctcMonthlyPaise;
+}
+
 export type EmployeeSalaryAttendancePreview = {
   employeeId: string;
   month: string;
@@ -155,6 +175,7 @@ export async function previewSalaryForEmployee(input: {
       hraPaise: salaryStructures.hraPaise,
       specialAllowancePaise: salaryStructures.specialAllowancePaise,
       otherAllowances: salaryStructures.otherAllowances,
+      ctcMonthlyPaise: salaryStructures.ctcMonthlyPaise,
     })
     .from(salaryStructures)
     .where(
@@ -169,12 +190,7 @@ export async function previewSalaryForEmployee(input: {
   // Last row = latest-starting / latest-created, matching the company-wide pick.
   const picked = structures.at(-1);
   const hasStructure = picked !== undefined;
-  const monthlyGrossPaise = picked
-    ? picked.basicPaise +
-      picked.hraPaise +
-      picked.specialAllowancePaise +
-      sumAllowances(picked.otherAllowances)
-    : 0n;
+  const monthlyGrossPaise = picked ? monthlyBaseForStructure(picked) : 0n;
 
   // 3) Absent (LOP) days — only an 'absent' on an actual working day docks pay
   //    (Sundays and company holidays aren't working days, so they never count).
@@ -265,6 +281,7 @@ export async function previewSalaryFromAttendance(month: string): Promise<Salary
       hraPaise: salaryStructures.hraPaise,
       specialAllowancePaise: salaryStructures.specialAllowancePaise,
       otherAllowances: salaryStructures.otherAllowances,
+      ctcMonthlyPaise: salaryStructures.ctcMonthlyPaise,
     })
     .from(salaryStructures)
     .where(
@@ -282,10 +299,7 @@ export async function previewSalaryFromAttendance(month: string): Promise<Salary
     .orderBy(asc(salaryStructures.effectiveFrom), asc(salaryStructures.createdAt));
   const grossByEmployee = new Map<string, bigint>();
   for (const s of structures) {
-    grossByEmployee.set(
-      s.employeeId,
-      s.basicPaise + s.hraPaise + s.specialAllowancePaise + sumAllowances(s.otherAllowances),
-    );
+    grossByEmployee.set(s.employeeId, monthlyBaseForStructure(s));
   }
 
   // 4) Absent (LOP) days per employee in the month. Only an 'absent' marked on
