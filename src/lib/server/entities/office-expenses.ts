@@ -648,6 +648,29 @@ export async function deleteOfficeExpense(args: { id: string }): Promise<void> {
     reversed = true;
   }
 
+  // Remove the attached invoice (if any) so a hard-deleted expense doesn't
+  // orphan its document row + storage object. Capture the storage ref before
+  // deleting the row; sweep the object best-effort after.
+  let removedDocument = false;
+  if (existing.documentId) {
+    const [doc] = await db
+      .select({ bucket: documents.bucket, storagePath: documents.storagePath })
+      .from(documents)
+      .where(eq(documents.id, existing.documentId))
+      .limit(1);
+    // Null the FK first (ON DELETE SET NULL would handle it, but the expense
+    // row is about to go anyway), then delete the documents row.
+    await db.delete(documents).where(eq(documents.id, existing.documentId));
+    removedDocument = true;
+    if (doc) {
+      try {
+        await createAdminClient().storage.from(doc.bucket).remove([doc.storagePath]);
+      } catch {
+        // best-effort — a failed storage sweep doesn't block the delete
+      }
+    }
+  }
+
   // HARD delete — the row is removed from the database entirely; the audit
   // log below is the only remaining record of what was deleted.
   await db.delete(officeExpenses).where(eq(officeExpenses.id, parsed.id));
@@ -660,6 +683,7 @@ export async function deleteOfficeExpense(args: { id: string }): Promise<void> {
     changes: {
       hard_delete: true,
       reversed,
+      removedDocument,
       category: existing.category,
       description: existing.description,
       expenseDate: existing.expenseDate,
