@@ -281,7 +281,9 @@ export function DocumentsSection({
                     />
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2 text-sm font-medium">
-                        <span className="truncate">{doc.title ?? doc.originalFilename}</span>
+                        <span className="min-w-0 break-words [overflow-wrap:anywhere]">
+                          {doc.title ?? doc.originalFilename}
+                        </span>
                         {doc.version > 1 ? (
                           <StatusBadge tone="info" label={`v${doc.version}`} dot={false} />
                         ) : null}
@@ -1015,7 +1017,7 @@ function ViewDialog({ doc, onClose }: { doc: EntityDocumentRow | null; onClose: 
     <Dialog open={doc !== null} onOpenChange={(v) => !v && onClose()}>
       <DialogContent className="h-[80vh] max-w-4xl">
         <DialogHeader>
-          <DialogTitle className="truncate">
+          <DialogTitle className="break-words [overflow-wrap:anywhere]">
             {doc?.title ?? doc?.originalFilename ?? 'Document'}
           </DialogTitle>
           <DialogDescription className="text-xs">

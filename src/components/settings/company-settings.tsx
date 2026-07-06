@@ -515,12 +515,16 @@ function DocumentsCard({
                   />
                   <div className="min-w-0 space-y-1">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="truncate font-medium">{doc.title}</span>
+                      <span className="font-medium break-words [overflow-wrap:anywhere]">
+                        {doc.title}
+                      </span>
                       <StatusBadge tone="neutral" label={CATEGORY_LABELS[doc.category]} />
                     </div>
                     <div className="text-muted-foreground flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs">
-                      <span className="truncate">{doc.originalFilename}</span>
-                      <span>{formatBytes(doc.sizeBytes)}</span>
+                      <span className="break-words [overflow-wrap:anywhere]">
+                        {doc.originalFilename}
+                      </span>
+                      <span className="whitespace-nowrap">{formatBytes(doc.sizeBytes)}</span>
                     </div>
                     {doc.referenceNumber ? (
                       <div className="flex items-center gap-1 text-sm">

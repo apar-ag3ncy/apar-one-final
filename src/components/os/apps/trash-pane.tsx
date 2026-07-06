@@ -268,9 +268,25 @@ export function TrashPane() {
                 borderBottom: '1px solid var(--border)',
               }}
             >
-              <div style={{ minWidth: 0, flex: 1, fontSize: 12.5 }}>{entry.summary}</div>
               <div
-                style={{ fontSize: 11, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}
+                style={{
+                  minWidth: 0,
+                  flex: 1,
+                  fontSize: 12.5,
+                  overflowWrap: 'anywhere',
+                  wordBreak: 'break-word',
+                }}
+              >
+                {entry.summary}
+              </div>
+              <div
+                style={{
+                  fontSize: 11,
+                  color: 'var(--text-muted)',
+                  textAlign: 'right',
+                  overflowWrap: 'anywhere',
+                  wordBreak: 'break-word',
+                }}
               >
                 {entry.actorName ?? 'System'} · {formatWhen(entry.at)}
               </div>

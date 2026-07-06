@@ -155,4 +155,36 @@
   .dark input[type='time']::-webkit-calendar-picker-indicator {
     filter: invert(1) brightness(1.7);
   }
+
+  /*
+   * Text-wrapping safety net (dashboard-wide). No on-screen text should be
+   * clipped or overflow its container: long unbroken tokens (emails, URLs,
+   * GST / invoice numbers, account codes, file names) must break so they fit.
+   *
+   * Scope is deliberately narrow — table cells and explicit content wrappers —
+   * so we never touch chrome that intentionally stays on one line (buttons,
+   * menus, tabs, badges, the sidebar). Component-level `whitespace-nowrap`
+   * (date / amount columns, status pills) still wins via specificity/order,
+   * so this only affects cells that would otherwise overflow.
+   */
+  table td,
+  table th,
+  [data-slot='table-cell'],
+  [data-slot='table-head'] {
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  /*
+   * Numeric / currency cells stay on one line — a rupee amount like
+   * ₹1,23,456.00 is one unbroken token and must never break mid-number.
+   * `tabular-nums` marks amount columns specifically; long `font-mono`
+   * *codes* (invoice / GST / account numbers) deliberately keep wrapping.
+   */
+  [data-slot='table-cell'].tabular-nums,
+  table td.tabular-nums {
+    white-space: nowrap;
+    overflow-wrap: normal;
+    word-break: normal;
+  }
 }

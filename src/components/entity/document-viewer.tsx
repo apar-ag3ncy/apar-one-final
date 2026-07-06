@@ -83,7 +83,9 @@ export function DocumentViewer({
       <div className="flex items-center justify-between gap-2 border-b px-3 py-2">
         <div className="flex min-w-0 items-center gap-2">
           <FileTextIcon className="size-4 shrink-0 opacity-70" aria-hidden />
-          <span className="truncate text-sm font-medium">{name}</span>
+          <span className="min-w-0 text-sm font-medium break-words [overflow-wrap:anywhere]">
+            {name}
+          </span>
         </div>
         {onDownload ? (
           <Button variant="ghost" size="sm" onClick={onDownload} aria-label="Download">

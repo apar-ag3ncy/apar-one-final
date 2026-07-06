@@ -305,14 +305,16 @@ export function ClientsApp({
                 onDoubleClick={() => openClient(c)}
               >
                 <td>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
                     <div
                       className="avatar"
-                      style={{ width: 28, height: 28, fontSize: 11, background: c.tone }}
+                      style={{ width: 28, height: 28, fontSize: 11, background: c.tone, flexShrink: 0 }}
                     >
                       {c.logo}
                     </div>
-                    <span style={{ fontWeight: 600 }}>{c.name}</span>
+                    <span style={{ fontWeight: 600, minWidth: 0, overflowWrap: 'anywhere', wordBreak: 'break-word' }}>
+                      {c.name}
+                    </span>
                   </div>
                 </td>
                 <td style={{ color: 'var(--text-muted)' }}>{c.industry}</td>
@@ -771,14 +773,16 @@ export function VendorsApp({
                 onDoubleClick={() => openVendor(v)}
               >
                 <td>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
                     <div
                       className="avatar"
-                      style={{ width: 28, height: 28, fontSize: 10, background: '#5B6677' }}
+                      style={{ width: 28, height: 28, fontSize: 10, background: '#5B6677', flexShrink: 0 }}
                     >
                       {initials(v.name)}
                     </div>
-                    <span style={{ fontWeight: 600 }}>{v.name}</span>
+                    <span style={{ fontWeight: 600, minWidth: 0, overflowWrap: 'anywhere', wordBreak: 'break-word' }}>
+                      {v.name}
+                    </span>
                   </div>
                 </td>
                 <td>
@@ -1952,18 +1956,16 @@ export function EmployeesApp({
                 title={e.fullName}
                 style={{
                   // Full name is the dominant element — larger/bolder, wrapping
-                  // up to two lines instead of hard-truncating (backlog: "full
-                  // names to be visible"); title surfaces the whole name on hover.
+                  // to as many lines as needed instead of hard-truncating
+                  // (backlog: "full names to be visible"); title surfaces the
+                  // whole name on hover.
                   flex: 1,
                   minWidth: 0,
                   fontSize: 14.5,
                   fontWeight: 700,
                   lineHeight: 1.25,
-                  overflow: 'hidden',
-                  display: '-webkit-box',
-                  WebkitLineClamp: 2,
-                  WebkitBoxOrient: 'vertical',
                   overflowWrap: 'anywhere',
+                  wordBreak: 'break-word',
                 }}
               >
                 {e.fullName}
@@ -2001,9 +2003,8 @@ export function EmployeesApp({
               {e.workEmail ? (
                 <span
                   style={{
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
+                    overflowWrap: 'anywhere',
+                    wordBreak: 'break-word',
                   }}
                 >
                   {e.workEmail}
