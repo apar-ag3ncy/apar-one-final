@@ -559,6 +559,9 @@ const UpdateClientSchema = z.object({
   gstin: z.string().trim().toUpperCase().nullable().optional(),
   pan: z.string().trim().toUpperCase().nullable().optional(),
   accountManagerId: z.string().uuid().nullable().optional(),
+  // Brand logo — a documents row uploaded via the standard entity-documents
+  // pipeline (kind 'photo'). Null removes the logo (falls back to initials).
+  logoDocumentId: z.string().uuid().nullable().optional(),
   notes: z.string().trim().max(2000).nullable().optional(),
   // Registered address (a child `entity_addresses` row of kind='registered').
   // `undefined` leaves it untouched; a non-empty string upserts the primary
@@ -638,6 +641,7 @@ export async function updateClient(input: UpdateClientInput): Promise<UpdateClie
   if (v.gstin !== undefined) patch.gstin = v.gstin;
   if (v.pan !== undefined) patch.pan = v.pan;
   if (v.accountManagerId !== undefined) patch.accountManagerId = v.accountManagerId;
+  if (v.logoDocumentId !== undefined) patch.logoDocumentId = v.logoDocumentId;
   if (v.notes !== undefined) patch.notes = v.notes;
 
   try {

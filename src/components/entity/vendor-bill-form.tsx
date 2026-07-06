@@ -530,11 +530,6 @@ export function VendorBillForm({
             overflowY: 'auto',
           }}
         >
-          <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0, lineHeight: 1.5 }}>
-            §0.6: every vendor bill carries an explicit attribution. Apar never multiplies a tax
-            rate by a base — enter the amounts as printed on the vendor&apos;s invoice.
-          </p>
-
           {/* Attribution */}
           <div className="os-field">
             <span className="os-field-label">This bill is for</span>
@@ -549,8 +544,7 @@ export function VendorBillForm({
                   margin: 0,
                 }}
               >
-                On behalf of <strong style={{ color: 'var(--text)' }}>{clientNameProp}</strong> —
-                billed back via the AR ledger (5100 Vendor Costs).
+                On behalf of <strong style={{ color: 'var(--text)' }}>{clientNameProp}</strong>
               </p>
             ) : (
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8 }}>
@@ -596,15 +590,6 @@ export function VendorBillForm({
                             : a === 'asset'
                               ? 'Asset'
                               : 'Other'}
-                      </span>
-                      <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                        {a === 'client'
-                          ? '5100 + bill-back via AR'
-                          : a === 'opex'
-                            ? '6xxx office cost'
-                            : a === 'asset'
-                              ? '1510 capital'
-                              : 'Anything else — describe it'}
                       </span>
                     </label>
                   );
@@ -696,23 +681,6 @@ export function VendorBillForm({
                   ))}
                 </select>
               </div>
-            ) : attribution === 'asset' ? (
-              <div className="os-field">
-                <span className="os-field-label">Asset class</span>
-                <p
-                  style={{
-                    border: '1px solid var(--border)',
-                    borderRadius: 7,
-                    padding: '8px 10px',
-                    fontSize: 11.5,
-                    color: 'var(--text-muted)',
-                    margin: 0,
-                  }}
-                >
-                  Posts to 1510 Capital Assets. Capitalization threshold ₹5,000 is the caller&apos;s
-                  responsibility.
-                </p>
-              </div>
             ) : attribution === 'other' ? (
               <div className="os-field">
                 <span className="os-field-label">What is this for?</span>
@@ -724,23 +692,8 @@ export function VendorBillForm({
                   disabled={submitting}
                   style={osInputStyle}
                 />
-                <p className="os-field-hint">Recorded under 6900 Other operating expense.</p>
               </div>
-            ) : (
-              <div className="os-field">
-                <span className="os-field-label">&nbsp;</span>
-                <p
-                  style={{
-                    fontSize: 11.5,
-                    color: 'var(--text-muted)',
-                    margin: 0,
-                    paddingTop: 8,
-                  }}
-                >
-                  Choose an attribution above to continue.
-                </p>
-              </div>
-            )}
+            ) : null}
           </div>
 
           {/* Project (expenses on behalf) — only when billing on behalf of a
@@ -821,11 +774,6 @@ export function VendorBillForm({
                 {uploading ? 'Uploading…' : 'Upload bill'}
               </button>
             </div>
-            <p className="os-field-hint">
-              {attribution === 'client'
-                ? 'Showing documents from the project, client and vendor — or upload the bill right here.'
-                : 'Showing the vendor’s documents — or upload the bill right here; no need to add it elsewhere first.'}
-            </p>
           </div>
 
           {/* Invoice number + date */}

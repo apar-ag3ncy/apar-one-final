@@ -35,6 +35,7 @@ import {
   listEmployees,
   listProjectsByClient,
   listUsers,
+  resolveDocumentUrl,
 } from '@/lib/server-stub/entity-actions';
 import type { Client } from '@/components/clients/types';
 import { osActions } from '@/lib/os/store';
@@ -105,6 +106,8 @@ export function ClientWindow({ clientId, onClose }: ClientWindowProps) {
   const [state, setState] = useState<State>({ kind: 'loading' });
   const [tab, setTab] = useState<ClientTab>('overview');
   const [reloadKey, setReloadKey] = useState(0);
+  // Signed URL for the client's logo (short-lived; refreshed on each load).
+  const [logoUrl, setLogoUrl] = useState<string | null>(null);
   // OS edit grant for the clients app (provided by os-root's EntityMutationGate).
   const { canEdit } = useEntityMutation();
 
@@ -137,6 +140,15 @@ export function ClientWindow({ clientId, onClose }: ClientWindowProps) {
           employees: employees.map((e) => ({ id: e.id, name: e.fullName })),
           users: users.map((u) => ({ id: u.id, name: u.fullName })),
         });
+        if (client.logoDocumentId) {
+          resolveDocumentUrl(client.logoDocumentId)
+            .then((r) => {
+              if (!cancelled) setLogoUrl(r.url);
+            })
+            .catch(() => {});
+        } else {
+          setLogoUrl(null);
+        }
       })
       .catch((e: unknown) => {
         if (cancelled) return;
@@ -177,6 +189,7 @@ export function ClientWindow({ clientId, onClose }: ClientWindowProps) {
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
       <Header
         client={client}
+        logoUrl={logoUrl}
         actions={
           canEdit ? (
             <ClientEditDialog client={client} onSaved={() => setReloadKey((k) => k + 1)} />
@@ -473,7 +486,15 @@ function formatINRPaise(paise: bigint): string {
 /* Header (OS-styled, mirrors legacy ClientDetail)                            */
 /* -------------------------------------------------------------------------- */
 
-function Header({ client, actions }: { client: Client; actions?: ReactNode }) {
+function Header({
+  client,
+  logoUrl,
+  actions,
+}: {
+  client: Client;
+  logoUrl?: string | null;
+  actions?: ReactNode;
+}) {
   const tone = STATUS_TONE[client.status] ?? STATUS_TONE['inactive']!;
   const statusLabel = client.status.charAt(0).toUpperCase() + client.status.slice(1);
   return (
@@ -486,18 +507,34 @@ function Header({ client, actions }: { client: Client; actions?: ReactNode }) {
         alignItems: 'flex-start',
       }}
     >
-      <div
-        className="avatar"
-        style={{
-          width: 56,
-          height: 56,
-          fontSize: 18,
-          background: toneForName(client.name),
-          borderRadius: 12,
-        }}
-      >
-        {initials(client.name)}
-      </div>
+      {logoUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={logoUrl}
+          alt={`${client.name} logo`}
+          style={{
+            width: 56,
+            height: 56,
+            borderRadius: 12,
+            objectFit: 'cover',
+            border: '1px solid var(--border)',
+            flexShrink: 0,
+          }}
+        />
+      ) : (
+        <div
+          className="avatar"
+          style={{
+            width: 56,
+            height: 56,
+            fontSize: 18,
+            background: toneForName(client.name),
+            borderRadius: 12,
+          }}
+        >
+          {initials(client.name)}
+        </div>
+      )}
       <div style={{ flex: 1, minWidth: 0 }}>
         <div className="font-display" style={{ fontSize: 26, lineHeight: 1.1 }}>
           {client.name}

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
@@ -27,6 +27,8 @@ import {
 import { Textarea } from '@/components/ui/textarea';
 import { listAddresses } from '@/lib/server/entities/addresses';
 import { updateClient, type UpdateClientInput } from '@/lib/server/entities/clients';
+import { uploadDocument } from '@/lib/server/entities/entity-documents';
+import { resolveDocumentUrl } from '@/lib/server-stub/entity-actions';
 import type { Client, ClientStatus } from '@/components/clients/types';
 
 // UI status → DB client_status. 'archived' is a lifecycle state (Settings),
@@ -83,10 +85,36 @@ export function ClientEditDialog({ client, onSaved }: { client: Client; onSaved:
   // row), so it's loaded lazily when the dialog opens. We keep the loaded value
   // to diff against on save, so an in-flight load can never wipe the address.
   const [initialAddress, setInitialAddress] = useState('');
+  // Logo: current one resolves to a short-lived signed URL for preview; a
+  // newly picked file previews via an object URL and uploads on save.
+  const [logoFile, setLogoFile] = useState<File | null>(null);
+  const [logoPreview, setLogoPreview] = useState<string | null>(null);
+  const [currentLogoUrl, setCurrentLogoUrl] = useState<string | null>(null);
+  const [removeLogo, setRemoveLogo] = useState(false);
+  const logoInputRef = useRef<HTMLInputElement | null>(null);
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
     defaultValues: toDefaults(client),
   });
+
+  useEffect(() => {
+    if (!open) return;
+    let active = true;
+    setLogoFile(null);
+    setLogoPreview(null);
+    setRemoveLogo(false);
+    setCurrentLogoUrl(null);
+    if (client.logoDocumentId) {
+      resolveDocumentUrl(client.logoDocumentId)
+        .then((r) => {
+          if (active) setCurrentLogoUrl(r.url);
+        })
+        .catch(() => {});
+    }
+    return () => {
+      active = false;
+    };
+  }, [open, client]);
 
   useEffect(() => {
     if (!open) return;
@@ -140,6 +168,22 @@ export function ClientEditDialog({ client, onSaved }: { client: Client; onSaved:
       if ((values.notes ?? '') !== (client.notes ?? ''))
         patch.notes = values.notes ? values.notes : null;
 
+      // Logo: upload the newly picked image first (standard entity-documents
+      // pipeline, kind 'photo'), then point the client row at it. An explicit
+      // "remove" clears the pointer — the avatar falls back to initials.
+      if (logoFile) {
+        const fd = new FormData();
+        fd.append('file', logoFile);
+        fd.append('entityType', 'client');
+        fd.append('entityId', client.id);
+        fd.append('kind', 'photo');
+        fd.append('title', 'Client logo');
+        const { documentId } = await uploadDocument(fd);
+        patch.logoDocumentId = documentId;
+      } else if (removeLogo && client.logoDocumentId) {
+        patch.logoDocumentId = null;
+      }
+
       if (Object.keys(patch).length === 1) {
         setOpen(false);
         return;
@@ -182,6 +226,78 @@ export function ClientEditDialog({ client, onSaved }: { client: Client; onSaved:
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={submit} className="grid gap-3">
+          <div className="grid gap-1.5">
+            <Label>Logo</Label>
+            <div className="flex items-center gap-3">
+              {logoPreview || (!removeLogo && currentLogoUrl) ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={logoPreview ?? currentLogoUrl ?? undefined}
+                  alt={`${client.name} logo`}
+                  className="size-12 rounded-md border object-cover"
+                />
+              ) : (
+                <div className="text-muted-foreground flex size-12 items-center justify-center rounded-md border text-xs">
+                  {client.name
+                    .trim()
+                    .split(/\s+/)
+                    .slice(0, 2)
+                    .map((p) => p[0]?.toUpperCase() ?? '')
+                    .join('')}
+                </div>
+              )}
+              <input
+                ref={logoInputRef}
+                type="file"
+                accept="image/png,image/jpeg,image/webp,image/svg+xml"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0] ?? null;
+                  if (!f) return;
+                  if (f.size > 5 * 1024 * 1024) {
+                    toast.error('Logo must be under 5 MB.');
+                    return;
+                  }
+                  setLogoFile(f);
+                  setRemoveLogo(false);
+                  setLogoPreview((prev) => {
+                    if (prev) URL.revokeObjectURL(prev);
+                    return URL.createObjectURL(f);
+                  });
+                }}
+              />
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => logoInputRef.current?.click()}
+                disabled={submitting}
+              >
+                {client.logoDocumentId || logoFile ? 'Change logo' : 'Upload logo'}
+              </Button>
+              {(client.logoDocumentId && !removeLogo) || logoFile ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  disabled={submitting}
+                  onClick={() => {
+                    setLogoFile(null);
+                    setLogoPreview((prev) => {
+                      if (prev) URL.revokeObjectURL(prev);
+                      return null;
+                    });
+                    setRemoveLogo(true);
+                  }}
+                >
+                  Remove
+                </Button>
+              ) : null}
+            </div>
+            <p className="text-muted-foreground text-xs">
+              Shown instead of the initials everywhere this client appears.
+            </p>
+          </div>
           <div className="grid gap-1.5">
             <Label htmlFor="client-name">Client name</Label>
             <Input

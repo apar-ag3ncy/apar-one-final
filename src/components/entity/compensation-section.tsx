@@ -26,6 +26,10 @@ import {
   type SalaryStructureRow,
 } from '@/lib/server/entities/payroll';
 import { previewSalaryForEmployee } from '@/lib/server/entities/salary-attendance';
+import {
+  listAgencyBankAccounts,
+  type AgencyBankAccountRow,
+} from '@/lib/server/billing/agency-banks';
 import { formatINR, paiseToRupees, rupeesToPaise, type Paise } from '@/lib/money';
 import { useCurrentUser } from '@/lib/client/use-current-user';
 import { useEntityMutation } from '@/components/os/auth/entity-mutation-gate';
@@ -401,11 +405,44 @@ export function CompensationSection({ employeeId, employeeName }: CompensationSe
                     <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>
                       {formatDay(p.paidOn)}
                     </span>
-                    <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                      {p.notes ?? <span style={{ color: 'var(--text-muted)' }}>—</span>}
+                    <span style={{ minWidth: 0 }}>
+                      <span
+                        style={{
+                          display: 'block',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {p.notes ?? <span style={{ color: 'var(--text-muted)' }}>—</span>}
+                      </span>
+                      <span style={{ display: 'block', fontSize: 11, color: 'var(--text-muted)' }}>
+                        {p.paymentMethod === 'bank' ? (p.bankLabel ?? 'Bank transfer') : 'Cash'}
+                      </span>
                     </span>
-                    <span className="font-display" style={{ fontVariantNumeric: 'tabular-nums' }}>
-                      {formatINR(p.amountPaise)}
+                    <span style={{ textAlign: 'right' }}>
+                      <span
+                        className="font-display"
+                        style={{ display: 'block', fontVariantNumeric: 'tabular-nums' }}
+                      >
+                        {formatINR(p.amountPaise)}
+                      </span>
+                      {p.expectedAmountPaise !== null ? (
+                        <span
+                          style={{
+                            display: 'block',
+                            fontSize: 11,
+                            fontVariantNumeric: 'tabular-nums',
+                            color:
+                              p.expectedAmountPaise === p.amountPaise
+                                ? 'var(--text-muted)'
+                                : 'var(--apar-red, #c34a2c)',
+                          }}
+                          title="Attendance-prorated salary due when this payment was recorded"
+                        >
+                          due {formatINR(p.expectedAmountPaise)}
+                        </span>
+                      ) : null}
                     </span>
                     {canManageSalary ? (
                       <button
@@ -497,18 +534,41 @@ function SalaryPaymentForm({
   const [touched, setTouched] = useState(false);
   const [autoLoading, setAutoLoading] = useState(true);
   const [autoHint, setAutoHint] = useState<string | null>(null);
+  // The attendance-prorated salary the employee is DUE for the prior month —
+  // snapshotted onto the payment row alongside the amount actually paid.
+  const [expectedPaise, setExpectedPaise] = useState<Paise | null>(null);
+  // How the salary is being paid out: bank transfer (pick the agency bank) or cash.
+  const [mode, setMode] = useState<'bank' | 'cash'>('bank');
+  const [bankAccountId, setBankAccountId] = useState('');
+  const [ourBanks, setOurBanks] = useState<readonly AgencyBankAccountRow[]>([]);
 
   useEffect(() => {
     let cancelled = false;
-    setAutoLoading(true);
+    listAgencyBankAccounts()
+      .then((rows) => {
+        if (cancelled) return;
+        setOurBanks(rows);
+        // Preselect the first active bank so the common case is one click.
+        const firstActive = rows.find((b) => b.isActive) ?? rows[0];
+        if (firstActive) setBankAccountId((cur) => cur || firstActive.id);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
     previewSalaryForEmployee({ employeeId, month: priorMonth })
       .then((res) => {
         if (cancelled) return;
         if (res.hasStructure && res.proratedGrossPaise > 0n) {
           // Only seed the field if the operator hasn't edited it yet.
           setAmount((cur) => (touched ? cur : paiseToRupees(res.proratedGrossPaise)));
+          setExpectedPaise(res.proratedGrossPaise);
           setAutoHint(
-            `Auto-filled from ${priorMonthLabel} attendance — ${res.payableDays} of ${res.workingDays} days payable. Edit if the actual amount differs.`,
+            `Salary due for ${priorMonthLabel} — ${res.payableDays} of ${res.workingDays} days payable. Edit the amount if what was actually paid differs; both are stored.`,
           );
         } else {
           setAutoHint(
@@ -544,12 +604,19 @@ function SalaryPaymentForm({
       toast.error('Enter the amount paid.');
       return;
     }
+    if (mode === 'bank' && !bankAccountId) {
+      toast.error('Pick the bank account the salary was paid from.');
+      return;
+    }
     setBusy(true);
     try {
       await recordSalaryPayment({
         employeeId,
         paidOn,
         amountPaise: rupeesToPaise(amount),
+        expectedAmountPaise: expectedPaise,
+        mode,
+        bankAccountId: mode === 'bank' ? bankAccountId : null,
         notes: notes.trim() || null,
       });
       toast.success('Salary payment recorded.');
@@ -589,7 +656,17 @@ function SalaryPaymentForm({
             style={inputStyle}
           />
         </Field>
-        <Field label="Amount (₹)">
+        <Field label={`Salary due (${priorMonthLabel})`}>
+          <input
+            type="text"
+            value={expectedPaise !== null ? formatINR(expectedPaise) : autoLoading ? '…' : '—'}
+            readOnly
+            disabled
+            title="Attendance-prorated salary the employee is due — stored with the payment."
+            style={{ ...inputStyle, color: 'var(--text-muted)' }}
+          />
+        </Field>
+        <Field label="Amount paid (₹)">
           <input
             type="text"
             inputMode="decimal"
@@ -603,6 +680,54 @@ function SalaryPaymentForm({
             style={inputStyle}
           />
         </Field>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <span
+          style={{
+            fontSize: 10,
+            color: 'var(--text-muted)',
+            textTransform: 'uppercase',
+            letterSpacing: '0.05em',
+            fontWeight: 600,
+          }}
+        >
+          Paid via
+        </span>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          {(['bank', 'cash'] as const).map((m) => (
+            <button
+              key={m}
+              type="button"
+              onClick={() => setMode(m)}
+              disabled={busy}
+              className="btn"
+              style={{
+                border: `1px solid ${mode === m ? 'var(--apar-red, #E63A1F)' : 'var(--border)'}`,
+                background: mode === m ? 'rgba(230,58,31,0.08)' : 'transparent',
+              }}
+            >
+              {m === 'bank' ? 'Bank transfer' : 'Cash'}
+            </button>
+          ))}
+          {mode === 'bank' ? (
+            <select
+              value={bankAccountId}
+              onChange={(e) => setBankAccountId(e.target.value)}
+              disabled={busy}
+              style={{ ...inputStyle, flex: '1 1 200px' }}
+            >
+              <option value="">
+                {ourBanks.length === 0 ? 'No bank accounts — add one in Settings' : 'Pick a bank'}
+              </option>
+              {ourBanks.map((b) => (
+                <option key={b.id} value={b.id}>
+                  {b.label} ••{b.accountLast4}
+                  {b.isActive ? '' : ' (inactive)'}
+                </option>
+              ))}
+            </select>
+          ) : null}
+        </div>
       </div>
       <Field label="Note (optional)">
         <input

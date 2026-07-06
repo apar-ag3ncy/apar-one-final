@@ -42,7 +42,13 @@ export function LedgerWindow(_props: LedgerWindowProps = {}) {
     Promise.all([listClients(), listVendors()])
       .then(([cs, vs]) => {
         if (cancelled) return;
-        setClients(cs.map((c) => ({ id: c.id, name: c.name, industry: c.industry })));
+        // Archived entities keep their ledgers queryable from old references,
+        // but they must not be listed in the hub.
+        setClients(
+          cs
+            .filter((c) => c.status !== 'archived')
+            .map((c) => ({ id: c.id, name: c.name, industry: c.industry })),
+        );
         setVendors(vs.map((v) => ({ id: v.id, name: v.name, category: v.category })));
       })
       .catch((e: unknown) => {
@@ -113,23 +119,20 @@ export function LedgerWindow(_props: LedgerWindowProps = {}) {
           }}
         >
           {/* Office books */}
-          <Section title="Office" subtitle="Our own books">
+          <Section title="Office">
             <Row
               icon={<BanknoteIcon style={iconStyle} aria-hidden />}
               title="Cash + Bank"
-              subtitle="Accounts 1110 + 1120 · running cash position"
               onClick={() => openLedger('office', 'Office ledger')}
             />
             <Row
               icon={<BoltIcon style={iconStyle} aria-hidden />}
               title="Office utilities"
-              subtitle="Account 6200 · rent + electricity + internet + water"
               onClick={() => openLedger('office-utilities', 'Office utilities ledger')}
             />
             <Row
               icon={<ReceiptIcon style={iconStyle} aria-hidden />}
               title="TDS book"
-              subtitle="Accounts 1260 + 2130 · TDS withheld by clients / from vendors"
               onClick={() => openLedger('tds', 'TDS book')}
             />
           </Section>
@@ -141,7 +144,7 @@ export function LedgerWindow(_props: LedgerWindowProps = {}) {
               clients
                 ? `${filteredClients.length}${q ? ` of ${clients.length}` : ''} client${
                     filteredClients.length === 1 ? '' : 's'
-                  } · positive balance = client owes us`
+                  }`
                 : 'Loading…'
             }
           >
@@ -173,7 +176,7 @@ export function LedgerWindow(_props: LedgerWindowProps = {}) {
               vendors
                 ? `${filteredVendors.length}${q ? ` of ${vendors.length}` : ''} vendor${
                     filteredVendors.length === 1 ? '' : 's'
-                  } · positive balance = we owe the vendor`
+                  }`
                 : 'Loading…'
             }
           >
@@ -216,14 +219,16 @@ function Section({
   children,
 }: {
   title: string;
-  subtitle: string;
+  subtitle?: string;
   children: React.ReactNode;
 }) {
   return (
     <section style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
       <header style={{ display: 'flex', alignItems: 'baseline', gap: 12 }}>
         <h3 style={{ fontSize: 13, fontWeight: 600, margin: 0 }}>{title}</h3>
-        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{subtitle}</span>
+        {subtitle ? (
+          <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{subtitle}</span>
+        ) : null}
       </header>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>{children}</div>
     </section>
@@ -238,7 +243,7 @@ function Row({
 }: {
   icon: React.ReactNode;
   title: string;
-  subtitle: string;
+  subtitle?: string;
   onClick: () => void;
 }) {
   return (
@@ -263,7 +268,9 @@ function Row({
       {icon}
       <div style={{ minWidth: 0, flex: 1 }}>
         <div style={{ fontSize: 13, fontWeight: 500 }}>{title}</div>
-        <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{subtitle}</div>
+        {subtitle ? (
+          <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{subtitle}</div>
+        ) : null}
       </div>
       <span
         style={{

@@ -34,7 +34,6 @@ const VALID_APPS: ReadonlySet<AppId> = new Set<AppId>([
   'vendors',
   'projects',
   'employees',
-  'inbox',
   'ledger',
   'reports',
   'settings',

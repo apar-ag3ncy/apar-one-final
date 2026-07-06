@@ -96,6 +96,7 @@ export async function listClients(): Promise<readonly Client[]> {
       gstin: clients.gstin,
       pan: clients.pan,
       notes: clients.notes,
+      logoDocumentId: clients.logoDocumentId,
       createdAt: clients.createdAt,
       accountManagerId: clients.accountManagerId,
       accountManagerName: sql<
@@ -126,6 +127,7 @@ export async function listClients(): Promise<readonly Client[]> {
       pocs: [],
       projectsCount: r.projectsCount,
       documentsCount: r.documentsCount,
+      logoDocumentId: r.logoDocumentId,
       notes: r.notes,
     }),
   );
@@ -142,6 +144,7 @@ export async function getClient(id: string): Promise<Client | null> {
       gstin: clients.gstin,
       pan: clients.pan,
       notes: clients.notes,
+      logoDocumentId: clients.logoDocumentId,
       createdAt: clients.createdAt,
       accountManagerId: clients.accountManagerId,
       accountManagerName: sql<
@@ -197,6 +200,7 @@ export async function getClient(id: string): Promise<Client | null> {
     pocs,
     projectsCount: row.projectsCount,
     documentsCount: row.documentsCount,
+    logoDocumentId: row.logoDocumentId,
     notes: row.notes,
   };
 }
@@ -230,7 +234,17 @@ function mapVendorStatus(
   return 'active';
 }
 
-export async function listVendors(): Promise<readonly Vendor[]> {
+/**
+ * Active vendor directory. Archived vendors are excluded by default —
+ * they must not appear in the Vendors app, the Ledgers tiles, or any
+ * picker. Pass `includeArchived` only when resolving a historical
+ * reference (getVendor keeps archived vendors openable as "(ex-vendor)").
+ */
+export async function listVendors(opts?: {
+  includeArchived?: boolean;
+}): Promise<readonly Vendor[]> {
+  const conds = [isNull(vendors.deletedAt)];
+  if (!opts?.includeArchived) conds.push(eq(vendors.isArchived, false));
   const rows = await db
     .select({
       id: vendors.id,
@@ -244,7 +258,7 @@ export async function listVendors(): Promise<readonly Vendor[]> {
       documentsCount: sql<number>`(select count(*)::int from entity_documents where entity_type = 'vendor' and entity_id = ${vendors.id})`,
     })
     .from(vendors)
-    .where(isNull(vendors.deletedAt))
+    .where(and(...conds))
     .orderBy(desc(vendors.updatedAt));
 
   return rows.map(
@@ -270,7 +284,9 @@ export async function listVendors(): Promise<readonly Vendor[]> {
 }
 
 export async function getVendor(id: string): Promise<Vendor | null> {
-  const rows = await listVendors();
+  // Include archived: an archived vendor opened from an old transaction /
+  // bill reference still needs its detail window ("(ex-vendor)" rendering).
+  const rows = await listVendors({ includeArchived: true });
   return rows.find((v) => v.id === id) ?? null;
 }
 
@@ -916,12 +932,16 @@ export async function searchEntities(query: string): Promise<
     db
       .select({ id: clients.id, name: clients.name, industry: clients.industry })
       .from(clients)
-      .where(and(isNull(clients.deletedAt), ilike(clients.name, like)))
+      .where(
+        and(isNull(clients.deletedAt), eq(clients.isArchived, false), ilike(clients.name, like)),
+      )
       .limit(8),
     db
       .select({ id: vendors.id, name: vendors.name, category: vendors.category })
       .from(vendors)
-      .where(and(isNull(vendors.deletedAt), ilike(vendors.name, like)))
+      .where(
+        and(isNull(vendors.deletedAt), eq(vendors.isArchived, false), ilike(vendors.name, like)),
+      )
       .limit(8),
     db
       .select({

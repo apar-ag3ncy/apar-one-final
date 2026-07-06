@@ -13,6 +13,7 @@ import {
 
 import { auditColumns, timestamps } from './_shared';
 import { contractStatusEnum } from './_polymorphic';
+import { documents } from './documents';
 import { users } from './users';
 
 export const clientStatusEnum = pgEnum('client_status', ['prospect', 'active', 'inactive']);
@@ -60,6 +61,11 @@ export const clients = pgTable(
     isArchived: boolean().notNull().default(false),
     archivedAt: timestamp({ withTimezone: true }),
     archivedBy: uuid().references(() => users.id, { onDelete: 'set null' }),
+
+    // Brand logo shown instead of initials across the OS (uploaded via the
+    // edit-client dialog; kind 'photo' in entity_documents). Mirrors the
+    // office_expenses.document_id pattern: delete the document → null here.
+    logoDocumentId: uuid().references(() => documents.id, { onDelete: 'set null' }),
 
     notes: text(),
   },

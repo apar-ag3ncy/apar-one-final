@@ -31,5 +31,7 @@ export type Client = {
   pocs: readonly ClientPoc[];
   projectsCount: number;
   documentsCount: number;
+  /** Brand logo document (documents.id) — rendered instead of initials when set. */
+  logoDocumentId?: string | null;
   notes: string | null;
 };

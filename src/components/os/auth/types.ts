@@ -43,7 +43,6 @@ export const PERMISSIONED_APPS: readonly Exclude<AppId, 'admin_console'>[] = [
   'projects',
   'employees',
   'attendance',
-  'inbox',
   'ledger',
   'reports',
   'office',

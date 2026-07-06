@@ -16,6 +16,7 @@ import {
   listVendors as listDbVendors,
   listUsers as listDbUsers,
   listDepartments as listDbDepartments,
+  resolveDocumentUrl,
 } from '@/lib/server-stub/entity-actions';
 import { departmentLabel, type Employee as HrEmployee } from '@/components/employees/types';
 import {
@@ -82,10 +83,6 @@ import {
   sendActivityDigestNow,
   type ActivityDigestConfigView,
 } from '@/lib/server/entities/activity-digest';
-import {
-  listRecentDocuments,
-  type RecentDocumentRow,
-} from '@/lib/server/entities/entity-documents';
 import { colToDbStatus, dbStatusToCol } from '@/lib/project-status';
 import { toast } from 'sonner';
 
@@ -211,14 +208,21 @@ export function ClientsApp({
 
   async function fetchClientList(): Promise<readonly Client[]> {
     const rows = await listDbClients();
-    return (
+    return Promise.all(
       rows
         // Archived clients drop out of the active directory but stay
         // queryable from anywhere they're referenced (projects, txns,
         // invoices) where the UI renders them as "<name> (ex-client)".
         .filter((r) => r.status !== 'archived')
-        .map(
-          (r): Client => ({
+        .map(async (r): Promise<Client> => {
+          // Uploaded brand logo → short-lived signed URL; initials otherwise.
+          let logoUrl: string | null = null;
+          if (r.logoDocumentId) {
+            logoUrl = await resolveDocumentUrl(r.logoDocumentId)
+              .then((res) => res.url)
+              .catch(() => null);
+          }
+          return {
             id: r.id,
             name: r.name,
             industry: r.industry || '—',
@@ -233,8 +237,9 @@ export function ClientsApp({
               : '—',
             logo: logoForName(r.name),
             tone: toneForName(r.name),
-          }),
-        )
+            logoUrl,
+          };
+        }),
     );
   }
 
@@ -310,12 +315,28 @@ export function ClientsApp({
               >
                 <td>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                    <div
-                      className="avatar"
-                      style={{ width: 28, height: 28, fontSize: 11, background: c.tone }}
-                    >
-                      {c.logo}
-                    </div>
+                    {c.logoUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={c.logoUrl}
+                        alt={`${c.name} logo`}
+                        style={{
+                          width: 28,
+                          height: 28,
+                          borderRadius: 6,
+                          objectFit: 'cover',
+                          border: '1px solid var(--border)',
+                          flexShrink: 0,
+                        }}
+                      />
+                    ) : (
+                      <div
+                        className="avatar"
+                        style={{ width: 28, height: 28, fontSize: 11, background: c.tone }}
+                      >
+                        {c.logo}
+                      </div>
+                    )}
                     <span style={{ fontWeight: 600 }}>{c.name}</span>
                   </div>
                 </td>
@@ -3112,159 +3133,6 @@ function DepartmentsModal({
   );
 }
 
-/* -------------------------------------------------------------------------- */
-/* Inbox                                                                      */
-/* -------------------------------------------------------------------------- */
-
-const DOC_KIND_LABELS: Record<string, string> = {
-  contract: 'Contract',
-  msa: 'MSA',
-  sow: 'SOW',
-  nda: 'NDA',
-  offer_letter: 'Offer letter',
-  separation_letter: 'Separation letter',
-  kyc_pan: 'PAN (KYC)',
-  kyc_aadhaar: 'Aadhaar (KYC)',
-  kyc_passport: 'Passport (KYC)',
-  kyc_voter_id: 'Voter ID (KYC)',
-  kyc_driving_license: 'Driving licence (KYC)',
-  cancelled_cheque: 'Cancelled cheque',
-  bank_statement: 'Bank statement',
-  invoice: 'Invoice',
-  receipt: 'Receipt',
-  payslip: 'Payslip',
-  salary_sheet: 'Salary sheet',
-  reimbursement_receipt: 'Reimbursement receipt',
-  expense_receipt: 'Expense receipt',
-  photo: 'Photo',
-  other: 'Other',
-};
-
-function docKindLabel(kind: string): string {
-  return DOC_KIND_LABELS[kind] ?? kind.replace(/_/g, ' ');
-}
-
-function formatDocDate(iso: string): string {
-  return new Date(iso).toLocaleDateString('en-IN', {
-    day: '2-digit',
-    month: 'short',
-    year: '2-digit',
-  });
-}
-
-// Real document feed. Every file filed through a creation wizard or a
-// profile's Documents tab surfaces here — no demo fixtures. Clicking a row
-// opens the owning entity's window (where the doc lives in its Documents tab).
-export function InboxApp() {
-  const [docs, setDocs] = useState<readonly RecentDocumentRow[] | null>(null);
-  const [filterKind, setFilterKind] = useState<string>('all');
-
-  useEffect(() => {
-    let cancelled = false;
-    listRecentDocuments(100)
-      .then((rows) => {
-        if (!cancelled) setDocs(rows);
-      })
-      .catch(() => {
-        if (!cancelled) setDocs([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const all = docs ?? [];
-  const kinds = Array.from(new Set(all.map((d) => d.kind)));
-  const visible = filterKind === 'all' ? all : all.filter((d) => d.kind === filterKind);
-
-  const open = (d: RecentDocumentRow) =>
-    navigateBesideFocused({
-      type: d.entityType as 'client' | 'vendor' | 'employee' | 'project',
-      id: d.entityId,
-    });
-
-  return (
-    <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-      <div className="main-header">
-        <h2>Inbox</h2>
-        <span className="sub">
-          {all.length} recent document{all.length === 1 ? '' : 's'}
-        </span>
-        <div className="grow" />
-        <select
-          value={filterKind}
-          onChange={(e) => setFilterKind(e.target.value)}
-          className="header-select"
-          aria-label="Filter by document type"
-        >
-          <option value="all">All types</option>
-          {kinds.map((k) => (
-            <option key={k} value={k}>
-              {docKindLabel(k)}
-            </option>
-          ))}
-        </select>
-      </div>
-      <div style={{ flex: 1, overflow: 'auto' }}>
-        {docs === null ? (
-          <div
-            style={{ padding: 48, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}
-          >
-            Loading documents…
-          </div>
-        ) : (
-          visible.map((d) => (
-            <div
-              key={d.id}
-              className="inbox-row"
-              role="button"
-              tabIndex={0}
-              style={{ cursor: 'pointer' }}
-              title={`Open ${d.entityName ?? d.entityType}`}
-              onClick={() => open(d)}
-              onKeyDown={(ev) => {
-                if (ev.key === 'Enter' || ev.key === ' ') {
-                  ev.preventDefault();
-                  open(d);
-                }
-              }}
-            >
-              <div className="pdf-thumb">
-                <div className="line" style={{ top: 8 }} />
-                <div className="line" style={{ top: 14, right: 16 }} />
-                <div className="line" style={{ top: 22 }} />
-                <div className="line" style={{ top: 28, right: 12 }} />
-                <div className="line" style={{ top: 36 }} />
-                <div className="line" style={{ top: 42, right: 18 }} />
-              </div>
-              <div style={{ minWidth: 0, flex: 1 }}>
-                <div style={{ fontWeight: 600, fontSize: 13 }}>{d.filename}</div>
-                <div style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 2 }}>
-                  <span className="pill slate" style={{ marginRight: 8 }}>
-                    <span className="dot" />
-                    {docKindLabel(d.kind)}
-                  </span>
-                  {d.entityName ?? d.entityType}
-                  {d.uploadedBy ? ` · by ${d.uploadedBy}` : ''} · {formatDocDate(d.createdAt)}
-                </div>
-              </div>
-              <Icon name="arrowRight" size={14} />
-            </div>
-          ))
-        )}
-        {docs !== null && visible.length === 0 && (
-          <div
-            style={{ padding: 48, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}
-          >
-            {all.length === 0
-              ? 'No documents filed yet. Upload one from a client, vendor, or employee profile.'
-              : `No ${docKindLabel(filterKind)} documents.`}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
 
 // `LedgerApp` placeholder removed in Phase 4. The dispatcher now routes
 // `app: 'ledger'` to `<LedgerWindow>` in
