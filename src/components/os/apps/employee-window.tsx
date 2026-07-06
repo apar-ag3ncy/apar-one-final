@@ -291,7 +291,9 @@ function Header({
         display: 'flex',
         gap: 12,
         alignItems: 'center',
-        paddingBottom: 10,
+        // Same gutter as the Client/Vendor/Project window headers — without
+        // it the avatar and the Edit button sit flush against the frame.
+        padding: '20px 24px 14px',
         borderBottom: '1px solid var(--border)',
       }}
     >
