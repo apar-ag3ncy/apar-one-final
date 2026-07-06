@@ -8,6 +8,7 @@ import { db } from '@/lib/db/client';
 import { employees, officeExpenseCategories, officeExpenses, vendors } from '@/lib/db/schema';
 import { AppError } from '@/lib/errors';
 import { getActorContext } from '@/lib/server/actor';
+import { createDraftTransaction, postTransaction, reverseTransaction } from '@/lib/server/ledger';
 
 /**
  * Server actions backing the OS Office app. Captures everyday office
@@ -68,6 +69,10 @@ export type OfficeExpenseRow = {
   customCategoryColor: string | null;
   /** Free-text note attached to the custom-category classification. */
   categoryNote: string | null;
+  /** The posted GL journal this expense created; null when not posted (e.g. reimbursement). */
+  transactionId: string | null;
+  /** Whether this expense has posted to the ledger. */
+  posted: boolean;
   createdAt: string;
 };
 
@@ -137,6 +142,7 @@ export async function listOfficeExpenses(
       customCategoryName: officeExpenseCategories.name,
       customCategoryColor: officeExpenseCategories.color,
       categoryNote: officeExpenses.categoryNote,
+      transactionId: officeExpenses.transactionId,
       createdAt: officeExpenses.createdAt,
     })
     .from(officeExpenses)
@@ -171,6 +177,8 @@ export async function listOfficeExpenses(
       customCategoryName: r.customCategoryName,
       customCategoryColor: r.customCategoryColor,
       categoryNote: r.categoryNote,
+      transactionId: r.transactionId,
+      posted: !!r.transactionId,
       createdAt: r.createdAt.toISOString(),
     }),
   );
@@ -320,6 +328,71 @@ const bigintStringSchema = z
   .transform((v) => (typeof v === 'bigint' ? v : BigInt(v)))
   .refine((v) => v >= 0n, 'must be ≥ 0');
 
+/* -------------------------------------------------------------------------- */
+/* Ledger posting — office expenses auto-post to the GL on save.               */
+/* -------------------------------------------------------------------------- */
+
+// Office-expense category → operating-expense GL account (LEDGER-SPEC OpEx
+// codes). Utilities/rent land in 6200 Office Rent & Utilities; everything else
+// (incl. custom "other" buckets) in 6900 Other OpEx.
+const OPEX_ACCOUNT_BY_CATEGORY: Partial<Record<OfficeExpenseCategory, string>> = {
+  utilities: '6200',
+  rent: '6200',
+};
+function opexAccountFor(category: OfficeExpenseCategory): string {
+  return OPEX_ACCOUNT_BY_CATEGORY[category] ?? '6900';
+}
+
+// Whether a captured expense should hit the GL. Reimbursements have their own
+// lifecycle (owed to an employee, paid later) and are not posted here.
+function shouldPostToLedger(category: OfficeExpenseCategory, amountPaise: bigint): boolean {
+  return category !== 'reimbursement' && amountPaise > 0n;
+}
+
+type PostableRow = {
+  id: string;
+  category: OfficeExpenseCategory;
+  description: string;
+  expenseDate: string;
+  amountPaise: bigint;
+  gstPaise: bigint;
+  notes: string | null;
+};
+
+// Post the expense as a balanced journal and return the posted transaction id.
+//   Dr <6xxx OpEx>            net
+//   Dr 1250 GST Input Credit  gst (if any)
+//     Cr 1110 Cash on Hand    net + gst
+// No ledger bank accounts exist yet, so every payment method credits cash.
+async function postExpenseToLedger(
+  ctx: Awaited<ReturnType<typeof getActorContext>>,
+  row: PostableRow,
+): Promise<string> {
+  const net = row.amountPaise;
+  const gst = row.gstPaise;
+  const legs = [
+    { accountCode: opexAccountFor(row.category), side: 'debit' as const, amountPaise: net },
+    ...(gst > 0n ? [{ accountCode: '1250', side: 'debit' as const, amountPaise: gst }] : []),
+    { accountCode: '1110', side: 'credit' as const, amountPaise: net + gst },
+  ];
+  const draft = await createDraftTransaction(ctx, {
+    kind: 'journal',
+    input: {
+      externalRef: `OFFEXP-${row.id}-${Date.now().toString(36)}`,
+      txnDate: row.expenseDate,
+      journalReason: `Office expense — ${row.category}: ${row.description}`.slice(0, 480),
+      legs,
+      isOpeningBalance: false,
+      notes: row.notes,
+    },
+  });
+  await postTransaction(ctx, {
+    transactionId: draft.transactionId,
+    acknowledgedFlags: draft.validationFlags.map((f) => f.code),
+  });
+  return draft.transactionId;
+}
+
 const CreateSchema = z.object({
   expenseDate: z.string().regex(dateRegex, 'expenseDate must be YYYY-MM-DD'),
   category: CategoryEnum,
@@ -396,7 +469,34 @@ export async function createOfficeExpense(
     },
   });
 
-  return hydrate(row);
+  // Auto-post to the GL. If posting fails, roll the capture row back so the
+  // create is atomic — no orphaned, unposted expense is left behind.
+  let posted = row;
+  if (shouldPostToLedger(row.category as OfficeExpenseCategory, row.amountPaise)) {
+    let transactionId: string;
+    try {
+      transactionId = await postExpenseToLedger(ctx, {
+        id: row.id,
+        category: row.category as OfficeExpenseCategory,
+        description: row.description,
+        expenseDate: row.expenseDate,
+        amountPaise: row.amountPaise,
+        gstPaise: row.gstPaise,
+        notes: row.notes,
+      });
+    } catch (e) {
+      await db.delete(officeExpenses).where(eq(officeExpenses.id, row.id));
+      throw e;
+    }
+    const [updated] = await db
+      .update(officeExpenses)
+      .set({ transactionId })
+      .where(eq(officeExpenses.id, row.id))
+      .returning();
+    posted = updated ?? { ...row, transactionId };
+  }
+
+  return hydrate(posted);
 }
 
 const UpdateSchema = z.object({
@@ -424,6 +524,13 @@ export async function updateOfficeExpense(
 ): Promise<OfficeExpenseRow> {
   const ctx = await getActorContext();
   const { id, ...rest } = UpdateSchema.parse(input);
+
+  const [existing] = await db
+    .select()
+    .from(officeExpenses)
+    .where(and(eq(officeExpenses.id, id), isNull(officeExpenses.deletedAt)))
+    .limit(1);
+  if (!existing) throw new AppError('not_found', 'Office expense not found.');
 
   const patch: Record<string, unknown> = { updatedBy: ctx.userId };
   if (rest.expenseDate !== undefined) patch.expenseDate = rest.expenseDate;
@@ -455,36 +562,101 @@ export async function updateOfficeExpense(
     .returning();
   if (!row) throw new AppError('not_found', 'Office expense not found.');
 
+  // Keep the GL in sync. A financial change (amount / GST / category / date)
+  // or a flip in post-eligibility (to/from reimbursement) reverses the old
+  // posting and posts a fresh one. Non-financial edits (notes, reference,
+  // vendor) leave the ledger untouched.
+  const financialChanged =
+    (rest.expenseDate !== undefined && rest.expenseDate !== existing.expenseDate) ||
+    (rest.category !== undefined && rest.category !== existing.category) ||
+    (rest.amountPaise !== undefined && rest.amountPaise !== existing.amountPaise) ||
+    (rest.gstPaise !== undefined && rest.gstPaise !== existing.gstPaise);
+  const wasPosted = !!existing.transactionId;
+  const willPost = shouldPostToLedger(row.category as OfficeExpenseCategory, row.amountPaise);
+  let posted = row;
+  const repost = financialChanged || wasPosted !== willPost;
+  if (repost) {
+    if (wasPosted && existing.transactionId) {
+      await reverseTransaction(ctx, {
+        transactionId: existing.transactionId,
+        reason: `Office expense edited — ${existing.category}: ${existing.description}`.slice(0, 200),
+      });
+    }
+    const nextTxnId = willPost
+      ? await postExpenseToLedger(ctx, {
+          id: row.id,
+          category: row.category as OfficeExpenseCategory,
+          description: row.description,
+          expenseDate: row.expenseDate,
+          amountPaise: row.amountPaise,
+          gstPaise: row.gstPaise,
+          notes: row.notes,
+        })
+      : null;
+    const [reposted] = await db
+      .update(officeExpenses)
+      .set({ transactionId: nextTxnId })
+      .where(eq(officeExpenses.id, row.id))
+      .returning();
+    posted = reposted ?? { ...row, transactionId: nextTxnId };
+  }
+
   await logAudit({
     actorId: ctx.userId,
     entityType: 'office_expense',
     entityId: row.id,
     action: 'update',
-    changes: { fields: Object.keys(rest) },
+    changes: { fields: Object.keys(rest), reposted: repost },
   });
 
-  return hydrate(row);
+  return hydrate(posted);
 }
 
 export async function deleteOfficeExpense(args: { id: string }): Promise<void> {
   const ctx = await getActorContext();
   const parsed = z.object({ id: z.string().uuid() }).parse(args);
 
-  const result = await db
-    .update(officeExpenses)
-    .set({ deletedAt: new Date(), updatedBy: ctx.userId })
-    .where(and(eq(officeExpenses.id, parsed.id), isNull(officeExpenses.deletedAt)))
-    .returning({ id: officeExpenses.id });
-  if (result.length === 0) {
+  const [existing] = await db
+    .select()
+    .from(officeExpenses)
+    .where(eq(officeExpenses.id, parsed.id))
+    .limit(1);
+  if (!existing) {
     throw new AppError('not_found', 'Office expense not found.');
   }
+
+  // A posted expense can't be removed from the GL (postings are immutable) —
+  // reverse its ledger entry first, then hard-delete the capture row.
+  let reversed = false;
+  if (existing.transactionId) {
+    await reverseTransaction(ctx, {
+      transactionId: existing.transactionId,
+      reason: `Office expense deleted — ${existing.category}: ${existing.description}`.slice(0, 200),
+    });
+    reversed = true;
+  }
+
+  // HARD delete — the row is removed from the database entirely; the audit
+  // log below is the only remaining record of what was deleted.
+  await db.delete(officeExpenses).where(eq(officeExpenses.id, parsed.id));
 
   await logAudit({
     actorId: ctx.userId,
     entityType: 'office_expense',
     entityId: parsed.id,
     action: 'delete',
-    changes: { soft_delete: true },
+    changes: {
+      hard_delete: true,
+      reversed,
+      category: existing.category,
+      description: existing.description,
+      expenseDate: existing.expenseDate,
+      amountPaise: String(existing.amountPaise),
+      gstPaise: String(existing.gstPaise),
+      paymentMethod: existing.paymentMethod,
+      status: existing.status,
+      transactionId: existing.transactionId,
+    },
   });
 }
 
@@ -538,6 +710,8 @@ async function hydrate(row: typeof officeExpenses.$inferSelect): Promise<OfficeE
     customCategoryName,
     customCategoryColor,
     categoryNote: row.categoryNote,
+    transactionId: row.transactionId,
+    posted: !!row.transactionId,
     createdAt: row.createdAt.toISOString(),
   };
 }
@@ -803,25 +977,54 @@ export async function importOfficeExpenses(input: {
         }
       }
 
-      await db.insert(officeExpenses).values({
-        expenseDate: parsed.expenseDate,
-        category,
-        description: parsed.description,
-        vendorId: null,
-        vendorName: null,
-        employeeId: null,
-        amountPaise: parsed.amountPaise,
-        gstPaise: parsed.gstPaise ?? 0n,
-        paymentMethod: parsed.paymentMethod ?? 'bank',
-        status: category === 'reimbursement' ? 'pending' : 'approved',
-        referenceNumber: parsed.referenceNumber ?? null,
-        notes: parsed.notes ?? null,
-        customCategoryId,
-        categoryNote,
-        createdBy: ctx.userId,
-        updatedBy: ctx.userId,
-      });
+      const [insertedRow] = await db
+        .insert(officeExpenses)
+        .values({
+          expenseDate: parsed.expenseDate,
+          category,
+          description: parsed.description,
+          vendorId: null,
+          vendorName: null,
+          employeeId: null,
+          amountPaise: parsed.amountPaise,
+          gstPaise: parsed.gstPaise ?? 0n,
+          paymentMethod: parsed.paymentMethod ?? 'bank',
+          status: category === 'reimbursement' ? 'pending' : 'approved',
+          referenceNumber: parsed.referenceNumber ?? null,
+          notes: parsed.notes ?? null,
+          customCategoryId,
+          categoryNote,
+          createdBy: ctx.userId,
+          updatedBy: ctx.userId,
+        })
+        .returning();
       result.inserted += 1;
+
+      // Auto-post to the GL (best-effort — a posting failure leaves the row
+      // captured-but-unposted and is surfaced as a warning, not a hard error,
+      // so one bad date/period doesn't abort the whole import).
+      if (insertedRow && shouldPostToLedger(category, insertedRow.amountPaise)) {
+        try {
+          const txnId = await postExpenseToLedger(ctx, {
+            id: insertedRow.id,
+            category,
+            description: insertedRow.description,
+            expenseDate: insertedRow.expenseDate,
+            amountPaise: insertedRow.amountPaise,
+            gstPaise: insertedRow.gstPaise,
+            notes: insertedRow.notes,
+          });
+          await db
+            .update(officeExpenses)
+            .set({ transactionId: txnId })
+            .where(eq(officeExpenses.id, insertedRow.id));
+        } catch (postErr) {
+          result.errors.push({
+            row: rowNo,
+            message: `saved but not posted to ledger: ${postErr instanceof Error ? postErr.message : 'unknown error'}`,
+          });
+        }
+      }
     } catch (err) {
       const message =
         err instanceof z.ZodError
