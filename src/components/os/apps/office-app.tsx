@@ -14,6 +14,7 @@ import {
   listVendors as listDbVendors,
 } from '@/lib/server-stub/entity-actions';
 import {
+  attachOfficeExpenseInvoice,
   backfillOfficeExpenseLedgerPostings,
   countUnpostedOfficeExpenses,
   createOfficeExpense,
@@ -23,6 +24,7 @@ import {
   importOfficeExpenses,
   listOfficeExpenseCategories,
   listOfficeExpenses,
+  removeOfficeExpenseInvoice,
   updateOfficeExpense,
   type ImportOfficeExpenseRow,
   type OfficeExpenseCategory,
@@ -32,6 +34,7 @@ import {
   type OfficeExpenseStatus,
   type OfficeExpenseSummary,
 } from '@/lib/server/entities/office-expenses';
+import { getDocumentSignedUrl } from '@/lib/server/entities/documents';
 import {
   getSalaryPaymentsSummary,
   type SalaryPaymentsSummary,
@@ -358,8 +361,28 @@ export function OfficeApp({
   async function handleCreate(values: ExpenseFormValues) {
     setBusy(true);
     try {
-      await createOfficeExpense(values);
-      toast.success('Expense logged.');
+      // The picked file is a UI-only concern — keep it out of the create call.
+      const { invoiceFile, ...expense } = values;
+      const row = await createOfficeExpense(expense);
+      // Attach the invoice/bill after the expense exists (it needs the row id).
+      // A failed upload must not lose the expense — surface it separately.
+      if (invoiceFile) {
+        try {
+          const fd = new FormData();
+          fd.append('expenseId', row.id);
+          fd.append('file', invoiceFile);
+          await attachOfficeExpenseInvoice(fd);
+          toast.success('Expense logged with invoice.');
+        } catch (upErr) {
+          toast.error(
+            upErr instanceof Error
+              ? `Expense saved, but the invoice didn't upload: ${upErr.message}`
+              : "Expense saved, but the invoice didn't upload.",
+          );
+        }
+      } else {
+        toast.success('Expense logged.');
+      }
       setShowNew(false);
       await reload();
     } catch (e) {
@@ -372,8 +395,28 @@ export function OfficeApp({
   async function handleUpdate(id: string, values: ExpenseFormValues) {
     setBusy(true);
     try {
-      await updateOfficeExpense({ id, ...values });
-      toast.success('Expense updated.');
+      // The picked file is a UI-only concern — keep it out of the update call.
+      const { invoiceFile, ...expense } = values;
+      const row = await updateOfficeExpense({ id, ...expense });
+      // Attach a newly-picked invoice/bill after the update succeeds. A failed
+      // upload must not lose the edit — surface it separately.
+      if (invoiceFile) {
+        try {
+          const fd = new FormData();
+          fd.append('expenseId', row.id);
+          fd.append('file', invoiceFile);
+          await attachOfficeExpenseInvoice(fd);
+          toast.success('Expense updated with invoice.');
+        } catch (upErr) {
+          toast.error(
+            upErr instanceof Error
+              ? `Expense saved, but the invoice didn't upload: ${upErr.message}`
+              : "Expense saved, but the invoice didn't upload.",
+          );
+        }
+      } else {
+        toast.success('Expense updated.');
+      }
       setEditing(null);
       await reload();
     } catch (e) {
@@ -746,6 +789,25 @@ export function OfficeApp({
                     </td>
                     <td style={{ textAlign: 'right' }}>
                       <div className="row-actions">
+                        {r.documentId && (
+                          <button
+                            className="btn row-action"
+                            type="button"
+                            title="Download invoice"
+                            onClick={async () => {
+                              try {
+                                const { url } = await getDocumentSignedUrl(r.documentId!);
+                                window.open(url, '_blank');
+                              } catch (e) {
+                                toast.error(
+                                  e instanceof Error ? e.message : 'Could not open the invoice',
+                                );
+                              }
+                            }}
+                          >
+                            <Icon name="download" size={12} />
+                          </button>
+                        )}
                         {canEdit && (
                           <button
                             className="btn row-action"
@@ -1049,6 +1111,8 @@ type ExpenseFormValues = {
   status: OfficeExpenseStatus;
   referenceNumber: string | null;
   notes: string | null;
+  /** Optional invoice/bill to attach after the expense is saved. UI-only. */
+  invoiceFile: File | null;
 };
 
 const VENDOR_NONE = '__none__';
@@ -1118,6 +1182,15 @@ function ExpenseFormModal({
   const [status, setStatus] = useState<OfficeExpenseStatus>(initial?.status ?? 'approved');
   const [referenceNumber, setReferenceNumber] = useState(initial?.referenceNumber ?? '');
   const [notes, setNotes] = useState(initial?.notes ?? '');
+  // Optional invoice/bill picked in this form. Uploaded by the parent handler
+  // after the expense is saved (attach needs the row id).
+  const [invoiceFile, setInvoiceFile] = useState<File | null>(null);
+  // Tracks the already-attached invoice in edit mode. Cleared locally when the
+  // user hits "Remove" so the UI reflects it without a full reload.
+  const [existingDoc, setExistingDoc] = useState<{ id: string; name: string | null } | null>(
+    initial?.documentId ? { id: initial.documentId, name: initial.documentName } : null,
+  );
+  const [removingDoc, setRemovingDoc] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const descRef = useRef<HTMLInputElement | null>(null);
 
@@ -1253,6 +1326,7 @@ function ExpenseFormModal({
       status,
       referenceNumber: referenceNumber.trim() || null,
       notes: notes.trim() || null,
+      invoiceFile,
     });
   }
 
@@ -1512,6 +1586,79 @@ function ExpenseFormModal({
             rows={2}
             placeholder="Optional — extra context, who picked it, etc."
           />
+        </Field>
+        <Field
+          label="Invoice / bill (optional)"
+          full
+          hint="Attach a scan or photo of the bill — image or PDF."
+        >
+          {existingDoc && (
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                flexWrap: 'wrap',
+                marginBottom: 6,
+                fontSize: 12,
+                color: 'var(--text-muted)',
+              }}
+            >
+              <Icon name="filetext" size={13} />
+              <span style={{ color: 'var(--text)' }}>
+                {existingDoc.name ?? 'Attached invoice'}
+              </span>
+              <button
+                type="button"
+                className="btn"
+                style={{ padding: '2px 8px', fontSize: 12 }}
+                onClick={async () => {
+                  try {
+                    const { url } = await getDocumentSignedUrl(existingDoc.id);
+                    window.open(url, '_blank');
+                  } catch (e) {
+                    setErr(e instanceof Error ? e.message : 'Could not open the invoice.');
+                  }
+                }}
+              >
+                <Icon name="download" size={12} />
+                Download
+              </button>
+              <button
+                type="button"
+                className="btn row-delete"
+                style={{ padding: '2px 8px', fontSize: 12 }}
+                disabled={removingDoc || !initial}
+                onClick={async () => {
+                  if (!initial) return;
+                  setRemovingDoc(true);
+                  setErr(null);
+                  try {
+                    await removeOfficeExpenseInvoice({ expenseId: initial.id });
+                    setExistingDoc(null);
+                    toast.success('Invoice removed.');
+                  } catch (e) {
+                    setErr(e instanceof Error ? e.message : 'Could not remove the invoice.');
+                  } finally {
+                    setRemovingDoc(false);
+                  }
+                }}
+              >
+                <Icon name="trash" size={12} />
+                {removingDoc ? 'Removing…' : 'Remove'}
+              </button>
+            </div>
+          )}
+          <input
+            type="file"
+            accept="image/*,application/pdf"
+            onChange={(e) => setInvoiceFile(e.target.files?.[0] ?? null)}
+          />
+          {invoiceFile && existingDoc && (
+            <span className="os-field-hint">
+              Uploading a new file will replace the current invoice on save.
+            </span>
+          )}
         </Field>
         {err && <div className="os-form-error">{err}</div>}
         <div className="os-form-actions">

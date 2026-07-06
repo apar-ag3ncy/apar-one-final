@@ -48,6 +48,10 @@ import {
   type EditableEmployee,
 } from '@/lib/server/entities/employees';
 import {
+  getAttendanceForDate,
+  type AttendanceStatus,
+} from '@/lib/server/entities/attendance';
+import {
   getMyProfile,
   getMySecurity,
   updateMyProfile,
@@ -1752,12 +1756,36 @@ function ProjectFormModal({
 /* Employees                                                                  */
 /* -------------------------------------------------------------------------- */
 
-type EmpStatusUi = 'active' | 'notice' | 'separated';
+type EmpStatusUi = 'active' | 'on_leave' | 'notice' | 'separated' | 'prospective';
 
 const EMP_STATUS_META: Record<EmpStatusUi, { label: string; fg: string; bg: string }> = {
   active: { label: 'Active', fg: '#2e8f5a', bg: 'rgba(46,143,90,0.12)' },
+  on_leave: { label: 'On leave', fg: '#d08a1e', bg: 'rgba(208,138,30,0.14)' },
   notice: { label: 'Notice', fg: '#c46a28', bg: 'rgba(196,106,40,0.14)' },
   separated: { label: 'Separated', fg: 'var(--text-muted)', bg: 'var(--content-2)' },
+  prospective: { label: 'Prospective', fg: 'var(--text-muted)', bg: 'var(--content-2)' },
+};
+
+// Today's-attendance chip. Mirrors attendance-app.tsx's STATUS_LABEL /
+// STATUS_COLOR so the dot colour matches the matrix view. Keyed by the
+// resolved AttendanceStatus for today (getAttendanceForDate).
+const ATT_LABEL: Record<AttendanceStatus, string> = {
+  present: 'Present',
+  work_from_home: 'WFH',
+  absent: 'Absent',
+  half_day: 'Half-day',
+  on_leave: 'On leave',
+  weekly_off: 'Weekly off',
+  holiday: 'Holiday',
+};
+const ATT_COLOR: Record<AttendanceStatus, string> = {
+  present: '#1fa564',
+  work_from_home: '#3b82d9',
+  absent: '#e2543f',
+  half_day: '#e6a51c',
+  on_leave: '#8b5ad6',
+  weekly_off: '#7d8aa0',
+  holiday: '#cc7a3a',
 };
 
 const EMP_TYPE_LABEL: Record<string, string> = {
@@ -1788,6 +1816,9 @@ export function EmployeesApp({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [confirmDel, setConfirmDel] = useState<DirRow | null>(null);
   const [togglingId, setTogglingId] = useState<string | null>(null);
+  // Today's resolved attendance, keyed by employeeId. Powers the per-card
+  // "Attendance today" chip. Best-effort — stays empty if the fetch fails.
+  const [attToday, setAttToday] = useState<Record<string, AttendanceStatus>>({});
 
   // Real DB-backed list. Clicking a card passes a real UUID into the
   // openWindow route → EmployeeWindow renders the §8.4 dashboard. Edits go
@@ -1862,6 +1893,15 @@ export function EmployeesApp({
       .catch(() => {
         /* fall through to empty list */
       });
+    // Resolve today's attendance for the per-card chip. Best-effort: on
+    // failure the chip simply doesn't render for any card.
+    getAttendanceForDate({ date: todayIso() })
+      .then((map) => {
+        if (!cancelled) setAttToday(map);
+      })
+      .catch(() => {
+        /* no chip if attendance can't be resolved */
+      });
     return () => {
       cancelled = true;
     };
@@ -1909,6 +1949,10 @@ export function EmployeesApp({
   const renderCard = (e: DirRow) => {
     const sm = EMP_STATUS_META[e.status];
     const isActive = e.status === 'active';
+    // Display name is the dominant label (initials + card text); full name
+    // stays on hover via the title attribute.
+    const visibleName = e.displayName || e.fullName;
+    const att = e.status === 'separated' ? undefined : attToday[e.id];
     return (
       <div
         key={e.id}
@@ -1943,16 +1987,16 @@ export function EmployeesApp({
               flexShrink: 0,
             }}
           >
-            {initials(e.fullName)}
+            {initials(visibleName)}
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div
               className="name"
               title={e.fullName}
               style={{
-                // Full name is the dominant element — shown up to two lines
+                // Display name is the dominant element — shown up to two lines
                 // (backlog: "full names to be visible"); title surfaces the
-                // whole name on hover.
+                // full legal name on hover.
                 fontSize: 14.5,
                 fontWeight: 700,
                 lineHeight: 1.25,
@@ -1963,7 +2007,7 @@ export function EmployeesApp({
                 overflowWrap: 'anywhere',
               }}
             >
-              {e.fullName}
+              {visibleName}
             </div>
             {/* Status sits on its own line BELOW the name (not beside it). */}
             <span
@@ -1987,6 +2031,37 @@ export function EmployeesApp({
               />
               {sm.label}
             </span>
+            {/* Today's attendance — sits beside the status pill, same row. */}
+            {att ? (
+              <span
+                title="Attendance today"
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 5,
+                  marginTop: 4,
+                  marginLeft: 6,
+                  fontSize: 10,
+                  fontWeight: 600,
+                  padding: '2px 8px',
+                  borderRadius: 999,
+                  color: ATT_COLOR[att],
+                  background: `color-mix(in oklab, ${ATT_COLOR[att]} 14%, transparent)`,
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                <span
+                  style={{
+                    width: 6,
+                    height: 6,
+                    borderRadius: '50%',
+                    background: ATT_COLOR[att],
+                    flexShrink: 0,
+                  }}
+                />
+                {ATT_LABEL[att]}
+              </span>
+            ) : null}
             <div className="role">{e.designation || '—'}</div>
             <div className="dept">
               {departmentLabel(e.department)} ·{' '}
@@ -2424,6 +2499,7 @@ type EditorForm = {
   personalEmail: string;
   phone: string;
   reportsToEmployeeId: string;
+  dateOfBirth: string;
   joinedOn: string;
   confirmedOn: string;
   separatedOn: string;
@@ -2446,6 +2522,7 @@ const EMPTY_EDITOR_FORM: EditorForm = {
   personalEmail: '',
   phone: '',
   reportsToEmployeeId: '',
+  dateOfBirth: '',
   joinedOn: '',
   confirmedOn: '',
   separatedOn: '',
@@ -2465,6 +2542,7 @@ function editableToForm(e: EditableEmployee): EditorForm {
     personalEmail: e.personalEmail ?? '',
     phone: e.phone ?? '',
     reportsToEmployeeId: e.reportsToEmployeeId ?? '',
+    dateOfBirth: e.dateOfBirth ?? '',
     joinedOn: e.joinedOn,
     confirmedOn: e.confirmedOn ?? '',
     separatedOn: e.separatedOn ?? '',
@@ -2563,6 +2641,7 @@ export function EmployeeProfileEditor({
           personalEmail: form.personalEmail.trim() || undefined,
           phone: form.phone.trim() || undefined,
           reportsToEmployeeId: form.reportsToEmployeeId || undefined,
+          dateOfBirth: form.dateOfBirth || null,
           joinedOn: form.joinedOn,
           confirmedOn: form.confirmedOn || undefined,
           separatedOn: form.separatedOn || undefined,
@@ -2588,6 +2667,7 @@ export function EmployeeProfileEditor({
           personalEmail: form.personalEmail.trim() || null,
           phone: form.phone.trim() || null,
           reportsToEmployeeId: form.reportsToEmployeeId || null,
+          dateOfBirth: form.dateOfBirth || null,
           joinedOn: form.joinedOn,
           confirmedOn: form.confirmedOn || null,
           separatedOn: form.separatedOn || null,
@@ -2714,6 +2794,14 @@ export function EmployeeProfileEditor({
               placeholder="+91…"
             />
             {errors.phone ? <FieldErr msg={errors.phone} /> : null}
+          </Field>
+          <Field label="Date of birth">
+            <input
+              type="date"
+              value={form.dateOfBirth}
+              onChange={(e) => set('dateOfBirth', e.target.value)}
+            />
+            {errors.dateOfBirth ? <FieldErr msg={errors.dateOfBirth} /> : null}
           </Field>
           <Field label="Joined on">
             <input

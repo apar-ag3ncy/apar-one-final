@@ -94,6 +94,126 @@ function sumAllowances(raw: unknown): bigint {
   return total;
 }
 
+export type EmployeeSalaryAttendancePreview = {
+  employeeId: string;
+  month: string;
+  monthlyGrossPaise: bigint;
+  workingDays: number;
+  lopDays: number;
+  payableDays: number;
+  proratedGrossPaise: bigint;
+  hasStructure: boolean;
+};
+
+/**
+ * Single-employee variant of {@link previewSalaryFromAttendance}. Reuses the
+ * same working-days / structure-pick / LOP proration, scoped to one employee.
+ *
+ * Gated with `view_salary` (NOT `create_salary_run`): this reads one person's
+ * pay without touching a salary run, so it's the salary-detail capability that
+ * applies — same protection `view_salary` gives everywhere else pay is exposed.
+ */
+export async function previewSalaryForEmployee(input: {
+  employeeId: string;
+  month: string;
+}): Promise<EmployeeSalaryAttendancePreview> {
+  const ctx = await getActorContext();
+  requireCapability(ctx, 'view_salary');
+
+  const { employeeId, month } = input;
+  if (!MONTH_RE.test(month)) {
+    throw new AppError('validation', 'month must be YYYY-MM.');
+  }
+  const { year, monthIdx, from, to, lastDay } = monthBounds(month);
+
+  // 1) Holidays in the month. Degrade to no holidays if migration 0051 hasn't
+  //    been applied on this DB yet (same self-healing as the company-wide run).
+  let holidayRows: { date: string }[] = [];
+  try {
+    holidayRows = await db
+      .select({ date: companyHolidays.holidayDate })
+      .from(companyHolidays)
+      .where(
+        and(
+          isNull(companyHolidays.deletedAt),
+          gte(companyHolidays.holidayDate, from),
+          lte(companyHolidays.holidayDate, to),
+        ),
+      );
+  } catch (e) {
+    if (!isUndefinedTableError(e)) throw e;
+  }
+  const holidaySet = new Set(holidayRows.map((h) => h.date));
+  const workingDays = computeWorkingDays(month, lastDay, monthIdx, year, holidaySet);
+
+  // 2) Salary structure overlapping the month for this employee — pick the
+  //    latest-starting one (active as of month end), same rule as the run.
+  const structures = await db
+    .select({
+      effectiveFrom: salaryStructures.effectiveFrom,
+      basicPaise: salaryStructures.basicPaise,
+      hraPaise: salaryStructures.hraPaise,
+      specialAllowancePaise: salaryStructures.specialAllowancePaise,
+      otherAllowances: salaryStructures.otherAllowances,
+    })
+    .from(salaryStructures)
+    .where(
+      and(
+        eq(salaryStructures.employeeId, employeeId),
+        isNull(salaryStructures.deletedAt),
+        lte(salaryStructures.effectiveFrom, to),
+        or(isNull(salaryStructures.effectiveTo), gte(salaryStructures.effectiveTo, from)),
+      ),
+    )
+    .orderBy(asc(salaryStructures.effectiveFrom), asc(salaryStructures.createdAt));
+  // Last row = latest-starting / latest-created, matching the company-wide pick.
+  const picked = structures.at(-1);
+  const hasStructure = picked !== undefined;
+  const monthlyGrossPaise = picked
+    ? picked.basicPaise +
+      picked.hraPaise +
+      picked.specialAllowancePaise +
+      sumAllowances(picked.otherAllowances)
+    : 0n;
+
+  // 3) Absent (LOP) days — only an 'absent' on an actual working day docks pay
+  //    (Sundays and company holidays aren't working days, so they never count).
+  const absentRows = await db
+    .select({ date: attendanceRecords.date })
+    .from(attendanceRecords)
+    .where(
+      and(
+        eq(attendanceRecords.employeeId, employeeId),
+        isNull(attendanceRecords.deletedAt),
+        eq(attendanceRecords.status, 'absent'),
+        gte(attendanceRecords.date, from),
+        lte(attendanceRecords.date, to),
+      ),
+    );
+  let lopDays = 0;
+  for (const r of absentRows) {
+    const [ry, rm, rd] = r.date.split('-').map(Number);
+    const dow = new Date(Date.UTC(ry ?? year, (rm ?? 1) - 1, rd ?? 1)).getUTCDay();
+    if (dow === 0 || holidaySet.has(r.date)) continue; // not a working day → not LOP
+    lopDays += 1;
+  }
+
+  const payableDays = Math.max(0, workingDays - lopDays);
+  const proratedGrossPaise =
+    workingDays > 0 ? (monthlyGrossPaise * BigInt(payableDays)) / BigInt(workingDays) : 0n;
+
+  return {
+    employeeId,
+    month,
+    monthlyGrossPaise,
+    workingDays,
+    lopDays,
+    payableDays,
+    proratedGrossPaise,
+    hasStructure,
+  };
+}
+
 export async function previewSalaryFromAttendance(month: string): Promise<SalaryAttendancePreview> {
   const ctx = await getActorContext();
   requireCapability(ctx, 'create_salary_run');

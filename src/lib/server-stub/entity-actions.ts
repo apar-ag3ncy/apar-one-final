@@ -323,9 +323,11 @@ function mapEmployeeStatus(
   dbStatus: 'prospective' | 'active' | 'on_leave' | 'notice' | 'separated',
   isArchived: boolean,
 ): EmployeeStatus {
-  if (isArchived || dbStatus === 'separated') return 'separated';
-  if (dbStatus === 'notice') return 'notice';
-  return 'active';
+  // Archived rows read as 'separated' (they're off the active roster); every
+  // other DB status passes through unchanged so prospective / on_leave no
+  // longer collapse into 'active'.
+  if (isArchived) return 'separated';
+  return dbStatus;
 }
 
 export async function listEmployees(): Promise<readonly Employee[]> {
@@ -333,6 +335,7 @@ export async function listEmployees(): Promise<readonly Employee[]> {
     .select({
       id: employees.id,
       fullName: employees.fullName,
+      displayName: employees.displayName,
       designation: employees.designation,
       department: employees.department,
       employmentType: employees.employmentType,
@@ -342,6 +345,7 @@ export async function listEmployees(): Promise<readonly Employee[]> {
       personalEmail: employees.personalEmail,
       phone: employees.phone,
       joinedOn: employees.joinedOn,
+      dateOfBirth: employees.dateOfBirth,
       separatedOn: employees.separatedOn,
       maskedPan: employees.maskedPan,
       maskedAadhaar: employees.maskedAadhaar,
@@ -358,6 +362,7 @@ export async function listEmployees(): Promise<readonly Employee[]> {
     (r): Employee => ({
       id: r.id,
       fullName: r.fullName,
+      displayName: r.displayName,
       designation: r.designation ?? '',
       department: mapDepartment(r.department),
       employmentType: mapEmploymentType(r.employmentType),
@@ -367,6 +372,7 @@ export async function listEmployees(): Promise<readonly Employee[]> {
       phone: r.phone ?? '',
       city: '',
       joinedAt: new Date(r.joinedOn),
+      dateOfBirth: r.dateOfBirth,
       exitedAt: r.separatedOn ? new Date(r.separatedOn) : null,
       reportsTo: r.reportsToEmployeeId,
       panMasked: r.maskedPan,
