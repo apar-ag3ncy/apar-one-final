@@ -12,14 +12,18 @@ import type { StatusTone } from '@/components/shared/status-badge';
 
 const STATUS_TONES: Record<EmployeeStatus, StatusTone> = {
   active: 'success',
+  on_leave: 'warning',
   notice: 'warning',
   separated: 'neutral',
+  prospective: 'neutral',
 };
 
 const STATUS_LABELS: Record<EmployeeStatus, string> = {
   active: 'Active',
+  on_leave: 'On leave',
   notice: 'On notice',
   separated: 'Separated',
+  prospective: 'Prospective',
 };
 
 type Props = { params: Promise<{ id: string }> };

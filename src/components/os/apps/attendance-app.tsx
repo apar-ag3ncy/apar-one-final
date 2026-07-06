@@ -385,7 +385,11 @@ export function AttendanceApp({ canEdit = false }: { canEdit?: boolean }) {
               >
                 ‹
               </button>
-              <span className={`att-date-label${bulkDate === todayIso ? 'is-today' : ''}`}>
+              <span
+                className={['att-date-label', bulkDate === todayIso && 'is-today']
+                  .filter(Boolean)
+                  .join(' ')}
+              >
                 {bulkDateLabel}
                 {bulkDate === todayIso ? <span className="att-date-today-pill">Today</span> : null}
               </span>
@@ -479,9 +483,9 @@ export function AttendanceApp({ canEdit = false }: { canEdit?: boolean }) {
                   return (
                     <th
                       key={d}
-                      className={`att-col-head${isToday ? 'is-today' : ''}${
-                        isSelected ? 'is-selected' : ''
-                      }`}
+                      className={['att-col-head', isToday && 'is-today', isSelected && 'is-selected']
+                        .filter(Boolean)
+                        .join(' ')}
                       style={{
                         color:
                           !isToday && def === 'weekly_off' ? STATUS_COLOR.weekly_off : undefined,
@@ -549,9 +553,15 @@ export function AttendanceApp({ canEdit = false }: { canEdit?: boolean }) {
                     return (
                       <td
                         key={d}
-                        className={`att-cell ${isOverride ? 'is-override' : 'is-default'}${
-                          isOpen ? 'is-open' : ''
-                        }${isToday ? 'is-today-col' : ''}${isSelected ? 'is-selected-col' : ''}`}
+                        className={[
+                          'att-cell',
+                          isOverride ? 'is-override' : 'is-default',
+                          isOpen && 'is-open',
+                          isToday && 'is-today-col',
+                          isSelected && 'is-selected-col',
+                        ]
+                          .filter(Boolean)
+                          .join(' ')}
                         onClick={(e) =>
                           openPicker(e, r.employeeId, r.fullName, iso, status, isOverride)
                         }
