@@ -45,6 +45,10 @@ import { ProjectWindow } from './apps/project-window';
 import { VendorWindow } from './apps/vendor-window';
 import { AttendanceApp } from './apps/attendance-app';
 import { PerClientPnLWindow } from './apps/per-client-pnl-window';
+import {
+  AccountStatementWindow,
+  parseAccountStatementRoute,
+} from './apps/account-statement-window';
 import { AccountsOverviewWindow } from './apps/accounts-overview-window';
 import { TrialBalanceWindow } from './apps/trial-balance-window';
 import { BalanceSheetWindow } from './apps/balance-sheet-window';
@@ -727,6 +731,11 @@ function Desktop({ signOut }: { signOut: () => void }) {
               }
               if (eid && eid.startsWith('vendor:')) {
                 return <VendorLedgerWindow vendorId={eid.slice('vendor:'.length)} />;
+              }
+              if (eid && eid.startsWith('account:')) {
+                // Generic per-account drill-down (Accounts Overview → numbers).
+                const parsed = parseAccountStatementRoute(eid);
+                if (parsed) return <AccountStatementWindow {...parsed} />;
               }
               return <LedgerWindow />;
             }

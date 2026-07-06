@@ -491,6 +491,34 @@ export async function getTdsPayableStatement(args: {
   return finalizeStatement(lines, (side) => (side === 'credit' ? 1n : -1n));
 }
 
+/**
+ * **Generic account statement** — every posting on an arbitrary set of GL
+ * account codes, in date order with a running total. This is the drill-down
+ * behind every number on the Accounts Overview: the overview shows a balance,
+ * this shows the exact transactions (with counterparty names and references)
+ * that produced it. `positive` sets the running-total convention: 'debit' for
+ * assets/expenses, 'credit' for liabilities/income.
+ */
+export async function getAccountStatement(args: {
+  codes: readonly string[];
+  positive?: 'debit' | 'credit';
+  from?: string;
+  to?: string;
+  includeReversed?: boolean;
+}): Promise<Statement> {
+  await getActorContext();
+  const codes = args.codes.filter((c) => /^\d{4}$/.test(c));
+  if (codes.length === 0) {
+    throw new Error('getAccountStatement needs at least one 4-digit account code.');
+  }
+  const lines = await fetchSubledgerLines(
+    { kind: 'accountCodes', codes },
+    { from: args.from, to: args.to, includeReversed: args.includeReversed },
+  );
+  const pos = args.positive ?? 'debit';
+  return finalizeStatement(lines, (side) => (side === pos ? 1n : -1n));
+}
+
 export type BankBook = Statement & {
   /** Running balance carried in from postings dated before `from` (0 when no `from`). */
   openingCarryPaise: bigint;
