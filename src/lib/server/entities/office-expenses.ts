@@ -5,7 +5,7 @@ import { z } from 'zod';
 
 import { logAudit } from '@/lib/audit';
 import { db } from '@/lib/db/client';
-import { employees, officeExpenses, vendors } from '@/lib/db/schema';
+import { employees, officeExpenseCategories, officeExpenses, vendors } from '@/lib/db/schema';
 import { AppError } from '@/lib/errors';
 import { getActorContext } from '@/lib/server/actor';
 
@@ -60,6 +60,14 @@ export type OfficeExpenseRow = {
   status: OfficeExpenseStatus;
   referenceNumber: string | null;
   notes: string | null;
+  /** FK to a user-defined sub-category; only meaningful when category='other'. */
+  customCategoryId: string | null;
+  /** Display name of the custom category, joined from office_expense_categories. */
+  customCategoryName: string | null;
+  /** Swatch colour of the custom category, joined from office_expense_categories. */
+  customCategoryColor: string | null;
+  /** Free-text note attached to the custom-category classification. */
+  categoryNote: string | null;
   createdAt: string;
 };
 
@@ -125,11 +133,19 @@ export async function listOfficeExpenses(
       status: officeExpenses.status,
       referenceNumber: officeExpenses.referenceNumber,
       notes: officeExpenses.notes,
+      customCategoryId: officeExpenses.customCategoryId,
+      customCategoryName: officeExpenseCategories.name,
+      customCategoryColor: officeExpenseCategories.color,
+      categoryNote: officeExpenses.categoryNote,
       createdAt: officeExpenses.createdAt,
     })
     .from(officeExpenses)
     .leftJoin(employees, eq(employees.id, officeExpenses.employeeId))
     .leftJoin(vendors, eq(vendors.id, officeExpenses.vendorId))
+    .leftJoin(
+      officeExpenseCategories,
+      eq(officeExpenseCategories.id, officeExpenses.customCategoryId),
+    )
     .where(and(...conds))
     .orderBy(desc(officeExpenses.expenseDate), desc(officeExpenses.createdAt))
     .limit(parsed.limit ?? 500);
@@ -151,6 +167,10 @@ export async function listOfficeExpenses(
       status: r.status as OfficeExpenseStatus,
       referenceNumber: r.referenceNumber,
       notes: r.notes,
+      customCategoryId: r.customCategoryId,
+      customCategoryName: r.customCategoryName,
+      customCategoryColor: r.customCategoryColor,
+      categoryNote: r.categoryNote,
       createdAt: r.createdAt.toISOString(),
     }),
   );
@@ -163,6 +183,13 @@ export type OfficeExpenseSummary = {
   pendingReimbursementCount: number;
   ytdTotalPaise: bigint;
   byCategory: Array<{ category: OfficeExpenseCategory; totalPaise: bigint; count: number }>;
+  customByCategory: Array<{
+    id: string;
+    name: string;
+    color: string | null;
+    totalPaise: bigint;
+    count: number;
+  }>;
   monthlyTrend: Array<{ month: string; totalPaise: bigint }>;
 };
 
@@ -223,6 +250,30 @@ export async function getOfficeExpenseSummary(): Promise<OfficeExpenseSummary> {
     .where(and(isNull(officeExpenses.deletedAt), sql`${officeExpenses.expenseDate} >= ${fyStart}`))
     .groupBy(officeExpenses.category);
 
+  const customByCategoryRows = await db
+    .select({
+      id: officeExpenseCategories.id,
+      name: officeExpenseCategories.name,
+      color: officeExpenseCategories.color,
+      total: sql<string>`coalesce(sum(${officeExpenses.amountPaise} + ${officeExpenses.gstPaise}), 0)::text`,
+      count: sql<string>`count(*)::text`,
+    })
+    .from(officeExpenses)
+    .innerJoin(
+      officeExpenseCategories,
+      eq(officeExpenseCategories.id, officeExpenses.customCategoryId),
+    )
+    .where(
+      and(
+        isNull(officeExpenses.deletedAt),
+        eq(officeExpenses.category, 'other'),
+        sql`${officeExpenses.customCategoryId} is not null`,
+        sql`${officeExpenses.expenseDate} >= ${fyStart}`,
+      ),
+    )
+    .groupBy(officeExpenseCategories.id, officeExpenseCategories.name, officeExpenseCategories.color)
+    .orderBy(officeExpenseCategories.name);
+
   const trendRows = await db
     .select({
       month: sql<string>`to_char(date_trunc('month', ${officeExpenses.expenseDate}), 'YYYY-MM')`,
@@ -243,6 +294,13 @@ export async function getOfficeExpenseSummary(): Promise<OfficeExpenseSummary> {
     ytdTotalPaise: BigInt(ytdAgg?.total ?? '0'),
     byCategory: byCategoryRows.map((r) => ({
       category: r.category as OfficeExpenseCategory,
+      totalPaise: BigInt(r.total),
+      count: Number(r.count),
+    })),
+    customByCategory: customByCategoryRows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      color: r.color,
       totalPaise: BigInt(r.total),
       count: Number(r.count),
     })),
@@ -275,6 +333,8 @@ const CreateSchema = z.object({
   status: StatusEnum.optional(),
   referenceNumber: z.string().max(120).nullable().optional(),
   notes: z.string().max(2000).nullable().optional(),
+  customCategoryId: z.string().uuid().nullable().optional(),
+  categoryNote: z.string().max(200).nullable().optional(),
 });
 
 export type CreateOfficeExpenseInput = z.input<typeof CreateSchema>;
@@ -312,6 +372,10 @@ export async function createOfficeExpense(
       status: parsed.status ?? (parsed.category === 'reimbursement' ? 'pending' : 'approved'),
       referenceNumber: parsed.referenceNumber ?? null,
       notes: parsed.notes ?? null,
+      // Stored as given — when set, the caller is expected to also send
+      // category='other'; we don't override the category here.
+      customCategoryId: parsed.customCategoryId ?? null,
+      categoryNote: parsed.categoryNote ?? null,
       createdBy: ctx.userId,
       updatedBy: ctx.userId,
     })
@@ -349,6 +413,8 @@ const UpdateSchema = z.object({
   status: StatusEnum.optional(),
   referenceNumber: z.string().max(120).nullable().optional(),
   notes: z.string().max(2000).nullable().optional(),
+  customCategoryId: z.string().uuid().nullable().optional(),
+  categoryNote: z.string().max(200).nullable().optional(),
 });
 
 export type UpdateOfficeExpenseInput = z.input<typeof UpdateSchema>;
@@ -379,6 +445,8 @@ export async function updateOfficeExpense(
   if (rest.status !== undefined) patch.status = rest.status;
   if (rest.referenceNumber !== undefined) patch.referenceNumber = rest.referenceNumber;
   if (rest.notes !== undefined) patch.notes = rest.notes;
+  if (rest.customCategoryId !== undefined) patch.customCategoryId = rest.customCategoryId;
+  if (rest.categoryNote !== undefined) patch.categoryNote = rest.categoryNote;
 
   const [row] = await db
     .update(officeExpenses)
@@ -439,6 +507,17 @@ async function hydrate(row: typeof officeExpenses.$inferSelect): Promise<OfficeE
       .limit(1);
     vendorDirectoryName = v?.name ?? null;
   }
+  let customCategoryName: string | null = null;
+  let customCategoryColor: string | null = null;
+  if (row.customCategoryId) {
+    const [c] = await db
+      .select({ name: officeExpenseCategories.name, color: officeExpenseCategories.color })
+      .from(officeExpenseCategories)
+      .where(eq(officeExpenseCategories.id, row.customCategoryId))
+      .limit(1);
+    customCategoryName = c?.name ?? null;
+    customCategoryColor = c?.color ?? null;
+  }
   return {
     id: row.id,
     expenseDate: row.expenseDate,
@@ -455,6 +534,136 @@ async function hydrate(row: typeof officeExpenses.$inferSelect): Promise<OfficeE
     status: row.status as OfficeExpenseStatus,
     referenceNumber: row.referenceNumber,
     notes: row.notes,
+    customCategoryId: row.customCategoryId,
+    customCategoryName,
+    customCategoryColor,
+    categoryNote: row.categoryNote,
     createdAt: row.createdAt.toISOString(),
   };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Custom categories                                                           */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * A user-defined sub-category for the catch-all `other` bucket. Lets the
+ * office admin carve out their own recurring labels (e.g. "pooja", "gifts")
+ * without touching the fixed {@link CategoryEnum}.
+ */
+export type OfficeExpenseCategoryRow = {
+  id: string;
+  name: string;
+  color: string | null;
+  hint: string | null;
+  createdAt: string;
+};
+
+/** Active custom categories (not soft-deleted), ordered by name. */
+export async function listOfficeExpenseCategories(): Promise<readonly OfficeExpenseCategoryRow[]> {
+  await getActorContext();
+
+  const rows = await db
+    .select({
+      id: officeExpenseCategories.id,
+      name: officeExpenseCategories.name,
+      color: officeExpenseCategories.color,
+      hint: officeExpenseCategories.hint,
+      createdAt: officeExpenseCategories.createdAt,
+    })
+    .from(officeExpenseCategories)
+    .where(isNull(officeExpenseCategories.deletedAt))
+    .orderBy(officeExpenseCategories.name);
+
+  return rows.map(
+    (r): OfficeExpenseCategoryRow => ({
+      id: r.id,
+      name: r.name,
+      color: r.color,
+      hint: r.hint,
+      createdAt: r.createdAt.toISOString(),
+    }),
+  );
+}
+
+const CreateCategorySchema = z.object({
+  name: z.string().min(1).max(120),
+  color: z.string().max(32).nullable().optional(),
+  hint: z.string().max(200).nullable().optional(),
+});
+
+export async function createOfficeExpenseCategory(input: {
+  name: string;
+  color?: string | null;
+  hint?: string | null;
+}): Promise<OfficeExpenseCategoryRow> {
+  const ctx = await getActorContext();
+  const parsed = CreateCategorySchema.parse(input);
+
+  const name = parsed.name.trim();
+  if (!name) {
+    throw new AppError('validation', 'Category name is required.');
+  }
+
+  // Reject a case-insensitive duplicate among the active categories.
+  const [dupe] = await db
+    .select({ id: officeExpenseCategories.id })
+    .from(officeExpenseCategories)
+    .where(
+      and(isNull(officeExpenseCategories.deletedAt), ilike(officeExpenseCategories.name, name)),
+    )
+    .limit(1);
+  if (dupe) {
+    throw new AppError('validation', `A category named "${name}" already exists.`);
+  }
+
+  const [row] = await db
+    .insert(officeExpenseCategories)
+    .values({
+      name,
+      color: parsed.color ?? null,
+      hint: parsed.hint ?? null,
+      createdBy: ctx.userId,
+      updatedBy: ctx.userId,
+    })
+    .returning();
+  if (!row) throw new AppError('internal', 'office expense category insert returned no row');
+
+  await logAudit({
+    actorId: ctx.userId,
+    entityType: 'office_expense_category',
+    entityId: row.id,
+    action: 'insert',
+    changes: { name: row.name, color: row.color, hint: row.hint },
+  });
+
+  return {
+    id: row.id,
+    name: row.name,
+    color: row.color,
+    hint: row.hint,
+    createdAt: row.createdAt.toISOString(),
+  };
+}
+
+export async function deleteOfficeExpenseCategory(args: { id: string }): Promise<void> {
+  const ctx = await getActorContext();
+  const parsed = z.object({ id: z.string().uuid() }).parse(args);
+
+  const result = await db
+    .update(officeExpenseCategories)
+    .set({ deletedAt: new Date(), updatedBy: ctx.userId })
+    .where(and(eq(officeExpenseCategories.id, parsed.id), isNull(officeExpenseCategories.deletedAt)))
+    .returning({ id: officeExpenseCategories.id });
+  if (result.length === 0) {
+    throw new AppError('not_found', 'Office expense category not found.');
+  }
+
+  await logAudit({
+    actorId: ctx.userId,
+    entityType: 'office_expense_category',
+    entityId: parsed.id,
+    action: 'delete',
+    changes: { soft_delete: true },
+  });
 }
