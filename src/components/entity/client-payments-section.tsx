@@ -1503,7 +1503,7 @@ function AllocateBalanceDialog({
                   <button
                     type="button"
                     className="btn"
-                    style={{ alignSelf: 'flex-start', fontSize: 11, padding: '2px 8px', marginTop: 4 }}
+                    style={{ alignSelf: 'flex-start', marginTop: 4 }}
                     onClick={() => setAmountRupees(paiseToRupees(maxPaise))}
                     disabled={submitting}
                   >

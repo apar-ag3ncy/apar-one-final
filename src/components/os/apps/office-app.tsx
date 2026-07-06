@@ -1610,9 +1610,7 @@ function ExpenseFormModal({
               </span>
               <button
                 type="button"
-                className="btn"
-                style={{ padding: '2px 8px', fontSize: 12 }}
-                onClick={async () => {
+                className="btn"                onClick={async () => {
                   try {
                     const { url } = await getDocumentSignedUrl(existingDoc.id);
                     window.open(url, '_blank');
@@ -1626,9 +1624,7 @@ function ExpenseFormModal({
               </button>
               <button
                 type="button"
-                className="btn row-delete"
-                style={{ padding: '2px 8px', fontSize: 12 }}
-                disabled={removingDoc || !initial}
+                className="btn row-delete"                disabled={removingDoc || !initial}
                 onClick={async () => {
                   if (!initial) return;
                   setRemovingDoc(true);
