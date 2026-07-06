@@ -7,6 +7,7 @@
 
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { toast } from 'sonner';
+import * as XLSX from 'xlsx';
 
 import {
   listEmployees as listDbEmployees,
@@ -17,9 +18,11 @@ import {
   createOfficeExpenseCategory,
   deleteOfficeExpense,
   getOfficeExpenseSummary,
+  importOfficeExpenses,
   listOfficeExpenseCategories,
   listOfficeExpenses,
   updateOfficeExpense,
+  type ImportOfficeExpenseRow,
   type OfficeExpenseCategory,
   type OfficeExpenseCategoryRow,
   type OfficeExpensePaymentMethod,
@@ -167,6 +170,7 @@ export function OfficeApp({
   );
   const [statusFilter, setStatusFilter] = useState<OfficeExpenseStatus | 'all'>('all');
   const [showNew, setShowNew] = useState(false);
+  const [showImport, setShowImport] = useState(false);
   const [editing, setEditing] = useState<OfficeExpenseRow | null>(null);
   const [confirmDel, setConfirmDel] = useState<OfficeExpenseRow | null>(null);
   const [showOpening, setShowOpening] = useState(false);
@@ -374,6 +378,23 @@ export function OfficeApp({
       GST: paiseToRupees(r.gstPaise),
       Total: paiseToRupees(r.totalPaise),
     }));
+    // Footer TOTALS row — sums the captured Amount / GST / Total over the
+    // rows in view. Kept as the last row so it lands at the bottom of both
+    // the Excel sheet and the PDF table.
+    const amountSum = filtered.reduce((acc, r) => acc + r.amountPaise, 0n);
+    const gstSum = filtered.reduce((acc, r) => acc + r.gstPaise, 0n);
+    data.push({
+      Date: '',
+      Category: '',
+      Description: 'TOTAL',
+      Reference: '',
+      'Vendor / Employee': '',
+      Payment: '',
+      Status: '',
+      Amount: paiseToRupees(amountSum),
+      GST: paiseToRupees(gstSum),
+      Total: paiseToRupees(filteredTotal),
+    });
     exportRows(data, headers, `office-expenses-${todayIso()}`, format, 'Office Expenses');
   }
 
@@ -397,6 +418,16 @@ export function OfficeApp({
           onExport={handleExport}
           disabled={!rows || filtered.length === 0}
         />
+        <button
+          className="btn"
+          type="button"
+          disabled={!canEdit || busy}
+          onClick={() => setShowImport(true)}
+          title={canEdit ? 'Import office expenses from an Excel / CSV sheet' : 'You need edit permission to import expenses.'}
+        >
+          <Icon name="inbox" size={13} />
+          Import
+        </button>
         <button
           className="btn"
           type="button"
@@ -692,6 +723,12 @@ export function OfficeApp({
           onClose={() => setEditing(null)}
           onSubmit={(v) => handleUpdate(editing.id, v)}
           busy={busy}
+        />
+      )}
+      {showImport && (
+        <ImportOfficeExpensesModal
+          onClose={() => setShowImport(false)}
+          onImported={() => reload()}
         />
       )}
       {showOpening && (
@@ -1772,6 +1809,529 @@ function OpeningBalancesModal({
           </div>
         </form>
       )}
+    </Modal>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Excel / CSV import                                                          */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Column aliases for the office-expense import sheet. Each entry lists the
+ * accepted header names (normalised — lower-cased, punctuation stripped, spaces
+ * collapsed to single spaces) that map onto a logical field. The user's sheet
+ * uses headers like "Sr. No", "Date", "Name", "Serial No", "Invoice No",
+ * "Unit", "Per Unit (₹)", "Sub Total", "Total", "Category", "Approval",
+ * "Payment Mode" — every one of those is covered below.
+ */
+const IMPORT_COLUMN_ALIASES = {
+  srNo: ['sr no', 'sr. no', 'srno', 't no', 't.no', 'tno', 's no', 'sno', 'sl no'],
+  date: ['date', 'expense date', 'bill date', 'txn date', 'transaction date'],
+  name: ['name', 'description', 'particulars', 'item', 'details', 'expense'],
+  serialNo: ['serial no', 'serial number', 'serial', 'sl no'],
+  invoiceNo: ['invoice no', 'invoice number', 'invoice', 'bill no', 'bill number', 'inv no'],
+  unit: ['unit', 'qty', 'quantity', 'units', 'nos'],
+  perUnit: ['per unit', 'per unit (₹)', 'per unit rs', 'rate', 'unit price', 'price'],
+  subTotal: ['sub total', 'subtotal', 'sub-total', 'amount'],
+  total: ['total', 'total (₹)', 'grand total', 'net total', 'total amount'],
+  category: ['category', 'type', 'head', 'expense head'],
+  approval: ['approval', 'approved by', 'approver', 'sanctioned by'],
+  paymentMode: ['payment mode', 'payment method', 'mode', 'paid via', 'payment'],
+} satisfies Record<string, string[]>;
+
+type ImportColumnKey = keyof typeof IMPORT_COLUMN_ALIASES;
+
+/** Normalise a header for case-insensitive alias matching. */
+function normaliseImportHeader(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[.,;:_/\\]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** First index in `headers` matching any of `aliases` (already normalised). */
+function firstImportHeaderIndex(headers: readonly string[], aliases: readonly string[]): number {
+  for (const alias of aliases) {
+    const idx = headers.indexOf(alias);
+    if (idx !== -1) return idx;
+  }
+  return -1;
+}
+
+/**
+ * Parse a "DD.MM.YY" (or "DD.MM.YYYY", or "DD/MM/YY", or "DD-MM-YY") date into an
+ * ISO "YYYY-MM-DD" string. Two-digit years map to 2000+. Also accepts an
+ * already-ISO value and a JS Date (SheetJS emits Date objects with cellDates).
+ * Returns null when unparseable.
+ */
+function parseImportDate(raw: unknown): string | null {
+  if (raw instanceof Date && !Number.isNaN(raw.getTime())) {
+    const y = raw.getFullYear();
+    const m = String(raw.getMonth() + 1).padStart(2, '0');
+    const d = String(raw.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+  const v = String(raw ?? '').trim();
+  if (!v) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
+  const m = v.match(/^(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{2}|\d{4})$/);
+  if (m) {
+    const [, dd, mm, yy] = m;
+    const day = Number(dd);
+    const month = Number(mm);
+    let year = Number(yy);
+    if (yy!.length === 2) year += 2000;
+    if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+    return `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  }
+  return null;
+}
+
+/**
+ * Map a free-text payment-mode cell onto the {@link OfficeExpensePaymentMethod}
+ * enum. Defaults to 'cash' (the user's sheet says "Cash" for most rows). The
+ * server maps categories on its own — this only covers the payment column.
+ */
+function parseImportPaymentMode(raw: string): OfficeExpensePaymentMethod {
+  const v = raw.trim().toLowerCase();
+  if (!v) return 'cash';
+  if (/(cash|hand)/.test(v)) return 'cash';
+  if (/(bank|neft|rtgs|imps|cheque|check|transfer|net ?banking)/.test(v)) return 'bank';
+  if (/(card|debit|credit|visa|master|rupay)/.test(v)) return 'card';
+  if (/(upi|gpay|g pay|google pay|phonepe|paytm|bhim|qr)/.test(v)) return 'upi';
+  if (/(employee|reimburse|self|out of pocket|personal)/.test(v)) return 'employee_paid';
+  return 'cash';
+}
+
+type ImportPreview = {
+  rows: ImportOfficeExpenseRow[];
+  warnings: Array<{ row: number; message: string }>;
+  skipped: number;
+};
+
+/**
+ * Bulk-import office expenses from an Excel / CSV sheet. Parses client-side with
+ * SheetJS, maps the header row onto columns by case-insensitive alias, shows a
+ * preview + warnings, then commits via {@link importOfficeExpenses}. Mirrors the
+ * (app)-shell importers (import-employees-dialog / import-attendance-dialog) but
+ * dressed in OS chrome (Modal / Field / .btn) — no shadcn.
+ */
+function ImportOfficeExpensesModal({
+  onClose,
+  onImported,
+}: {
+  onClose: () => void;
+  onImported: () => void;
+}) {
+  const [file, setFile] = useState<File | null>(null);
+  const [preview, setPreview] = useState<ImportPreview | null>(null);
+  const [parsing, setParsing] = useState(false);
+  const [committing, setCommitting] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  function reset() {
+    setFile(null);
+    setPreview(null);
+    setErr(null);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  }
+
+  async function handleFile(selected: File) {
+    setErr(null);
+    setPreview(null);
+    if (!/\.(xlsx|xls|csv)$/i.test(selected.name)) {
+      setErr('Pick an Excel (.xlsx, .xls) or CSV file.');
+      setFile(null);
+      return;
+    }
+    setFile(selected);
+    setParsing(true);
+    try {
+      const wb = XLSX.read(new Uint8Array(await selected.arrayBuffer()), {
+        type: 'array',
+        cellDates: true,
+      });
+      const sheetName = wb.SheetNames[0];
+      if (!sheetName) throw new Error('The workbook has no sheets.');
+      const ws = wb.Sheets[sheetName]!;
+      const aoa = XLSX.utils.sheet_to_json<unknown[]>(ws, {
+        header: 1,
+        raw: false,
+        defval: '',
+        blankrows: false,
+      });
+      if (aoa.length < 2) {
+        throw new Error('The sheet has no data rows under the header.');
+      }
+
+      const headers = (aoa[0] as unknown[]).map((h) => normaliseImportHeader(String(h ?? '')));
+      const colIndex = {} as Record<ImportColumnKey, number>;
+      for (const key of Object.keys(IMPORT_COLUMN_ALIASES) as ImportColumnKey[]) {
+        colIndex[key] = firstImportHeaderIndex(headers, IMPORT_COLUMN_ALIASES[key]);
+      }
+      if (colIndex.name === -1) {
+        throw new Error(
+          'Could not find a "Name" / "Description" column. Download the template and keep the header row.',
+        );
+      }
+      if (colIndex.total === -1 && colIndex.subTotal === -1) {
+        throw new Error('Could not find a "Total" (or "Sub Total") amount column.');
+      }
+
+      const cell = (row: unknown[], key: ImportColumnKey): string => {
+        const idx = colIndex[key];
+        if (idx === -1) return '';
+        return String(row[idx] ?? '').trim();
+      };
+      const rawCell = (row: unknown[], key: ImportColumnKey): unknown => {
+        const idx = colIndex[key];
+        if (idx === -1) return '';
+        return row[idx];
+      };
+
+      const rows: ImportOfficeExpenseRow[] = [];
+      const warnings: Array<{ row: number; message: string }> = [];
+      let skipped = 0;
+
+      for (let i = 1; i < aoa.length; i++) {
+        const row = aoa[i] as unknown[];
+        // Skip fully-blank rows.
+        if (row.every((c) => String(c ?? '').trim() === '')) {
+          skipped += 1;
+          continue;
+        }
+        const rowNo = i + 1; // 1-based, header = row 1
+
+        const description = cell(row, 'name');
+        if (!description) {
+          warnings.push({ row: rowNo, message: 'No Name/Description — skipped.' });
+          skipped += 1;
+          continue;
+        }
+
+        const isoDate = parseImportDate(rawCell(row, 'date'));
+        if (!isoDate) {
+          warnings.push({ row: rowNo, message: `Unreadable date "${cell(row, 'date')}" — skipped.` });
+          skipped += 1;
+          continue;
+        }
+
+        // Amount → prefer Total, fall back to Sub Total. Strip spaces so
+        // "₹ 35, 500.00" / "35 500" still parse (parseRupeesToPaise already
+        // handles a leading ₹ and commas).
+        const totalStr = cell(row, 'total') || cell(row, 'subTotal');
+        const amountPaise = parseRupeesToPaise(totalStr.replace(/\s+/g, ''));
+        if (amountPaise === null || amountPaise <= 0n) {
+          warnings.push({
+            row: rowNo,
+            message: `Unreadable amount "${totalStr}" — skipped.`,
+          });
+          skipped += 1;
+          continue;
+        }
+
+        // Reference: prefer Invoice No; keep Serial No in notes when both exist.
+        const invoiceNo = cell(row, 'invoiceNo');
+        const serialNo = cell(row, 'serialNo');
+        const referenceNumber = invoiceNo || serialNo || null;
+
+        const noteParts: string[] = [];
+        const approval = cell(row, 'approval');
+        if (approval) noteParts.push(`Approved by: ${approval}`);
+        // Serial No goes to notes when it wasn't used as the reference.
+        if (serialNo && referenceNumber !== serialNo) noteParts.push(`Serial: ${serialNo}`);
+        const unit = cell(row, 'unit');
+        const perUnit = cell(row, 'perUnit');
+        if (unit) noteParts.push(`Qty: ${unit}`);
+        if (perUnit) noteParts.push(`Per unit: ${perUnit}`);
+
+        rows.push({
+          expenseDate: isoDate,
+          description,
+          categoryName: cell(row, 'category') || null,
+          amountPaise,
+          paymentMethod: parseImportPaymentMode(cell(row, 'paymentMode')),
+          referenceNumber,
+          notes: noteParts.length > 0 ? noteParts.join(' · ') : null,
+        });
+      }
+
+      if (rows.length === 0) {
+        throw new Error('No importable rows were found — check the date and amount columns.');
+      }
+      setPreview({ rows, warnings, skipped });
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Could not read the file.');
+      setPreview(null);
+    } finally {
+      setParsing(false);
+    }
+  }
+
+  async function commit() {
+    if (!preview || preview.rows.length === 0) return;
+    setCommitting(true);
+    setErr(null);
+    try {
+      const result = await importOfficeExpenses({ rows: preview.rows });
+      const catMsg =
+        result.categoriesCreated > 0
+          ? ` (${result.categoriesCreated} new categor${result.categoriesCreated === 1 ? 'y' : 'ies'})`
+          : '';
+      if (result.errors.length > 0) {
+        const first = result.errors
+          .slice(0, 3)
+          .map((e) => `row ${e.row}: ${e.message}`)
+          .join('; ');
+        toast.warning(
+          `Imported ${result.inserted} expense${result.inserted === 1 ? '' : 's'}${catMsg}. ${result.errors.length} row${result.errors.length === 1 ? '' : 's'} failed — ${first}`,
+        );
+      } else {
+        toast.success(
+          `Imported ${result.inserted} expense${result.inserted === 1 ? '' : 's'}${catMsg}.`,
+        );
+      }
+      onImported();
+      onClose();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Could not import the expenses.');
+    } finally {
+      setCommitting(false);
+    }
+  }
+
+  // Write a sample .xlsx with the header row + two worked example rows.
+  function downloadTemplate() {
+    const header = [
+      'Sr. No',
+      'Date',
+      'Name',
+      'Serial No',
+      'Invoice No',
+      'Unit',
+      'Per Unit (₹)',
+      'Sub Total',
+      'Total',
+      'Category',
+      'Approval',
+      'Payment Mode',
+    ];
+    const examples = [
+      [
+        1,
+        '29.01.26',
+        'A4 printer paper, 5 reams',
+        'SR-1001',
+        'INV-2618',
+        5,
+        '₹350.00',
+        '₹1,750.00',
+        '₹1,750.00',
+        'Office Supplies',
+        'Rahul Nair',
+        'Cash',
+      ],
+      [
+        2,
+        '02.02.26',
+        'Office chair',
+        'SR-1002',
+        'INV-2701',
+        1,
+        '₹6,500.00',
+        '₹6,500.00',
+        '₹6,500.00',
+        'Asset',
+        'Asha Verma',
+        'Bank',
+      ],
+    ];
+    const ws = XLSX.utils.aoa_to_sheet([header, ...examples]);
+    ws['!cols'] = header.map((h) => ({ wch: Math.max(12, h.length + 2) }));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Office Expenses');
+    XLSX.writeFile(wb, 'apar-office-expenses-template.xlsx');
+  }
+
+  const rowCount = preview?.rows.length ?? 0;
+
+  return (
+    <Modal title="Import office expenses" onClose={onClose} width={720}>
+      <div className="os-form">
+        <div
+          style={{
+            gridColumn: '1 / -1',
+            fontSize: 12,
+            color: 'var(--text-muted)',
+            lineHeight: 1.5,
+          }}
+        >
+          Upload an Excel (.xlsx, .xls) or CSV sheet. Columns are matched by name
+          — a header row is required. Amounts are read from <strong>Total</strong>{' '}
+          (falling back to <strong>Sub Total</strong>); each row is captured as-is.
+        </div>
+
+        <div style={{ gridColumn: '1 / -1', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {/* Styled label + hidden file input (no shared OS uploader). */}
+          <label className="btn" style={{ cursor: 'pointer', margin: 0 }}>
+            <Icon name="folder" size={13} />
+            {file ? 'Choose a different file' : 'Choose file'}
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".xlsx,.xls,.csv"
+              style={{ display: 'none' }}
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) void handleFile(f);
+              }}
+            />
+          </label>
+          <button type="button" className="btn" onClick={downloadTemplate}>
+            <Icon name="arrowDown" size={13} />
+            Download template
+          </button>
+          {file && (
+            <span
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                fontSize: 12,
+                color: 'var(--text-muted)',
+              }}
+            >
+              <Icon name="filetext" size={12} />
+              {file.name}
+              {parsing ? ' · reading…' : ''}
+            </span>
+          )}
+        </div>
+
+        {preview && (
+          <>
+            <div
+              style={{
+                gridColumn: '1 / -1',
+                fontSize: 12.5,
+                color: 'var(--text)',
+                display: 'flex',
+                gap: 12,
+                flexWrap: 'wrap',
+                alignItems: 'center',
+              }}
+            >
+              <strong>{rowCount}</strong> row{rowCount === 1 ? '' : 's'} ready to import
+              {preview.skipped > 0 && (
+                <span style={{ color: 'var(--text-muted)' }}>
+                  · {preview.skipped} skipped
+                </span>
+              )}
+              {preview.warnings.length > 0 && (
+                <span style={{ color: 'var(--amber)' }}>
+                  · {preview.warnings.length} warning{preview.warnings.length === 1 ? '' : 's'}
+                </span>
+              )}
+            </div>
+
+            {preview.warnings.length > 0 && (
+              <div
+                style={{
+                  gridColumn: '1 / -1',
+                  background: 'color-mix(in oklab, var(--amber) 12%, transparent)',
+                  border: '1px solid color-mix(in oklab, var(--amber) 40%, transparent)',
+                  borderRadius: 7,
+                  padding: '8px 10px',
+                  fontSize: 11.5,
+                  color: 'var(--text)',
+                  lineHeight: 1.5,
+                  maxHeight: 96,
+                  overflow: 'auto',
+                }}
+              >
+                {preview.warnings.slice(0, 6).map((w, i) => (
+                  <div key={i}>
+                    Row {w.row}: {w.message}
+                  </div>
+                ))}
+                {preview.warnings.length > 6 && (
+                  <div style={{ color: 'var(--text-muted)' }}>
+                    …and {preview.warnings.length - 6} more.
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div style={{ gridColumn: '1 / -1', overflow: 'auto', maxHeight: 320 }}>
+              <table className="table" style={{ minWidth: 640 }}>
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Description</th>
+                    <th>Category</th>
+                    <th>Reference</th>
+                    <th>Payment</th>
+                    <th style={{ textAlign: 'right' }}>Amount</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {preview.rows.slice(0, 20).map((r, i) => (
+                    <tr key={i}>
+                      <td style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                        {r.expenseDate}
+                      </td>
+                      <td>{r.description}</td>
+                      <td style={{ color: 'var(--text-muted)' }}>{r.categoryName ?? '—'}</td>
+                      <td
+                        className="font-mono"
+                        style={{ fontSize: 11, color: 'var(--text-dim)' }}
+                      >
+                        {r.referenceNumber ?? '—'}
+                      </td>
+                      <td style={{ color: 'var(--text-muted)' }}>
+                        {r.paymentMethod ? PAYMENT_LABEL[r.paymentMethod] : '—'}
+                      </td>
+                      <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                        {formatINR(typeof r.amountPaise === 'bigint' ? r.amountPaise : BigInt(r.amountPaise))}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {rowCount > 20 && (
+                <div style={{ fontSize: 11.5, color: 'var(--text-muted)', padding: '6px 2px' }}>
+                  Showing first 20 of {rowCount} rows.
+                </div>
+              )}
+            </div>
+          </>
+        )}
+
+        {err && <div className="os-form-error">{err}</div>}
+        <div className="os-form-actions">
+          {preview && (
+            <button type="button" className="btn" onClick={reset} disabled={committing}>
+              Clear
+            </button>
+          )}
+          <button type="button" className="btn" onClick={onClose} disabled={committing}>
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="btn primary"
+            onClick={() => void commit()}
+            disabled={!preview || rowCount === 0 || committing || parsing}
+          >
+            <Icon name="check" size={13} />
+            {committing ? 'Importing…' : `Import ${rowCount || ''} expense${rowCount === 1 ? '' : 's'}`}
+          </button>
+        </div>
+      </div>
     </Modal>
   );
 }

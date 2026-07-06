@@ -13,6 +13,8 @@ export * from './clients';
 export * from './vendors';
 export * from './employees';
 export * from './projects';
+export * from './project_members';
+export * from './project_tasks';
 
 // Polymorphic children
 export * from './entity_contacts';

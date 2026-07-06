@@ -379,6 +379,13 @@
       "when": 1781100090000,
       "tag": "0053_office_opening_and_categories",
       "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "7",
+      "when": 1781200090000,
+      "tag": "0054_project_members_tasks",
+      "breakpoints": true
     }
   ]
 }

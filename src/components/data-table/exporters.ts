@@ -1,4 +1,7 @@
-import * as XLSX from 'xlsx';
+// `xlsx-js-style` is a drop-in fork of `xlsx` (identical `XLSX.utils` API) that
+// additionally honors per-cell `.s` style objects on write — needed so exported
+// cells wrap long text instead of clipping.
+import * as XLSX from 'xlsx-js-style';
 import type { Cell, Row, Table } from '@tanstack/react-table';
 
 type CellValueOptions = {
@@ -51,6 +54,49 @@ function buildRows<TData>(table: Table<TData>) {
   return { headers, rows };
 }
 
+/**
+ * Compute Excel column widths and apply wrap-text styling so long values wrap
+ * inside their cell instead of clipping. Header row (row 0) is bolded and also
+ * wraps. Mutates `sheet` in place. Caps content sampling for perf.
+ */
+function styleSheetForWrapping(
+  sheet: XLSX.WorkSheet,
+  headers: readonly string[],
+  rows: ReadonlyArray<Record<string, unknown>>,
+) {
+  const SAMPLE_CAP = 200;
+  const sampleCount = Math.min(rows.length, SAMPLE_CAP);
+
+  sheet['!cols'] = headers.map((h) => {
+    let maxLen = String(h).length;
+    for (let r = 0; r < sampleCount; r++) {
+      const v = rows[r]![h];
+      if (v === null || v === undefined) continue;
+      const len = String(v).length;
+      if (len > maxLen) maxLen = len;
+    }
+    const wch = Math.max(10, Math.min(60, maxLen + 2));
+    return { wch };
+  });
+
+  const ref = sheet['!ref'];
+  if (!ref) return;
+  const range = XLSX.utils.decode_range(ref);
+  for (let r = range.s.r; r <= range.e.r; r++) {
+    const isHeader = r === 0;
+    for (let c = range.s.c; c <= range.e.c; c++) {
+      const addr = XLSX.utils.encode_cell({ c, r });
+      const cell = sheet[addr] as XLSX.CellObject | undefined;
+      if (!cell) continue;
+      const style: Record<string, unknown> = {
+        alignment: { wrapText: true, vertical: 'top' },
+      };
+      if (isHeader) style.font = { bold: true };
+      cell.s = style;
+    }
+  }
+}
+
 function triggerDownload(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
@@ -95,6 +141,8 @@ export function exportTableToPdf<TData>(table: Table<TData>, filename: string) {
 export function exportTableToXlsx<TData>(table: Table<TData>, filename: string) {
   const { headers, rows } = buildRows(table);
   const sheet = XLSX.utils.json_to_sheet(rows, { header: headers });
+  // Widths + wrap-text so long values don't clip in Excel.
+  styleSheetForWrapping(sheet, headers, rows);
   const book = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(book, sheet, 'Data');
   const buffer = XLSX.write(book, { type: 'array', bookType: 'xlsx' }) as ArrayBuffer;

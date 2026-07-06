@@ -667,3 +667,321 @@ export async function deleteOfficeExpenseCategory(args: { id: string }): Promise
     changes: { soft_delete: true },
   });
 }
+
+/* -------------------------------------------------------------------------- */
+/* Bulk import                                                                 */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Human labels for the fixed {@link CategoryEnum} built-ins. Sourced from the
+ * OS Office app's CATEGORY_DEFS. Used to resolve a free-text category name from
+ * an imported sheet onto a built-in enum value before falling back to a custom
+ * category. Keyed case-insensitively (see {@link resolveBuiltInCategory}).
+ */
+const BUILT_IN_CATEGORY_LABELS: Record<OfficeExpenseCategory, string> = {
+  stationary: 'Stationary',
+  toiletries: 'Toiletries',
+  tea_coffee: 'Tea & Coffee',
+  cleaning: 'Cleaning',
+  leisure: 'Leisure',
+  utilities: 'Utilities',
+  rent: 'Rent',
+  travel: 'Travel',
+  repairs: 'Repairs',
+  reimbursement: 'Reimbursement',
+  other: 'Other',
+};
+
+/** Normalise a category string for case-insensitive matching. */
+function normaliseCategoryKey(raw: string): string {
+  return raw.trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+const BUILT_IN_CATEGORY_LOOKUP: ReadonlyMap<string, OfficeExpenseCategory> = (() => {
+  const m = new Map<string, OfficeExpenseCategory>();
+  for (const value of CategoryEnum.options) {
+    // Match on the raw enum id ("tea_coffee") …
+    m.set(normaliseCategoryKey(value), value);
+    // … the id with underscores as spaces ("tea coffee") …
+    m.set(normaliseCategoryKey(value.replace(/_/g, ' ')), value);
+    // … and the human label ("Tea & Coffee").
+    m.set(normaliseCategoryKey(BUILT_IN_CATEGORY_LABELS[value]), value);
+  }
+  return m;
+})();
+
+/** Returns the built-in enum value for a category name, or null if none. */
+function resolveBuiltInCategory(raw: string): OfficeExpenseCategory | null {
+  return BUILT_IN_CATEGORY_LOOKUP.get(normaliseCategoryKey(raw)) ?? null;
+}
+
+export type ImportOfficeExpenseRow = {
+  expenseDate: string;
+  description: string;
+  categoryName?: string | null;
+  amountPaise: bigint | string;
+  gstPaise?: bigint | string;
+  paymentMethod?: OfficeExpensePaymentMethod;
+  referenceNumber?: string | null;
+  notes?: string | null;
+};
+
+export type ImportOfficeExpensesResult = {
+  inserted: number;
+  categoriesCreated: number;
+  errors: Array<{ row: number; message: string }>;
+};
+
+const ImportRowSchema = z.object({
+  expenseDate: z.string().regex(dateRegex, 'expenseDate must be YYYY-MM-DD'),
+  description: z.string().trim().min(1, 'description is required').max(500),
+  categoryName: z.string().max(120).nullable().optional(),
+  amountPaise: bigintStringSchema,
+  gstPaise: bigintStringSchema.optional(),
+  paymentMethod: PaymentMethodEnum.optional(),
+  referenceNumber: z.string().max(120).nullable().optional(),
+  notes: z.string().max(2000).nullable().optional(),
+});
+
+const ImportSchema = z.object({
+  rows: z.array(z.unknown()).max(2000),
+});
+
+/**
+ * Best-effort bulk import of office expenses from a parsed sheet. Each row is
+ * validated + inserted independently: a bad row is recorded in `errors` and the
+ * import continues. Category resolution:
+ *   - a name matching a built-in ({@link CategoryEnum}) id or label uses that
+ *     enum value with `customCategoryId=null`;
+ *   - any other non-empty name find-or-creates a custom category (mirrors
+ *     {@link createOfficeExpenseCategory}) and sets `category='other'` +
+ *     `customCategoryId` + `categoryNote=<name>`;
+ *   - a blank/absent name falls back to `'other'` with no custom category.
+ */
+export async function importOfficeExpenses(input: {
+  rows: ImportOfficeExpenseRow[];
+}): Promise<ImportOfficeExpensesResult> {
+  const ctx = await getActorContext();
+  const { rows } = ImportSchema.parse(input);
+
+  const result: ImportOfficeExpensesResult = {
+    inserted: 0,
+    categoriesCreated: 0,
+    errors: [],
+  };
+
+  // Cache resolved custom categories by normalised name within this import so
+  // two rows with the same custom label reuse one category (and count once).
+  const customCategoryCache = new Map<string, string>();
+
+  for (let i = 0; i < rows.length; i++) {
+    // `row` numbers are 1-based for a human reading the source sheet.
+    const rowNo = i + 1;
+    try {
+      const parsed = ImportRowSchema.parse(rows[i]);
+
+      let category: OfficeExpenseCategory = 'other';
+      let customCategoryId: string | null = null;
+      let categoryNote: string | null = null;
+
+      const rawName = parsed.categoryName?.trim() ?? '';
+      if (rawName) {
+        const builtIn = resolveBuiltInCategory(rawName);
+        if (builtIn) {
+          category = builtIn;
+        } else {
+          category = 'other';
+          categoryNote = rawName;
+          const key = normaliseCategoryKey(rawName);
+          const cached = customCategoryCache.get(key);
+          if (cached) {
+            customCategoryId = cached;
+          } else {
+            customCategoryId = await resolveOrCreateCustomCategory(rawName, ctx.userId, result);
+            customCategoryCache.set(key, customCategoryId);
+          }
+        }
+      }
+
+      await db.insert(officeExpenses).values({
+        expenseDate: parsed.expenseDate,
+        category,
+        description: parsed.description,
+        vendorId: null,
+        vendorName: null,
+        employeeId: null,
+        amountPaise: parsed.amountPaise,
+        gstPaise: parsed.gstPaise ?? 0n,
+        paymentMethod: parsed.paymentMethod ?? 'bank',
+        status: category === 'reimbursement' ? 'pending' : 'approved',
+        referenceNumber: parsed.referenceNumber ?? null,
+        notes: parsed.notes ?? null,
+        customCategoryId,
+        categoryNote,
+        createdBy: ctx.userId,
+        updatedBy: ctx.userId,
+      });
+      result.inserted += 1;
+    } catch (err) {
+      const message =
+        err instanceof z.ZodError
+          ? err.issues.map((e) => `${e.path.join('.') || 'row'}: ${e.message}`).join('; ')
+          : err instanceof AppError
+            ? err.message
+            : err instanceof Error
+              ? err.message
+              : 'Unknown error';
+      result.errors.push({ row: rowNo, message });
+    }
+  }
+
+  await logAudit({
+    actorId: ctx.userId,
+    entityType: 'office_expense',
+    entityId: '00000000-0000-0000-0000-000000000000',
+    action: 'insert',
+    changes: {
+      bulk_import: true,
+      inserted: result.inserted,
+      categoriesCreated: result.categoriesCreated,
+      errorCount: result.errors.length,
+    },
+  });
+
+  return result;
+}
+
+/**
+ * Find (case-insensitive, among active) or create a custom category. Mirrors
+ * {@link createOfficeExpenseCategory}'s dedupe rule; increments
+ * `result.categoriesCreated` when a new row is inserted.
+ */
+async function resolveOrCreateCustomCategory(
+  rawName: string,
+  userId: string,
+  result: ImportOfficeExpensesResult,
+): Promise<string> {
+  const name = rawName.trim();
+  const [existing] = await db
+    .select({ id: officeExpenseCategories.id })
+    .from(officeExpenseCategories)
+    .where(and(isNull(officeExpenseCategories.deletedAt), ilike(officeExpenseCategories.name, name)))
+    .limit(1);
+  if (existing) return existing.id;
+
+  const [row] = await db
+    .insert(officeExpenseCategories)
+    .values({
+      name,
+      color: null,
+      hint: null,
+      createdBy: userId,
+      updatedBy: userId,
+    })
+    .returning({ id: officeExpenseCategories.id });
+  if (!row) throw new AppError('internal', 'office expense category insert returned no row');
+
+  result.categoriesCreated += 1;
+  return row.id;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Trash — restore / permanent delete                                          */
+/* -------------------------------------------------------------------------- */
+
+export async function restoreOfficeExpense(input: { id: string }): Promise<void> {
+  const ctx = await getActorContext();
+  const parsed = z.object({ id: z.string().uuid() }).parse(input);
+
+  const result = await db
+    .update(officeExpenses)
+    .set({ deletedAt: null, updatedBy: ctx.userId })
+    .where(and(eq(officeExpenses.id, parsed.id), sql`${officeExpenses.deletedAt} is not null`))
+    .returning({ id: officeExpenses.id });
+  if (result.length === 0) {
+    throw new AppError('not_found', 'Office expense not found or not deleted.');
+  }
+
+  await logAudit({
+    actorId: ctx.userId,
+    entityType: 'office_expense',
+    entityId: parsed.id,
+    action: 'update',
+    changes: { restore: true },
+  });
+}
+
+export async function permanentlyDeleteOfficeExpense(input: { id: string }): Promise<void> {
+  const ctx = await getActorContext();
+  const parsed = z.object({ id: z.string().uuid() }).parse(input);
+
+  // Only purge rows that are already soft-deleted (in the trash).
+  const result = await db
+    .delete(officeExpenses)
+    .where(and(eq(officeExpenses.id, parsed.id), sql`${officeExpenses.deletedAt} is not null`))
+    .returning({ id: officeExpenses.id });
+  if (result.length === 0) {
+    throw new AppError('not_found', 'Office expense not found in trash.');
+  }
+
+  await logAudit({
+    actorId: ctx.userId,
+    entityType: 'office_expense',
+    entityId: parsed.id,
+    action: 'delete',
+    changes: { permanent: true },
+  });
+}
+
+export async function restoreOfficeExpenseCategory(input: { id: string }): Promise<void> {
+  const ctx = await getActorContext();
+  const parsed = z.object({ id: z.string().uuid() }).parse(input);
+
+  const result = await db
+    .update(officeExpenseCategories)
+    .set({ deletedAt: null, updatedBy: ctx.userId })
+    .where(
+      and(
+        eq(officeExpenseCategories.id, parsed.id),
+        sql`${officeExpenseCategories.deletedAt} is not null`,
+      ),
+    )
+    .returning({ id: officeExpenseCategories.id });
+  if (result.length === 0) {
+    throw new AppError('not_found', 'Office expense category not found or not deleted.');
+  }
+
+  await logAudit({
+    actorId: ctx.userId,
+    entityType: 'office_expense_category',
+    entityId: parsed.id,
+    action: 'update',
+    changes: { restore: true },
+  });
+}
+
+export async function permanentlyDeleteOfficeExpenseCategory(input: { id: string }): Promise<void> {
+  const ctx = await getActorContext();
+  const parsed = z.object({ id: z.string().uuid() }).parse(input);
+
+  const result = await db
+    .delete(officeExpenseCategories)
+    .where(
+      and(
+        eq(officeExpenseCategories.id, parsed.id),
+        sql`${officeExpenseCategories.deletedAt} is not null`,
+      ),
+    )
+    .returning({ id: officeExpenseCategories.id });
+  if (result.length === 0) {
+    throw new AppError('not_found', 'Office expense category not found in trash.');
+  }
+
+  await logAudit({
+    actorId: ctx.userId,
+    entityType: 'office_expense_category',
+    entityId: parsed.id,
+    action: 'delete',
+    changes: { permanent: true },
+  });
+}
