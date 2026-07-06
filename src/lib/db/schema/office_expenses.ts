@@ -4,6 +4,7 @@ import { auditColumns, timestamps } from './_shared';
 import { employees } from './employees';
 import { officeExpenseCategories } from './office_expense_categories';
 import { projects } from './projects';
+import { transactions } from './transactions';
 import { vendors } from './vendors';
 
 /**
@@ -92,6 +93,12 @@ export const officeExpenses = pgTable(
     customCategoryId: uuid().references(() => officeExpenseCategories.id),
     /** Free-text note paired with `customCategoryId`. Nullable. */
     categoryNote: text(),
+    /**
+     * The posted GL journal this expense created (auto-post on save). Null
+     * for reimbursement-category rows and legacy capture-only rows. A delete
+     * reverses this transaction; an edit reverses + reposts.
+     */
+    transactionId: uuid().references(() => transactions.id),
     notes: text(),
   },
   (t) => [
@@ -101,6 +108,7 @@ export const officeExpenses = pgTable(
     index().on(t.vendorId),
     index().on(t.projectId),
     index().on(t.status),
+    index().on(t.transactionId),
   ],
 );
 

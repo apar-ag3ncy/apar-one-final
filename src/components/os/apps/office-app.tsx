@@ -634,6 +634,22 @@ export function OfficeApp({
                           {r.referenceNumber}
                         </div>
                       )}
+                      {r.posted && (
+                        <div
+                          title="Posted to the general ledger"
+                          style={{
+                            fontSize: 10.5,
+                            color: 'var(--apar-green, #2E8F5A)',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 3,
+                            marginTop: 2,
+                          }}
+                        >
+                          <Icon name="check" size={10} />
+                          Posted to ledger
+                        </div>
+                      )}
                     </td>
                     <td style={{ color: 'var(--text-muted)' }}>
                       {r.category === 'reimbursement'
@@ -736,10 +752,14 @@ export function OfficeApp({
       )}
       {confirmDel && (
         <ConfirmDialog
-          title={`Remove "${confirmDel.description}"?`}
-          message="The entry is soft-deleted. The ledger record (when posted) is unaffected — only this capture row is removed from the Office app list."
+          title={`Delete "${confirmDel.description}"?`}
+          message={
+            confirmDel.posted
+              ? 'This permanently deletes the expense from the database and reverses its ledger entry (a log of the deletion is kept). This cannot be undone.'
+              : 'This permanently deletes the expense from the database (a log of the deletion is kept). This cannot be undone.'
+          }
           destructive
-          confirmLabel="Remove entry"
+          confirmLabel="Delete permanently"
           onCancel={() => setConfirmDel(null)}
           onConfirm={() => handleDelete(confirmDel)}
         />
