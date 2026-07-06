@@ -722,10 +722,11 @@ function TasksBody({ projectId, canEdit }: { projectId: string; canEdit: boolean
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  // Add-task inline form state.
+  // Add-task inline form state. Due date starts at today — the common case —
+  // and stays editable.
   const [title, setTitle] = useState('');
   const [assignee, setAssignee] = useState('');
-  const [dueOn, setDueOn] = useState('');
+  const [dueOn, setDueOn] = useState(todayISODate());
 
   useEffect(() => {
     let cancelled = false;
@@ -783,7 +784,7 @@ function TasksBody({ projectId, canEdit }: { projectId: string; canEdit: boolean
       setTasks((prev) => [...prev, row]);
       setTitle('');
       setAssignee('');
-      setDueOn('');
+      setDueOn(todayISODate());
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Failed to add task');
     } finally {
@@ -1143,6 +1144,12 @@ function DetailGrid({ items }: { items: ReadonlyArray<[string, string]> }) {
       ))}
     </dl>
   );
+}
+
+function todayISODate(): string {
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
 const TONES = ['#7A4E2D', '#3F4E8E', '#5E7344', '#7A2D4E', '#2D5E7A', '#7A6A2D'] as const;

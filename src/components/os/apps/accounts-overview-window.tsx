@@ -119,16 +119,26 @@ export function AccountsOverviewWindow() {
   const monthStart = monthStartIso(today);
   const openingAsOf = priorMonthEndIso(today);
 
+  // GST compliance always looks one month BACK: the GSTR-1 due on the 11th
+  // and the GSTR-3B due on the 20th cover the PREVIOUS month's invoices.
+  const prevMonthEnd = openingAsOf;
+  const prevMonthKey = prevMonthEnd.slice(0, 7);
+  const prevMonthStart = `${prevMonthKey}-01`;
+  const prevMonthLabel = new Date(`${prevMonthStart}T00:00:00Z`).toLocaleDateString('en-IN', {
+    month: 'short',
+    year: 'numeric',
+  });
+
   const tbNow = useReportData(() => getTrialBalance({ asOfDate: today }), [today]);
   const tbOpen = useReportData(() => getTrialBalance({ asOfDate: openingAsOf }), [openingAsOf]);
   const banks = useReportData(
     () => getCombinedBankBook({ from: fy.fromDate, to: today }),
     [fy.fromDate, today],
   );
-  const gst = useReportData(() => getGstSummary({ from: fy.fromDate, to: today }), [
-    fy.fromDate,
-    today,
-  ]);
+  // Fetch from whichever is earlier — the FY start or the previous month —
+  // so the filing-period row is present even in April (prev month = last FY).
+  const gstFrom = prevMonthStart < fy.fromDate ? prevMonthStart : fy.fromDate;
+  const gst = useReportData(() => getGstSummary({ from: gstFrom, to: today }), [gstFrom, today]);
 
   const now = tbNow.data ?? null;
   const open = tbOpen.data ?? null;
@@ -146,7 +156,10 @@ export function AccountsOverviewWindow() {
   const tdsPayable = crBal(now, '2130');
   const cash = drBal(now, '1110');
 
+  // Current month — shown in the GST box for context.
   const gstMonth = gst.data?.rows.find((r) => r.month === monthKey) ?? null;
+  // Previous month — the period the GSTR-1/3B deadlines actually cover.
+  const gstFiling = gst.data?.rows.find((r) => r.month === prevMonthKey) ?? null;
 
   const loading = tbNow.data === null || tbOpen.data === null;
   const error = tbNow.error ?? tbOpen.error ?? banks.error ?? gst.error;
@@ -217,18 +230,26 @@ export function AccountsOverviewWindow() {
           <HabitCard
             due={`by ${formatDue(nextDueDate(today, 11))}`}
             title="File GSTR-1"
-            detail="Invoice-level detail of the GST charged this month. Click for the invoices."
-            amount={gstMonth?.outputPaise ?? 0n}
-            amountLabel="output this month"
-            onClick={() => openReport('sales-register', 'Sales Register')}
+            detail={`Invoice-level detail of the GST charged in ${prevMonthLabel} — returns always cover the previous month. Click for those invoices.`}
+            amount={gstFiling?.outputPaise ?? 0n}
+            amountLabel={`output for ${prevMonthLabel}`}
+            onClick={() =>
+              openStatement({
+                codes: ['2120'],
+                positive: 'credit',
+                title: `Output GST — ${prevMonthLabel}, invoice by invoice`,
+                from: prevMonthStart,
+                to: prevMonthEnd,
+              })
+            }
           />
           <HabitCard
             due={`by ${formatDue(nextDueDate(today, 20))}`}
             title="GSTR-3B — pay net GST"
-            detail="GST collected minus GST vendors charged us. Click for the month-by-month book."
-            amount={gstMonth?.netPayablePaise ?? 0n}
-            amountLabel="net payable"
-            urgent={(gstMonth?.netPayablePaise ?? 0n) > 0n}
+            detail={`GST collected in ${prevMonthLabel} minus the ITC from that month's vendor bills.`}
+            amount={gstFiling?.netPayablePaise ?? 0n}
+            amountLabel={`net payable for ${prevMonthLabel}`}
+            urgent={(gstFiling?.netPayablePaise ?? 0n) > 0n}
             onClick={() => openReport('gst-summary', 'GST Summary')}
           />
           <HabitCard
@@ -368,7 +389,39 @@ export function AccountsOverviewWindow() {
             hint="Rides on top of prices. Never our money — just passing through."
           >
             <Line
-              label="Output GST this month"
+              label={`Output GST (${prevMonthLabel} — filing period)`}
+              value={gstFiling?.outputPaise ?? 0n}
+              onClick={() =>
+                openStatement({
+                  codes: ['2120'],
+                  positive: 'credit',
+                  title: `Output GST — ${prevMonthLabel}, invoice by invoice`,
+                  from: prevMonthStart,
+                  to: prevMonthEnd,
+                })
+              }
+            />
+            <Line
+              label={`Input credit (${prevMonthLabel})`}
+              value={gstFiling?.inputPaise ?? 0n}
+              onClick={() =>
+                openStatement({
+                  codes: ['1250'],
+                  positive: 'debit',
+                  title: `GST Input Credit — ${prevMonthLabel}, bill by bill`,
+                  from: prevMonthStart,
+                  to: prevMonthEnd,
+                })
+              }
+            />
+            <Line
+              label={`Net owed to govt (${prevMonthLabel})`}
+              value={gstFiling?.netPayablePaise ?? 0n}
+              strong
+              onClick={() => openReport('gst-summary', 'GST Summary')}
+            />
+            <Line
+              label="Output GST this month (files next month)"
               value={gstMonth?.outputPaise ?? 0n}
               onClick={() =>
                 openStatement({
@@ -378,24 +431,6 @@ export function AccountsOverviewWindow() {
                   ...monthRange,
                 })
               }
-            />
-            <Line
-              label="Input credit this month"
-              value={gstMonth?.inputPaise ?? 0n}
-              onClick={() =>
-                openStatement({
-                  codes: ['1250'],
-                  positive: 'debit',
-                  title: `GST Input Credit — ${monthKey}, bill by bill`,
-                  ...monthRange,
-                })
-              }
-            />
-            <Line
-              label="Net owed to govt (month)"
-              value={gstMonth?.netPayablePaise ?? 0n}
-              strong
-              onClick={() => openReport('gst-summary', 'GST Summary')}
             />
             <Line
               label="ITC balance on the books"

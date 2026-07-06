@@ -457,7 +457,8 @@ function UploadDialog({
   const [file, setFile] = useState<File | null>(null);
   const [kind, setKind] = useState<string>('contract');
   const [title, setTitle] = useState('');
-  const [signedAt, setSignedAt] = useState('');
+  // Signed-on defaults to today (editable); expiry stays blank — unknown by default.
+  const [signedAt, setSignedAt] = useState(todayIstIso());
   const [expiresAt, setExpiresAt] = useState('');
   const [signedByUs, setSignedByUs] = useState(false);
   const [signedByThem, setSignedByThem] = useState(false);
@@ -479,8 +480,8 @@ function UploadDialog({
   const [readinessAttempt, setReadinessAttempt] = useState(0);
   const [projectOptions, setProjectOptions] = useState<readonly EntityOption[]>([]);
   const [invNumber, setInvNumber] = useState('');
-  const [invDate, setInvDate] = useState('');
-  const [invDueDate, setInvDueDate] = useState('');
+  const [invDate, setInvDate] = useState(todayIstIso());
+  const [invDueDate, setInvDueDate] = useState(todayIstIso());
   const [invProjectId, setInvProjectId] = useState<string>(NO_PROJECT);
   const [invSubtotal, setInvSubtotal] = useState('');
   const [invCgst, setInvCgst] = useState('');
@@ -505,7 +506,7 @@ function UploadDialog({
       setFile(null);
       setKind('contract');
       setTitle('');
-      setSignedAt('');
+      setSignedAt(todayIstIso());
       setExpiresAt('');
       setSignedByUs(false);
       setSignedByThem(false);
@@ -514,7 +515,7 @@ function UploadDialog({
       setProjectOptions([]);
       setInvNumber('');
       setInvDate(todayIstIso());
-      setInvDueDate('');
+      setInvDueDate(todayIstIso());
       setInvProjectId(NO_PROJECT);
       setInvSubtotal('');
       setInvCgst('');
