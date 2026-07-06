@@ -1,6 +1,6 @@
 'use server';
 
-import { and, asc, eq, gte, inArray, isNull, lte, ne, notInArray, sql } from 'drizzle-orm';
+import { and, asc, eq, gte, inArray, isNull, like, lte, ne, notInArray, sql } from 'drizzle-orm';
 
 import { db } from '@/lib/db/client';
 import { accounts, clients, employees, postings, transactions, vendors } from '@/lib/db/schema';
@@ -190,7 +190,8 @@ async function fetchSubledgerLines(
       }
     | { kind: 'accountCodes'; codes: readonly string[] }
     | { kind: 'bankAccount'; bankAccountId: string }
-    | { kind: 'incurredByEmployee'; employeeId: string },
+    | { kind: 'incurredByEmployee'; employeeId: string }
+    | { kind: 'officeExpenses' },
   opts: { from?: string; to?: string; includeReversed?: boolean },
 ): Promise<RawLine[]> {
   const conds = [] as Array<ReturnType<typeof eq>>;
@@ -216,6 +217,17 @@ async function fetchSubledgerLines(
     conds.push(eq(accounts.code, '1120'));
     conds.push(eq(postings.subledgerEntityType, 'office'));
     conds.push(eq(postings.subledgerEntityId, filter.bankAccountId));
+  } else if (filter.kind === 'officeExpenses') {
+    // Every expense recorded in the Office app auto-posts a `journal` txn whose
+    // external ref is OFFEXP-<row id>-<ts> (Dr 6200/6900 OpEx + Dr 1250 GST /
+    // Cr 1110 Cash). Match those txns and keep only the OpEx debit leg (6200 or
+    // 6900) so each expense shows once and the running total reads as cumulative
+    // office spend, net of GST. Filtering on the OFFEXP- ref (not just the
+    // account codes) is deliberate: 6200/6900 are shared OpEx buckets that
+    // vendor bills and employee reimbursements also post to — those are NOT
+    // recorded in the Office app and must stay out of this ledger.
+    conds.push(like(transactions.externalRef, 'OFFEXP-%'));
+    conds.push(inArray(accounts.code, ['6200', '6900']));
   } else {
     conds.push(inArray(accounts.code, filter.codes as string[]));
   }
@@ -413,21 +425,19 @@ export async function getOfficeStatement(args: {
 }
 
 /**
- * **Office utilities Statement** — every posting on the rent + utilities
- * expense account (6200 Office Rent & Utilities). Closing balance =
- * total spend in the window.
+ * **Office utilities Statement** — every expense recorded in the Office
+ * app, regardless of category. Each one auto-posts an OFFEXP- journal
+ * whose OpEx leg lands in 6200 (Office Rent & Utilities) or 6900 (Other
+ * OpEx); this pulls that leg for all of them so the office-utilities
+ * ledger is the single book of every office expense. Closing balance =
+ * total office spend in the window (net of GST — the input-credit leg
+ * sits on 1250, not here).
  *
- * 6200 is an expense account that increases with debits and decreases
- * with credits, so debit-side postings add to the running total (more
- * spend) and credit-side postings subtract (refund, reversal, mis-
- * attribution correction). The headline matches the user's intuition:
- * "how much we spent on rent + utilities in this date range".
- *
- * The chart-of-accounts seed in 0007_ledger.sql defines 6200 as a
- * consolidated bucket covering rent + electricity + internet + water.
- * If the spec later splits it into per-utility accounts (6210 Rent,
- * 6220 Electricity, 6230 Internet, …) widen `codes` here to the new
- * set — the rest of the surface keeps working.
+ * The OpEx leg is a debit, so debit-side postings add to the running
+ * total (more spend) and credit-side postings subtract (refund,
+ * reversal, mis-attribution correction). See the `officeExpenses`
+ * branch in fetchSubledgerLines for why this filters on the OFFEXP-
+ * ref rather than the (shared) 6200/6900 account codes.
  */
 export async function getOfficeUtilitiesStatement(args: {
   from?: string;
@@ -436,7 +446,7 @@ export async function getOfficeUtilitiesStatement(args: {
 }): Promise<Statement> {
   await getActorContext();
   const lines = await fetchSubledgerLines(
-    { kind: 'accountCodes', codes: ['6200'] },
+    { kind: 'officeExpenses' },
     { from: args.from, to: args.to, includeReversed: args.includeReversed },
   );
   return finalizeStatement(lines, (side) => (side === 'debit' ? 1n : -1n));

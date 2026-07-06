@@ -2,10 +2,12 @@
 
 // Office Utilities Ledger OS window.
 //
-// Every posting on account 6200 (Office Rent & Utilities) over the
-// selected date range, with a running total of spend. Mirrors the
-// Office Ledger (cash/bank) window's shape — same StatementOfAccount
-// renderer, different account-code filter on the server side.
+// Every expense recorded in the Office app over the selected date range,
+// with a running total of spend. This is the single book of all office
+// expenses — each Office-app entry auto-posts an OFFEXP- journal and its
+// OpEx leg shows here, whatever the category. Mirrors the Office Ledger
+// (cash/bank) window's shape — same StatementOfAccount renderer, a
+// different server-side filter (getOfficeUtilitiesStatement).
 
 import { useEffect, useMemo, useState } from 'react';
 
@@ -69,9 +71,9 @@ export function OfficeUtilitiesWindow() {
             Office utilities ledger
           </div>
           <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-            Postings on account 6200 (Office Rent &amp; Utilities). Covers rent, electricity,
-            internet, water — every line that hits the consolidated utilities bucket. Closing
-            balance = total spend in the window.
+            Every expense recorded in the Office app — rent, utilities, stationery, travel,
+            repairs and every other category, each one landing here as it&apos;s logged. Closing
+            balance = total office spend in the window.
           </div>
         </div>
         <DateField label="From" value={fromDate} onChange={setFromDate} />
@@ -83,8 +85,8 @@ export function OfficeUtilitiesWindow() {
       ) : (
         <StatementOfAccount
           statement={statement}
-          noun="utility postings"
-          balanceMeaning="Total spend on rent + utilities in this range"
+          noun="office expenses"
+          balanceMeaning="Total office spend in this range"
           rangeLabel={`${fromDate} → ${toDate}`}
           exportName={`office-utilities-${fromDate}_to_${toDate}`}
           onSelectTransaction={(txnId) =>

@@ -343,8 +343,18 @@ export function OfficeApp({
     )[0]!;
   }, [summary]);
 
-  const filteredTotal = useMemo(
-    () => filtered.reduce((acc, r) => acc + r.totalPaise, 0n),
+  // Sums over the rows currently in view — feeds the subheader, the export
+  // TOTAL row, and the table's footer total line.
+  const filteredTotals = useMemo(
+    () =>
+      filtered.reduce(
+        (acc, r) => ({
+          amount: acc.amount + r.amountPaise,
+          gst: acc.gst + r.gstPaise,
+          total: acc.total + r.totalPaise,
+        }),
+        { amount: 0n, gst: 0n, total: 0n },
+      ),
     [filtered],
   );
 
@@ -463,8 +473,6 @@ export function OfficeApp({
     // Footer TOTALS row — sums the captured Amount / GST / Total over the
     // rows in view. Kept as the last row so it lands at the bottom of both
     // the Excel sheet and the PDF table.
-    const amountSum = filtered.reduce((acc, r) => acc + r.amountPaise, 0n);
-    const gstSum = filtered.reduce((acc, r) => acc + r.gstPaise, 0n);
     data.push({
       Date: '',
       Category: '',
@@ -473,9 +481,9 @@ export function OfficeApp({
       'Vendor / Employee': '',
       Payment: '',
       Status: '',
-      Amount: paiseToRupees(amountSum),
-      GST: paiseToRupees(gstSum),
-      Total: paiseToRupees(filteredTotal),
+      Amount: paiseToRupees(filteredTotals.amount),
+      GST: paiseToRupees(filteredTotals.gst),
+      Total: paiseToRupees(filteredTotals.total),
     });
     exportRows(data, headers, `office-expenses-${todayIso()}`, format, 'Office Expenses');
   }
@@ -485,7 +493,7 @@ export function OfficeApp({
       <div className="main-header">
         <h2>Office</h2>
         <span className="sub">
-          {rows ? `${rows.length} entries · ${formatINR(filteredTotal)} in view` : 'Loading…'}
+          {rows ? `${rows.length} entries · ${formatINR(filteredTotals.total)} in view` : 'Loading…'}
         </span>
         <div className="grow" />
         <div className="search-input">
@@ -826,6 +834,77 @@ export function OfficeApp({
                 );
               })}
             </tbody>
+            <tfoot>
+              {/* Last line: totals over the rows in view. Sticks to the bottom
+                  of the scroll area so the running sum is always visible. */}
+              <tr>
+                <td
+                  colSpan={6}
+                  style={{
+                    position: 'sticky',
+                    bottom: 0,
+                    background: 'var(--content-2)',
+                    borderTop: '2px solid var(--border)',
+                    padding: '11px 14px',
+                    textAlign: 'right',
+                    fontWeight: 600,
+                    color: 'var(--text-muted)',
+                  }}
+                >
+                  Total · {filtered.length} {filtered.length === 1 ? 'entry' : 'entries'}
+                </td>
+                <td
+                  style={{
+                    position: 'sticky',
+                    bottom: 0,
+                    background: 'var(--content-2)',
+                    borderTop: '2px solid var(--border)',
+                    padding: '11px 14px',
+                    textAlign: 'right',
+                    fontWeight: 600,
+                    fontVariantNumeric: 'tabular-nums',
+                  }}
+                >
+                  {formatINR(filteredTotals.amount)}
+                </td>
+                <td
+                  style={{
+                    position: 'sticky',
+                    bottom: 0,
+                    background: 'var(--content-2)',
+                    borderTop: '2px solid var(--border)',
+                    padding: '11px 14px',
+                    textAlign: 'right',
+                    fontWeight: 600,
+                    fontVariantNumeric: 'tabular-nums',
+                  }}
+                >
+                  {formatINR(filteredTotals.gst)}
+                </td>
+                <td
+                  style={{
+                    position: 'sticky',
+                    bottom: 0,
+                    background: 'var(--content-2)',
+                    borderTop: '2px solid var(--border)',
+                    padding: '11px 14px',
+                    textAlign: 'right',
+                    fontWeight: 700,
+                    fontVariantNumeric: 'tabular-nums',
+                  }}
+                >
+                  {formatINR(filteredTotals.total)}
+                </td>
+                <td
+                  style={{
+                    position: 'sticky',
+                    bottom: 0,
+                    background: 'var(--content-2)',
+                    borderTop: '2px solid var(--border)',
+                  }}
+                />
+              </tr>
+            </tfoot>
           </table>
         )}
       </div>
