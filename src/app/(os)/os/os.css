@@ -742,10 +742,21 @@
 .os-root .btn {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
+  /* Uniform metrics for every button in the OS: a fixed height and one font so
+     all buttons share the same height + typeface; the width grows with the
+     label. box-sizing:border-box keeps the height honest even if a caller adds
+     inline padding, and white-space:nowrap stops a long label from wrapping
+     (which would otherwise change the height). */
+  height: 30px;
+  box-sizing: border-box;
+  padding: 0 12px;
+  font-family: inherit;
   font-size: 12.5px;
   font-weight: 500;
-  padding: 6px 11px;
+  line-height: 1;
+  white-space: nowrap;
   border-radius: 6px;
   border: 1px solid var(--border);
   background: var(--content);
@@ -2172,9 +2183,12 @@
   background: var(--apar-red-deep);
 }
 
-/* Generic per-row action button (used for edit + delete in table rows). */
+/* Generic per-row action button (used for edit + delete in table rows).
+   Icon-only + compact — kept smaller than the standard 30px text button, but
+   consistent with each other. */
 .os-root .row-actions .row-action {
-  padding: 3px 7px;
+  height: 26px;
+  padding: 0 7px;
   min-height: 0;
   color: var(--text-muted);
   transition:

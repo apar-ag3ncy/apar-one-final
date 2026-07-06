@@ -188,7 +188,6 @@ export function TrashPane() {
                             type="button"
                             className="btn"
                             style={{
-                              fontSize: 11,
                               background: 'var(--apar-red-deep)',
                               borderColor: 'transparent',
                               color: '#fff',
@@ -201,7 +200,6 @@ export function TrashPane() {
                           <button
                             type="button"
                             className="btn"
-                            style={{ fontSize: 11 }}
                             disabled={busy}
                             onClick={() => setConfirmKey(null)}
                           >
@@ -215,7 +213,6 @@ export function TrashPane() {
                           <button
                             type="button"
                             className="btn"
-                            style={{ fontSize: 11 }}
                             disabled={busy}
                             title="Restore this item"
                             onClick={() => void restore(item)}
@@ -226,7 +223,7 @@ export function TrashPane() {
                           <button
                             type="button"
                             className="btn"
-                            style={{ fontSize: 11, color: 'var(--apar-red)' }}
+                            style={{ color: 'var(--apar-red)' }}
                             disabled={busy}
                             title="Permanently delete — cannot be undone"
                             onClick={() => setConfirmKey(key)}
