@@ -1950,41 +1950,45 @@ export function EmployeesApp({
             {initials(e.fullName)}
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <div
-                className="name"
-                title={e.fullName}
-                style={{
-                  // Full name is the dominant element — larger/bolder, wrapping
-                  // to as many lines as needed instead of hard-truncating
-                  // (backlog: "full names to be visible"); title surfaces the
-                  // whole name on hover.
-                  flex: 1,
-                  minWidth: 0,
-                  fontSize: 14.5,
-                  fontWeight: 700,
-                  lineHeight: 1.25,
-                  overflowWrap: 'anywhere',
-                  wordBreak: 'break-word',
-                }}
-              >
-                {e.fullName}
-              </div>
-              <span
-                style={{
-                  fontSize: 10,
-                  fontWeight: 600,
-                  padding: '1px 7px',
-                  borderRadius: 999,
-                  color: sm.fg,
-                  background: sm.bg,
-                  whiteSpace: 'nowrap',
-                  flexShrink: 0,
-                }}
-              >
-                {sm.label}
-              </span>
+            <div
+              className="name"
+              title={e.fullName}
+              style={{
+                // Full name is the dominant element — larger/bolder, wrapping
+                // to as many lines as needed instead of hard-truncating
+                // (backlog: "full names to be visible"); title surfaces the
+                // whole name on hover.
+                fontSize: 14.5,
+                fontWeight: 700,
+                lineHeight: 1.25,
+                overflowWrap: 'anywhere',
+                wordBreak: 'break-word',
+              }}
+            >
+              {e.fullName}
             </div>
+            {/* Status sits on its own line BELOW the name (not beside it). */}
+            <span
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 5,
+                alignSelf: 'flex-start',
+                marginTop: 4,
+                fontSize: 10,
+                fontWeight: 600,
+                padding: '2px 8px',
+                borderRadius: 999,
+                color: sm.fg,
+                background: sm.bg,
+                whiteSpace: 'nowrap',
+              }}
+            >
+              <span
+                style={{ width: 6, height: 6, borderRadius: '50%', background: sm.fg, flexShrink: 0 }}
+              />
+              {sm.label}
+            </span>
             <div className="role">{e.designation || '—'}</div>
             <div className="dept">
               {departmentLabel(e.department)} ·{' '}
@@ -2044,14 +2048,56 @@ export function EmployeesApp({
             {canEdit && e.status !== 'separated' && (
               <button
                 type="button"
-                className="btn"
-                style={{ marginLeft: 'auto', fontSize: 11 }}
+                role="switch"
+                aria-checked={isActive}
                 disabled={togglingId === e.id}
-                title={isActive ? 'Set this teammate inactive' : 'Reactivate this teammate'}
+                title={isActive ? 'Active — click to deactivate' : 'Inactive — click to activate'}
                 onClick={() => void toggleStatus(e)}
+                style={{
+                  marginLeft: 'auto',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 7,
+                  background: 'none',
+                  border: 'none',
+                  padding: '2px 2px',
+                  fontSize: 11,
+                  fontWeight: 600,
+                  color: 'var(--text-muted)',
+                  cursor: togglingId === e.id ? 'default' : 'pointer',
+                  opacity: togglingId === e.id ? 0.55 : 1,
+                }}
               >
-                <Icon name={isActive ? 'minus' : 'check'} size={12} />
-                {isActive ? 'Deactivate' : 'Activate'}
+                {/* Track */}
+                <span
+                  style={{
+                    position: 'relative',
+                    width: 30,
+                    height: 17,
+                    borderRadius: 999,
+                    flexShrink: 0,
+                    background: isActive
+                      ? 'var(--apar-green, #2E8F5A)'
+                      : 'color-mix(in oklab, var(--text) 22%, transparent)',
+                    transition: 'background 140ms ease',
+                  }}
+                >
+                  {/* Knob */}
+                  <span
+                    style={{
+                      position: 'absolute',
+                      top: 2,
+                      left: isActive ? 15 : 2,
+                      width: 13,
+                      height: 13,
+                      borderRadius: '50%',
+                      background: '#fff',
+                      boxShadow: '0 1px 2px rgba(0,0,0,0.3)',
+                      transition: 'left 140ms ease',
+                    }}
+                  />
+                </span>
+                {isActive ? 'Active' : 'Inactive'}
               </button>
             )}
             {canDelete && e.status !== 'separated' && (
