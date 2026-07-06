@@ -20,7 +20,7 @@ import {
   type TableCol,
 } from '@/lib/billing/invoice-style';
 import { formatRupeesPlain, rupeesInWordsINR } from '@/lib/money';
-import { PDF_FONT_FAMILY } from './fonts';
+import { EMBEDDED_INVOICE_FONTS, PDF_FONT_FAMILY } from './fonts';
 
 /**
  * Invoice PDF renderer. Layout modelled on the provided AFTRBRND invoice
@@ -131,11 +131,16 @@ export type InvoicePdfData = {
 };
 
 /**
- * Fonts an invoice theme may select. The three PDF built-ins plus Rubik, our
- * registered brand face (see ./fonts). Anything else a DOCX theme carries falls
- * back to the Rubik default in `resolveTheme`.
+ * Fonts an invoice theme may select. The three PDF built-ins plus the embedded
+ * faces (Rubik/Inter/Lato/Open Sans — see ./fonts). Anything else a DOCX theme
+ * carries falls back to the Rubik default in `resolveTheme`.
  */
-const BUILTIN_FONTS = new Set(['Helvetica', 'Times-Roman', 'Courier', PDF_FONT_FAMILY]);
+const BUILTIN_FONTS = new Set<string>([
+  'Helvetica',
+  'Times-Roman',
+  'Courier',
+  ...EMBEDDED_INVOICE_FONTS,
+]);
 
 type ResolvedTheme = {
   primary: string;
