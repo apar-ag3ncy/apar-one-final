@@ -1418,7 +1418,14 @@ export function ProjectsApp({
                 )}
               </div>
               {items.map((p) => (
-                <div key={p.code} className="proj-card">
+                <div
+                  key={p.code}
+                  className="proj-card"
+                  style={{ cursor: p.id ? 'pointer' : 'default' }}
+                  onClick={() => {
+                    if (p.id) navigateBesideFocused({ type: 'project', id: p.id });
+                  }}
+                >
                   <div
                     style={{
                       display: 'flex',
@@ -1429,7 +1436,7 @@ export function ProjectsApp({
                   >
                     <div className="code">{p.code}</div>
                     {(canEdit || canDelete) && (
-                      <div className="proj-card-actions">
+                      <div className="proj-card-actions" onClick={(ev) => ev.stopPropagation()}>
                         {canEdit && (
                           <button
                             type="button"
