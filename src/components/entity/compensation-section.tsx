@@ -25,6 +25,7 @@ import {
   type SalaryPaymentRow,
   type SalaryStructureRow,
 } from '@/lib/server/entities/payroll';
+import { previewSalaryForEmployee } from '@/lib/server/entities/salary-attendance';
 import { formatINR, paiseToRupees, rupeesToPaise, type Paise } from '@/lib/money';
 import { useCurrentUser } from '@/lib/client/use-current-user';
 import { useEntityMutation } from '@/components/os/auth/entity-mutation-gate';
@@ -55,6 +56,28 @@ const BONUS_KIND_TONE: Record<BonusKind, string> = {
 function todayISO(): string {
   const d = new Date();
   return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+}
+
+/**
+ * Prior calendar month as `YYYY-MM` from today (local time). July 2026 → '2026-06',
+ * January 2026 → '2025-12'. Used to seed the salary-payment amount from the previous
+ * month's attendance-prorated pay.
+ */
+function previousMonthISO(): string {
+  const d = new Date();
+  const prior = new Date(d.getFullYear(), d.getMonth() - 1, 1);
+  return `${prior.getFullYear()}-${pad2(prior.getMonth() + 1)}`;
+}
+
+/** Human month name for a `YYYY-MM` string, e.g. '2026-06' → 'June 2026'. */
+function monthName(month: string): string {
+  const [y, m] = month.split('-').map(Number);
+  if (!y || !m) return month;
+  return new Date(Date.UTC(y, m - 1, 1)).toLocaleDateString('en-IN', {
+    month: 'long',
+    year: 'numeric',
+    timeZone: 'UTC',
+  });
 }
 
 function pad2(n: number): string {
@@ -461,12 +484,56 @@ function SalaryPaymentForm({
   onCancel: () => void;
   onCreated: () => void | Promise<void>;
 }) {
+  const priorMonth = useMemo(() => previousMonthISO(), []);
+  const priorMonthLabel = monthName(priorMonth);
   const [paidOn, setPaidOn] = useState(todayISO());
   const [amount, setAmount] = useState(
     prefillPaise && prefillPaise > 0n ? paiseToRupees(prefillPaise) : '',
   );
   const [notes, setNotes] = useState('');
   const [busy, setBusy] = useState(false);
+  // Auto-fill the amount from last month's attendance-prorated pay. Loads async;
+  // never overwrites a value the operator has already typed (`touched`).
+  const [touched, setTouched] = useState(false);
+  const [autoLoading, setAutoLoading] = useState(true);
+  const [autoHint, setAutoHint] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setAutoLoading(true);
+    previewSalaryForEmployee({ employeeId, month: priorMonth })
+      .then((res) => {
+        if (cancelled) return;
+        if (res.hasStructure && res.proratedGrossPaise > 0n) {
+          // Only seed the field if the operator hasn't edited it yet.
+          setAmount((cur) => (touched ? cur : paiseToRupees(res.proratedGrossPaise)));
+          setAutoHint(
+            `Auto-filled from ${priorMonthLabel} attendance — ${res.payableDays} of ${res.workingDays} days payable. Edit if the actual amount differs.`,
+          );
+        } else {
+          setAutoHint(
+            `(no attendance/structure data for ${priorMonthLabel} — showing current CTC)`,
+          );
+        }
+      })
+      .catch(() => {
+        // Fall back silently to the CTC prefill already seeded above.
+        if (!cancelled) {
+          setAutoHint(
+            `(couldn't load ${priorMonthLabel} attendance — showing current CTC)`,
+          );
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setAutoLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // Run once on mount for this employee; `touched` is read fresh via the
+    // functional setState so it isn't a dependency.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [employeeId, priorMonth]);
 
   async function submit() {
     if (!paidOn) {
@@ -527,7 +594,10 @@ function SalaryPaymentForm({
             type="text"
             inputMode="decimal"
             value={amount}
-            onChange={(e) => setAmount(e.target.value)}
+            onChange={(e) => {
+              setTouched(true);
+              setAmount(e.target.value);
+            }}
             disabled={busy}
             placeholder="60000"
             style={inputStyle}
@@ -545,9 +615,13 @@ function SalaryPaymentForm({
         />
       </Field>
       <p style={{ margin: 0, fontSize: 11, color: 'var(--text-muted)' }}>
-        {prefillPaise && prefillPaise > 0n
-          ? 'Amount prefilled from the current salary structure — edit to the amount actually paid. '
-          : 'Captured as the amount actually disbursed. '}
+        {autoLoading
+          ? `Loading ${priorMonthLabel} attendance to pre-fill the amount… `
+          : autoHint
+            ? `${autoHint} `
+            : prefillPaise && prefillPaise > 0n
+              ? 'Amount prefilled from the current salary structure — edit to the amount actually paid. '
+              : 'Captured as the amount actually disbursed. '}
         Counts toward the cumulative salary deduction shown in the Office app.
       </p>
       <div style={{ display: 'flex', gap: 8 }}>

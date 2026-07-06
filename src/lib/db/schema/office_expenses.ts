@@ -1,6 +1,7 @@
 import { bigint, date, index, pgEnum, pgTable, text, uuid } from 'drizzle-orm/pg-core';
 
 import { auditColumns, timestamps } from './_shared';
+import { documents } from './documents';
 import { employees } from './employees';
 import { officeExpenseCategories } from './office_expense_categories';
 import { projects } from './projects';
@@ -99,6 +100,13 @@ export const officeExpenses = pgTable(
      * reverses this transaction; an edit reverses + reposts.
      */
     transactionId: uuid().references(() => transactions.id),
+    /**
+     * Optional attached bill / receipt in the `documents` table. Null for
+     * capture-only rows. `set null` on document delete so a document
+     * hard-delete never orphans the expense; the app nulls this when an
+     * invoice is removed.
+     */
+    documentId: uuid().references(() => documents.id, { onDelete: 'set null' }),
     notes: text(),
   },
   (t) => [
@@ -109,6 +117,7 @@ export const officeExpenses = pgTable(
     index().on(t.projectId),
     index().on(t.status),
     index().on(t.transactionId),
+    index().on(t.documentId),
   ],
 );
 

@@ -209,6 +209,48 @@ export async function listAttendanceMatrix(args: {
 }
 
 /**
+ * Effective attendance status for one date, keyed by employee. For every
+ * active (non-archived, non-deleted) employee, returns the stored override for
+ * `date` if one exists, else the implicit default (`defaultStatusForDate`).
+ * Powers the per-day "mark attendance" view where each employee needs a single
+ * resolved status to render/edit.
+ */
+export async function getAttendanceForDate(input: {
+  date: string;
+}): Promise<Record<string, AttendanceStatus>> {
+  await getActorContext();
+  const date = z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'date must be YYYY-MM-DD')
+    .parse(input.date);
+
+  const empRows = await db
+    .select({ id: employees.id })
+    .from(employees)
+    .where(and(eq(employees.isArchived, false), isNull(employees.deletedAt)));
+
+  const overrideRows = await db
+    .select({ employeeId: attendanceRecords.employeeId, status: attendanceRecords.status })
+    .from(attendanceRecords)
+    .where(
+      and(
+        eq(attendanceRecords.date, date),
+        isNull(attendanceRecords.deletedAt),
+      ),
+    );
+
+  const overrideByEmployee = new Map<string, AttendanceStatus>();
+  for (const r of overrideRows) overrideByEmployee.set(r.employeeId, r.status);
+
+  const def = defaultStatusForDate(date);
+  const result: Record<string, AttendanceStatus> = {};
+  for (const e of empRows) {
+    result[e.id] = overrideByEmployee.get(e.id) ?? def;
+  }
+  return result;
+}
+
+/**
  * Bulk write — stamp one status across many (employee, date) pairs in a
  * single transaction. The Attendance app uses this for actions like
  * "Mark whole team WFH today."

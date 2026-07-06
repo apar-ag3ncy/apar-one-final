@@ -63,6 +63,9 @@ export const employees = pgTable(
     department: text(),
     reportsToEmployeeId: uuid(), // self-FK, added in migration
     joinedOn: date().notNull(),
+    // Optional date of birth (no time component). Nullable for legacy rows
+    // and employees who haven't supplied it.
+    dateOfBirth: date(),
     confirmedOn: date(),
     separatedOn: date(),
     noticePeriodDays: text(), // captured as text — "30 days" or "2 months"

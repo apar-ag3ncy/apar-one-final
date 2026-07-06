@@ -5,10 +5,13 @@ import { z } from 'zod';
 
 import { logAudit } from '@/lib/audit';
 import { db } from '@/lib/db/client';
-import { employees, officeExpenseCategories, officeExpenses, vendors } from '@/lib/db/schema';
+import { documents, employees, officeExpenseCategories, officeExpenses, vendors } from '@/lib/db/schema';
 import { AppError } from '@/lib/errors';
+import { requireCapability } from '@/lib/rbac';
 import { getActorContext } from '@/lib/server/actor';
 import { createDraftTransaction, postTransaction, reverseTransaction } from '@/lib/server/ledger';
+import { sniffMime } from '@/lib/storage';
+import { createAdminClient } from '@/lib/supabase/server';
 
 /**
  * Server actions backing the OS Office app. Captures everyday office
@@ -73,6 +76,10 @@ export type OfficeExpenseRow = {
   transactionId: string | null;
   /** Whether this expense has posted to the ledger. */
   posted: boolean;
+  /** FK to the attached bill/invoice in `documents`; null when none is attached. */
+  documentId: string | null;
+  /** Original filename of the attached invoice, joined from `documents`. */
+  documentName: string | null;
   createdAt: string;
 };
 
@@ -143,6 +150,8 @@ export async function listOfficeExpenses(
       customCategoryColor: officeExpenseCategories.color,
       categoryNote: officeExpenses.categoryNote,
       transactionId: officeExpenses.transactionId,
+      documentId: officeExpenses.documentId,
+      documentName: documents.originalFilename,
       createdAt: officeExpenses.createdAt,
     })
     .from(officeExpenses)
@@ -152,6 +161,7 @@ export async function listOfficeExpenses(
       officeExpenseCategories,
       eq(officeExpenseCategories.id, officeExpenses.customCategoryId),
     )
+    .leftJoin(documents, eq(documents.id, officeExpenses.documentId))
     .where(and(...conds))
     .orderBy(desc(officeExpenses.expenseDate), desc(officeExpenses.createdAt))
     .limit(parsed.limit ?? 500);
@@ -179,6 +189,8 @@ export async function listOfficeExpenses(
       categoryNote: r.categoryNote,
       transactionId: r.transactionId,
       posted: !!r.transactionId,
+      documentId: r.documentId,
+      documentName: r.documentName,
       createdAt: r.createdAt.toISOString(),
     }),
   );
@@ -636,6 +648,29 @@ export async function deleteOfficeExpense(args: { id: string }): Promise<void> {
     reversed = true;
   }
 
+  // Remove the attached invoice (if any) so a hard-deleted expense doesn't
+  // orphan its document row + storage object. Capture the storage ref before
+  // deleting the row; sweep the object best-effort after.
+  let removedDocument = false;
+  if (existing.documentId) {
+    const [doc] = await db
+      .select({ bucket: documents.bucket, storagePath: documents.storagePath })
+      .from(documents)
+      .where(eq(documents.id, existing.documentId))
+      .limit(1);
+    // Null the FK first (ON DELETE SET NULL would handle it, but the expense
+    // row is about to go anyway), then delete the documents row.
+    await db.delete(documents).where(eq(documents.id, existing.documentId));
+    removedDocument = true;
+    if (doc) {
+      try {
+        await createAdminClient().storage.from(doc.bucket).remove([doc.storagePath]);
+      } catch {
+        // best-effort — a failed storage sweep doesn't block the delete
+      }
+    }
+  }
+
   // HARD delete — the row is removed from the database entirely; the audit
   // log below is the only remaining record of what was deleted.
   await db.delete(officeExpenses).where(eq(officeExpenses.id, parsed.id));
@@ -648,6 +683,7 @@ export async function deleteOfficeExpense(args: { id: string }): Promise<void> {
     changes: {
       hard_delete: true,
       reversed,
+      removedDocument,
       category: existing.category,
       description: existing.description,
       expenseDate: existing.expenseDate,
@@ -690,6 +726,15 @@ async function hydrate(row: typeof officeExpenses.$inferSelect): Promise<OfficeE
     customCategoryName = c?.name ?? null;
     customCategoryColor = c?.color ?? null;
   }
+  let documentName: string | null = null;
+  if (row.documentId) {
+    const [d] = await db
+      .select({ originalFilename: documents.originalFilename })
+      .from(documents)
+      .where(eq(documents.id, row.documentId))
+      .limit(1);
+    documentName = d?.originalFilename ?? null;
+  }
   return {
     id: row.id,
     expenseDate: row.expenseDate,
@@ -712,8 +757,218 @@ async function hydrate(row: typeof officeExpenses.$inferSelect): Promise<OfficeE
     categoryNote: row.categoryNote,
     transactionId: row.transactionId,
     posted: !!row.transactionId,
+    documentId: row.documentId,
+    documentName,
     createdAt: row.createdAt.toISOString(),
   };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Invoice attachment — upload / remove the source bill for an expense         */
+/* -------------------------------------------------------------------------- */
+
+const MAX_INVOICE_BYTES = 25 * 1024 * 1024; // 25 MB (SPEC-AMENDMENT-001 §10.3)
+
+/** Sanitise an uploaded filename for use inside a storage object key. */
+function safeInvoiceFilename(name: string): string {
+  return name
+    .normalize('NFKD')
+    .replace(/[^a-zA-Z0-9._-]+/g, '_')
+    .replace(/_+/g, '_')
+    .slice(0, 120);
+}
+
+/**
+ * Attach (or replace) the source bill / invoice for an office expense.
+ *
+ * Pipeline mirrors {@link uploadDocument} but is scoped to a single office
+ * expense: the file lands in `restricted-docs` under an `office_expense/…`
+ * key, a `documents` row records the storage ref, and
+ * `office_expenses.document_id` is repointed at it. Any previously attached
+ * document is unlinked, its DB row deleted, and its storage object removed
+ * best-effort so we don't accumulate orphans.
+ *
+ * `formData`: `expenseId` (uuid) + `file`. Capability `upload_document`.
+ * 25 MB cap; magic-byte sniff rejects a proven MIME lie.
+ */
+export async function attachOfficeExpenseInvoice(
+  formData: FormData,
+): Promise<{ documentId: string; documentName: string }> {
+  const ctx = await getActorContext();
+  requireCapability(ctx, 'upload_document');
+
+  const expenseId = z.string().uuid().parse(formData.get('expenseId'));
+
+  const file = formData.get('file');
+  if (!(file instanceof File)) {
+    throw new AppError('validation', 'Missing or invalid file in upload payload.');
+  }
+  if (file.size === 0) {
+    throw new AppError('validation', 'File is empty.');
+  }
+  if (file.size > MAX_INVOICE_BYTES) {
+    throw new AppError(
+      'storage.size_exceeded',
+      `File exceeds ${Math.round(MAX_INVOICE_BYTES / 1024 / 1024)} MB limit.`,
+    );
+  }
+
+  const [existing] = await db
+    .select({ id: officeExpenses.id, documentId: officeExpenses.documentId })
+    .from(officeExpenses)
+    .where(and(eq(officeExpenses.id, expenseId), isNull(officeExpenses.deletedAt)))
+    .limit(1);
+  if (!existing) throw new AppError('not_found', 'Office expense not found.');
+
+  // Capture the prior document's storage ref BEFORE we delete its row, so the
+  // best-effort sweep after the transaction can remove the orphaned object.
+  const priorDocumentId = existing.documentId;
+  let priorStorage: { bucket: string; storagePath: string } | null = null;
+  if (priorDocumentId) {
+    const [priorDoc] = await db
+      .select({ bucket: documents.bucket, storagePath: documents.storagePath })
+      .from(documents)
+      .where(eq(documents.id, priorDocumentId))
+      .limit(1);
+    if (priorDoc) priorStorage = { bucket: priorDoc.bucket, storagePath: priorDoc.storagePath };
+  }
+
+  // Magic-byte sniff. `sniffMime` returns the true type (or the browser's
+  // declared type when the header isn't one we fingerprint).
+  const headerBytes = new Uint8Array(await file.slice(0, 16).arrayBuffer());
+  const effectiveMime = sniffMime(headerBytes, file.type || undefined);
+
+  const bucket = 'restricted-docs' as const;
+  const safeName = safeInvoiceFilename(file.name);
+  const objectKey = `office_expense/${expenseId}/${crypto.randomUUID()}-${safeName}`;
+
+  const admin = createAdminClient();
+  const fileBuffer = new Uint8Array(await file.arrayBuffer());
+  const { error: uploadError } = await admin.storage.from(bucket).upload(objectKey, fileBuffer, {
+    contentType: effectiveMime,
+    cacheControl: '300',
+    upsert: false,
+  });
+  if (uploadError) {
+    throw new AppError('internal', `Storage upload failed: ${uploadError.message}`);
+  }
+
+  // Insert the documents row + repoint the expense at it. Both run in one
+  // transaction so a partial success can't leave the expense pointing at a
+  // row that doesn't exist (or vice versa).
+  const documentId = await db.transaction(async (tx) => {
+    const [docRow] = await tx
+      .insert(documents)
+      .values({
+        entityType: 'office_expense',
+        entityId: expenseId,
+        bucket,
+        storagePath: objectKey,
+        visibility: 'restricted',
+        category: 'invoice',
+        originalFilename: file.name,
+        mimeType: effectiveMime,
+        sizeBytes: file.size,
+        createdBy: ctx.userId,
+        updatedBy: ctx.userId,
+      })
+      .returning({ id: documents.id });
+    if (!docRow) throw new AppError('internal', 'documents insert returned no row');
+
+    await tx
+      .update(officeExpenses)
+      .set({ documentId: docRow.id, updatedBy: ctx.userId })
+      .where(eq(officeExpenses.id, expenseId));
+
+    // Delete the prior document row (if any) now that nothing references it.
+    if (priorDocumentId) {
+      await tx.delete(documents).where(eq(documents.id, priorDocumentId));
+    }
+
+    return docRow.id;
+  });
+
+  // Best-effort removal of the superseded storage object — after the DB rows
+  // are committed, so a failed sweep never dangles a live reference.
+  if (priorStorage) {
+    try {
+      await admin.storage.from(priorStorage.bucket).remove([priorStorage.storagePath]);
+    } catch {
+      // best-effort
+    }
+  }
+
+  await logAudit({
+    actorId: ctx.userId,
+    entityType: 'office_expense',
+    entityId: expenseId,
+    action: 'update',
+    changes: {
+      attach_invoice: true,
+      documentId,
+      replacedDocumentId: priorDocumentId,
+      mime: effectiveMime,
+      sizeBytes: file.size,
+    },
+  });
+
+  return { documentId, documentName: file.name };
+}
+
+/**
+ * Remove the attached invoice from an office expense: null the
+ * `document_id`, delete the `documents` row, and best-effort remove the
+ * storage object. Capability `delete_document`.
+ */
+export async function removeOfficeExpenseInvoice(input: { expenseId: string }): Promise<void> {
+  const ctx = await getActorContext();
+  requireCapability(ctx, 'delete_document');
+  const { expenseId } = z.object({ expenseId: z.string().uuid() }).parse(input);
+
+  const [existing] = await db
+    .select({ id: officeExpenses.id, documentId: officeExpenses.documentId })
+    .from(officeExpenses)
+    .where(eq(officeExpenses.id, expenseId))
+    .limit(1);
+  if (!existing) throw new AppError('not_found', 'Office expense not found.');
+  if (!existing.documentId) {
+    throw new AppError('not_found', 'This office expense has no attached invoice.');
+  }
+
+  // Read the storage ref before deleting the row so we can sweep the object.
+  const [doc] = await db
+    .select({ bucket: documents.bucket, storagePath: documents.storagePath })
+    .from(documents)
+    .where(eq(documents.id, existing.documentId))
+    .limit(1);
+
+  const documentId = existing.documentId;
+  await db.transaction(async (tx) => {
+    await tx
+      .update(officeExpenses)
+      .set({ documentId: null, updatedBy: ctx.userId })
+      .where(eq(officeExpenses.id, expenseId));
+    await tx.delete(documents).where(eq(documents.id, documentId));
+  });
+
+  // Remove the storage object only after the DB rows are gone (best-effort —
+  // an orphaned object is acceptable; a dangling row is not).
+  if (doc?.bucket && doc.storagePath) {
+    try {
+      const admin = createAdminClient();
+      await admin.storage.from(doc.bucket).remove([doc.storagePath]);
+    } catch {
+      // best-effort
+    }
+  }
+
+  await logAudit({
+    actorId: ctx.userId,
+    entityType: 'office_expense',
+    entityId: expenseId,
+    action: 'update',
+    changes: { remove_invoice: true, documentId },
+  });
 }
 
 /* -------------------------------------------------------------------------- */

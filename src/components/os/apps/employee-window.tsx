@@ -347,6 +347,11 @@ function OverviewBody({
           gap: 10,
         }}
       >
+        <Kpi
+          label="With Apar"
+          value={tenureFrom(employee.joinedOn)}
+          trend={`since ${fmtDate(employee.joinedOn)}`}
+        />
         <Kpi label="Projects" value={kpis.projectsLed} />
         <Kpi
           label="Leaves"
@@ -368,6 +373,17 @@ function OverviewBody({
             ['Personal email', employee.personalEmail ?? '—'],
             ['Phone', employee.phone ?? '—'],
             ['Joined on', fmtDate(employee.joinedOn)],
+            [
+              'Date of birth',
+              employee.dateOfBirth
+                ? (() => {
+                    const age = ageInYears(employee.dateOfBirth);
+                    return age !== null
+                      ? `${fmtDate(employee.dateOfBirth)} (${age} yrs)`
+                      : fmtDate(employee.dateOfBirth);
+                  })()
+                : '—',
+            ],
             ['Confirmed on', fmtDate(employee.confirmedOn)],
             ['Separated on', fmtDate(employee.separatedOn)],
             ['Notice period', employee.noticePeriodDays ?? '—'],
@@ -960,4 +976,55 @@ function Muted({ children }: { children: React.ReactNode }) {
 function initials(name: string): string {
   const parts = name.trim().split(/\s+/).slice(0, 2);
   return parts.map((p) => p[0]?.toUpperCase() ?? '').join('');
+}
+
+/**
+ * Human tenure from `from` (YYYY-MM-DD or ISO) to today, e.g. "2 yrs 3 mos".
+ * Drops the day component once past a month; shows "X days" under a month.
+ * Returns "—" for a missing/unparseable date or a future join date.
+ */
+function tenureFrom(from: string | null): string {
+  if (!from) return '—';
+  const start = new Date(from);
+  if (Number.isNaN(start.getTime())) return '—';
+  const now = new Date();
+  if (start > now) return '—';
+
+  let years = now.getFullYear() - start.getFullYear();
+  let months = now.getMonth() - start.getMonth();
+  let days = now.getDate() - start.getDate();
+  if (days < 0) {
+    months -= 1;
+    // Days in the month before `now` — borrow from it.
+    const prevMonth = new Date(now.getFullYear(), now.getMonth(), 0).getDate();
+    days += prevMonth;
+  }
+  if (months < 0) {
+    years -= 1;
+    months += 12;
+  }
+
+  const totalMonths = years * 12 + months;
+  if (totalMonths < 1) {
+    return `${days} ${days === 1 ? 'day' : 'days'}`;
+  }
+  const parts: string[] = [];
+  if (years > 0) parts.push(`${years} ${years === 1 ? 'yr' : 'yrs'}`);
+  if (months > 0) parts.push(`${months} ${months === 1 ? 'mo' : 'mos'}`);
+  return parts.join(' ');
+}
+
+/** Whole years from `from` (a date of birth) to today, or null if unusable. */
+function ageInYears(from: string | null): number | null {
+  if (!from) return null;
+  const start = new Date(from);
+  if (Number.isNaN(start.getTime())) return null;
+  const now = new Date();
+  if (start > now) return null;
+  let years = now.getFullYear() - start.getFullYear();
+  const beforeBirthday =
+    now.getMonth() < start.getMonth() ||
+    (now.getMonth() === start.getMonth() && now.getDate() < start.getDate());
+  if (beforeBirthday) years -= 1;
+  return years >= 0 ? years : null;
 }

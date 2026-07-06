@@ -2,7 +2,7 @@
 // ships them (P1.14). Frontend stand-ins until then.
 
 export type EmploymentType = 'full_time' | 'part_time' | 'contractor' | 'intern';
-export type EmployeeStatus = 'active' | 'notice' | 'separated';
+export type EmployeeStatus = 'active' | 'on_leave' | 'notice' | 'separated' | 'prospective';
 
 /**
  * Departments are free-form / dynamic — HR can add new ones at create/edit
@@ -35,6 +35,7 @@ export function departmentLabel(d: string | null | undefined): string {
 export type Employee = {
   id: string;
   fullName: string;
+  displayName: string | null;
   designation: string;
   department: Department;
   employmentType: EmploymentType;
@@ -44,6 +45,7 @@ export type Employee = {
   phone: string;
   city: string;
   joinedAt: Date;
+  dateOfBirth: string | null;
   exitedAt: Date | null;
   reportsTo: string | null;
   panMasked: string | null; // e.g. XXXXX1234X
