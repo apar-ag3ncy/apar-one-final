@@ -217,12 +217,24 @@ export function OfficeApp({
   async function handleBackfill() {
     setBackfilling(true);
     try {
-      const res = await backfillOfficeExpenseLedgerPostings();
-      const msg =
-        res.skipped > 0
-          ? `Posted ${res.posted} to the ledger · ${res.skipped} skipped`
-          : `Posted ${res.posted} expense${res.posted === 1 ? '' : 's'} to the ledger`;
-      toast.success(msg);
+      // Post in small batches, looping client-side, so no single request runs
+      // long enough to hit the serverless timeout. Stops when a batch posts
+      // nothing new (only unpostable rows remain) or everything is done.
+      let posted = 0;
+      let skipped = 0;
+      for (let guard = 0; guard < 500; guard++) {
+        const res = await backfillOfficeExpenseLedgerPostings({ limit: 4 });
+        posted += res.posted;
+        skipped += res.skipped;
+        const remaining = await countUnpostedOfficeExpenses();
+        setUnpostedCount(remaining);
+        if (res.posted === 0 || remaining === 0) break;
+      }
+      toast.success(
+        skipped > 0
+          ? `Posted ${posted} to the ledger · ${skipped} skipped`
+          : `Posted ${posted} expense${posted === 1 ? '' : 's'} to the ledger`,
+      );
       await reload();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Could not post to ledger');

@@ -1223,8 +1223,15 @@ export type BackfillLedgerResult = {
  * date) is skipped and recorded, never aborts the batch. Safe to re-run: it
  * only touches rows with a null transaction_id.
  */
-export async function backfillOfficeExpenseLedgerPostings(): Promise<BackfillLedgerResult> {
+export async function backfillOfficeExpenseLedgerPostings(input?: {
+  limit?: number;
+}): Promise<BackfillLedgerResult> {
   const ctx = await getActorContext();
+  // Posting is sequential (one journal per expense) and slow, so the caller
+  // processes a small batch per request and loops — keeping each request well
+  // under the serverless function timeout. Rows that fail keep a null
+  // transaction_id and fall out once they're all that's left (posted === 0).
+  const limit = Math.min(Math.max(input?.limit ?? 5, 1), 25);
   const rows = await db
     .select()
     .from(officeExpenses)
@@ -1236,7 +1243,8 @@ export async function backfillOfficeExpenseLedgerPostings(): Promise<BackfillLed
         sql`${officeExpenses.amountPaise} > 0`,
       ),
     )
-    .orderBy(officeExpenses.expenseDate);
+    .orderBy(officeExpenses.expenseDate)
+    .limit(limit);
 
   const result: BackfillLedgerResult = { posted: 0, skipped: 0, errors: [] };
   for (const row of rows) {
