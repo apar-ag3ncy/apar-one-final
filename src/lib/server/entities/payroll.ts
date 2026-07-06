@@ -5,6 +5,7 @@ import { z } from 'zod';
 
 import { db } from '@/lib/db/client';
 import {
+  bankAccounts,
   bonusesAndPerks,
   employees,
   leaves,
@@ -539,17 +540,34 @@ export type SalaryPaymentRow = {
   id: string;
   paidOn: string;
   amountPaise: bigint;
+  /** Attendance-prorated gross the employee was DUE, snapshotted at record time. */
+  expectedAmountPaise: bigint | null;
+  /** How the salary was paid out: cash (1110) or bank (1120 sub-ledger). */
+  paymentMethod: 'cash' | 'bank';
+  bankAccountId: string | null;
+  /** "HDFC Current ••1234" — resolved from bank_accounts for display. */
+  bankLabel: string | null;
   notes: string | null;
   /** Ledger transaction this payment posted to (open it in the txn window). */
   transactionId: string | null;
 };
 
-const RecordSalaryPaymentSchema = z.object({
-  employeeId: z.string().uuid(),
-  paidOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'paid_on must be YYYY-MM-DD'),
-  amountPaise: PaiseBigInt.refine((v) => v > 0n, 'amount must be greater than 0'),
-  notes: z.string().max(2000).nullable().optional(),
-});
+const RecordSalaryPaymentSchema = z
+  .object({
+    employeeId: z.string().uuid(),
+    paidOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'paid_on must be YYYY-MM-DD'),
+    amountPaise: PaiseBigInt.refine((v) => v > 0n, 'amount must be greater than 0'),
+    /** What the employee deserved for the period (attendance-prorated). */
+    expectedAmountPaise: PaiseBigInt.nullable().optional(),
+    /** 'bank' → Cr 1120 (needs bankAccountId); 'cash' → Cr 1110. */
+    mode: z.enum(['bank', 'cash']).default('cash'),
+    bankAccountId: z.string().uuid().nullable().optional(),
+    notes: z.string().max(2000).nullable().optional(),
+  })
+  .refine((v) => v.mode !== 'bank' || !!v.bankAccountId, {
+    message: 'Pick the bank account the salary was paid from.',
+    path: ['bankAccountId'],
+  });
 
 export type RecordSalaryPaymentInput = z.input<typeof RecordSalaryPaymentSchema>;
 
@@ -575,6 +593,8 @@ export async function recordSalaryPayment(
     input: {
       employeeId: parsed.employeeId,
       amountPaise: parsed.amountPaise,
+      mode: parsed.mode,
+      bankAccountId: parsed.mode === 'bank' ? (parsed.bankAccountId ?? null) : null,
       txnDate: parsed.paidOn,
       externalRef,
       notes: parsed.notes ?? null,
@@ -588,6 +608,9 @@ export async function recordSalaryPayment(
       employeeId: parsed.employeeId,
       paidOn: parsed.paidOn,
       amountPaise: parsed.amountPaise,
+      expectedAmountPaise: parsed.expectedAmountPaise ?? null,
+      paymentMethod: parsed.mode,
+      bankAccountId: parsed.mode === 'bank' ? (parsed.bankAccountId ?? null) : null,
       notes: parsed.notes ?? null,
       transactionId,
       createdBy: ctx.userId,
@@ -608,14 +631,32 @@ export async function listEmployeeSalaryPayments(
       id: salaryPayments.id,
       paidOn: salaryPayments.paidOn,
       amountPaise: salaryPayments.amountPaise,
+      expectedAmountPaise: salaryPayments.expectedAmountPaise,
+      paymentMethod: salaryPayments.paymentMethod,
+      bankAccountId: salaryPayments.bankAccountId,
+      bankDisplayName: bankAccounts.displayName,
+      bankAccountLast4: bankAccounts.accountLast4,
       notes: salaryPayments.notes,
       transactionId: salaryPayments.transactionId,
     })
     .from(salaryPayments)
+    .leftJoin(bankAccounts, eq(bankAccounts.id, salaryPayments.bankAccountId))
     .where(and(eq(salaryPayments.employeeId, employeeId), isNull(salaryPayments.deletedAt)))
     .orderBy(desc(salaryPayments.paidOn))
     .limit(100);
-  return rows;
+  return rows.map(
+    (r): SalaryPaymentRow => ({
+      id: r.id,
+      paidOn: r.paidOn,
+      amountPaise: r.amountPaise,
+      expectedAmountPaise: r.expectedAmountPaise,
+      paymentMethod: r.paymentMethod === 'bank' ? 'bank' : 'cash',
+      bankAccountId: r.bankAccountId,
+      bankLabel: r.bankDisplayName ? `${r.bankDisplayName} ••${r.bankAccountLast4 ?? ''}` : null,
+      notes: r.notes,
+      transactionId: r.transactionId,
+    }),
+  );
 }
 
 /**

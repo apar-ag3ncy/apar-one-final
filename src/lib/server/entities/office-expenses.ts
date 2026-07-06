@@ -387,12 +387,17 @@ async function postExpenseToLedger(
     ...(gst > 0n ? [{ accountCode: '1250', side: 'debit' as const, amountPaise: gst }] : []),
     { accountCode: '1110', side: 'credit' as const, amountPaise: net + gst },
   ];
+  // The journal reason becomes transactions.description — the "Particulars"
+  // column in the office-utilities ledger — so it must read exactly like the
+  // expense's description in the Office app. journalReason requires ≥ 10
+  // chars; suffix very short descriptions instead of blocking the save.
+  const reason = row.description.trim();
   const draft = await createDraftTransaction(ctx, {
     kind: 'journal',
     input: {
       externalRef: `OFFEXP-${row.id}-${Date.now().toString(36)}`,
       txnDate: row.expenseDate,
-      journalReason: `Office expense — ${row.category}: ${row.description}`.slice(0, 480),
+      journalReason: (reason.length >= 10 ? reason : `${reason} — office expense`).slice(0, 480),
       legs,
       isOpeningBalance: false,
       notes: row.notes,

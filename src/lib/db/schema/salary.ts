@@ -136,6 +136,17 @@ export const salaryPayments = pgTable(
       .references(() => employees.id, { onDelete: 'restrict' }),
     paidOn: date().notNull(),
     amountPaise: bigint({ mode: 'bigint' }).notNull(),
+    // What the employee was DUE for the period (attendance-prorated gross at
+    // record time) — stored beside the amount actually paid so under/over
+    // payment is visible later. Null on legacy rows recorded before capture.
+    expectedAmountPaise: bigint({ mode: 'bigint' }),
+    // How the salary left the company: 'cash' → Cr 1110, 'bank' → Cr 1120
+    // sub-ledgered to bank_account_id. Legacy rows all posted cash.
+    paymentMethod: text().notNull().default('cash'),
+    // Agency bank the payment went out from (bank_accounts.id) when
+    // payment_method = 'bank'. FK added in the SQL migration; kept a plain
+    // uuid here like transaction_id.
+    bankAccountId: uuid(),
     notes: text(),
     // Ledger transaction this payment posted. FK added in the SQL migration;
     // kept a plain uuid here like salary_lines.transaction_id.

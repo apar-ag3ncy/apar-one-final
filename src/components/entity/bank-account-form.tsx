@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, type ChangeEvent } from 'react';
+import { useEffect, useRef, useState, type ChangeEvent } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
@@ -91,10 +91,14 @@ export function BankAccountForm({
     },
   });
 
-  // Reset when switching rows / reopening. The account number is never
-  // pre-filled (it lives in the vault) — edit is metadata-only.
+  // Reset only when the dialog opens (switching rows / reopening). The account
+  // number is never pre-filled (it lives in the vault) — edit is metadata-only.
+  // `initial` is a fresh object literal on every parent render, so keying the
+  // effect on it would wipe in-progress typing whenever anything above
+  // re-renders (in the OS: the menubar clock, window focus/drag, …).
+  const wasOpen = useRef(false);
   useEffect(() => {
-    if (open) {
+    if (open && !wasOpen.current) {
       form.reset({
         holderName: initial?.holderName ?? '',
         accountNumber: '',
@@ -106,6 +110,7 @@ export function BankAccountForm({
         notes: initial?.notes ?? '',
       });
     }
+    wasOpen.current = open;
   }, [open, initial, form]);
 
   const submit = form.handleSubmit(async (values) => {

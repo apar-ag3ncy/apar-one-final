@@ -3,7 +3,7 @@ import { decodeSlot, encodeSlot } from './per-window-nuqs';
 
 describe('encodeSlot', () => {
   it('emits just the app id for an empty entity/tab', () => {
-    expect(encodeSlot({ app: 'inbox' })).toBe('inbox');
+    expect(encodeSlot({ app: 'reports' })).toBe('reports');
   });
   it('emits app:entity for entity-scoped windows without a tab', () => {
     expect(encodeSlot({ app: 'clients', entityId: 'c1' })).toBe('clients:c1');
@@ -21,7 +21,7 @@ describe('encodeSlot', () => {
 describe('decodeSlot', () => {
   it('round-trips with encodeSlot', () => {
     for (const slot of [
-      { app: 'inbox' as const },
+      { app: 'reports' as const },
       { app: 'clients' as const, entityId: 'c1' },
       { app: 'settings' as const, tab: 'roles' },
       { app: 'vendors' as const, entityId: 'v2', tab: 'documents' },

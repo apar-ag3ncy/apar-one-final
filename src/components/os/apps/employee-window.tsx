@@ -30,7 +30,9 @@ import { listContacts, type ContactRow } from '@/lib/server/entities/contacts';
 import { getEmployeeSummary, type EmployeeSummary } from '@/lib/server/entities/employee-summary';
 import { addEmployeeAchievement } from '@/lib/server/entities/employee-achievements';
 import {
+  listEmployeeProjects,
   listEmployeeProjectTasks,
+  type EmployeeProjectMembershipRow,
   type EmployeeProjectTaskRow,
 } from '@/lib/server/entities/project-tasks';
 import { getEmployeeStatement, type Statement } from '@/lib/server/ledger/statements';
@@ -59,7 +61,12 @@ export type EmployeeWindowProps = {
 type State =
   | { kind: 'loading' }
   | { kind: 'error'; message: string }
-  | { kind: 'ready'; summary: EmployeeSummary; contacts: readonly ContactRow[] };
+  | {
+      kind: 'ready';
+      summary: EmployeeSummary;
+      contacts: readonly ContactRow[];
+      memberships: readonly EmployeeProjectMembershipRow[];
+    };
 
 export function EmployeeWindow({ employeeId, onClose }: EmployeeWindowProps) {
   const [state, setState] = useState<State>({ kind: 'loading' });
@@ -76,10 +83,11 @@ export function EmployeeWindow({ employeeId, onClose }: EmployeeWindowProps) {
       getEmployeeSummary(employeeId),
       listContacts({ entityType: 'employee', entityId: employeeId }),
       listEmployees(),
+      listEmployeeProjects(employeeId),
     ])
-      .then(([summary, contacts, all]) => {
+      .then(([summary, contacts, all, memberships]) => {
         if (cancelled) return;
-        setState({ kind: 'ready', summary, contacts });
+        setState({ kind: 'ready', summary, contacts, memberships });
         setRoster(all.map((e) => ({ id: e.id, name: e.fullName, reportsTo: e.reportsTo })));
       })
       .catch((e: unknown) => {
@@ -109,8 +117,13 @@ export function EmployeeWindow({ employeeId, onClose }: EmployeeWindowProps) {
     );
   }
 
-  const { summary, contacts } = state;
+  const { summary, contacts, memberships } = state;
   const { employee, kpis, projectsLed, achievements } = summary;
+  // Distinct projects this employee touches — leads + team memberships.
+  const projectsCount = new Set([
+    ...projectsLed.map((p) => p.id),
+    ...memberships.map((m) => m.projectId),
+  ]).size;
   // Archive lifecycle is the `is_archived` boolean — independent of the
   // `separated` employment status (you can archive an active employee, and
   // a separated employee may not be archived).
@@ -129,7 +142,7 @@ export function EmployeeWindow({ employeeId, onClose }: EmployeeWindowProps) {
     { value: 'compensation', label: 'Compensation' },
     { value: 'ledger', label: 'Ledger' },
     { value: 'documents', label: 'Documents' },
-    { value: 'projects', label: 'Projects', count: projectsLed.length },
+    { value: 'projects', label: 'Projects', count: projectsCount },
     { value: 'attendance', label: 'Attendance & leaves' },
     { value: 'achievements', label: 'Achievements', count: achievements.length },
     { value: 'activity', label: 'Activity' },
@@ -213,7 +226,11 @@ export function EmployeeWindow({ employeeId, onClose }: EmployeeWindowProps) {
           />
         ) : null}
         {tab === 'projects' ? (
-          <ProjectsLedBody projects={projectsLed} employeeId={employee.id} />
+          <ProjectsLedBody
+            projects={projectsLed}
+            memberships={memberships}
+            employeeId={employee.id}
+          />
         ) : null}
         {tab === 'attendance' ? (
           <AttendanceSection employeeId={employee.id} employeeName={employee.fullName} />
@@ -274,7 +291,9 @@ function Header({
         display: 'flex',
         gap: 12,
         alignItems: 'center',
-        paddingBottom: 10,
+        // Same gutter as the Client/Vendor/Project window headers — without
+        // it the avatar and the Edit button sit flush against the frame.
+        padding: '20px 24px 14px',
         borderBottom: '1px solid var(--border)',
       }}
     >
@@ -439,9 +458,12 @@ function OverviewBody({
 
 function ProjectsLedBody({
   projects,
+  memberships,
   employeeId,
 }: {
   projects: EmployeeSummary['projectsLed'];
+  /** Projects this employee is a team member on (project_members). */
+  memberships: readonly EmployeeProjectMembershipRow[];
   employeeId: string;
 }) {
   const [tasks, setTasks] = useState<readonly EmployeeProjectTaskRow[]>([]);
@@ -532,6 +554,74 @@ function ProjectsLedBody({
                   }}
                 >
                   {p.status.replace('_', ' ')}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <SubHeading>Team member on</SubHeading>
+        {memberships.length === 0 ? (
+          <Muted>Not on any project team yet.</Muted>
+        ) : (
+          <ul
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 6,
+              listStyle: 'none',
+              padding: 0,
+              margin: 0,
+            }}
+          >
+            {memberships.map((m) => (
+              <li
+                key={m.memberId}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 10,
+                  padding: '6px 10px',
+                  borderRadius: 8,
+                  border: '1px solid var(--border)',
+                  fontSize: 13,
+                }}
+              >
+                {m.projectCode ? (
+                  <span
+                    style={{
+                      fontFamily: 'var(--os-font)',
+                      fontVariantNumeric: 'tabular-nums',
+                      letterSpacing: '0.02em',
+                      fontSize: 11,
+                      color: 'var(--text-muted)',
+                    }}
+                  >
+                    {m.projectCode}
+                  </span>
+                ) : null}
+                <div style={{ flex: 1 }}>
+                  <EntityRef
+                    type="project"
+                    id={m.projectId}
+                    label={m.projectName}
+                    hideIcon
+                    onNavigate={navigateBesideFocused}
+                  />
+                </div>
+                {m.roleNote ? (
+                  <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{m.roleNote}</span>
+                ) : null}
+                <span
+                  style={{
+                    fontSize: 11,
+                    color: 'var(--text-muted)',
+                    textTransform: 'capitalize',
+                  }}
+                >
+                  {m.projectStatus.replace('_', ' ')}
                 </span>
               </li>
             ))}

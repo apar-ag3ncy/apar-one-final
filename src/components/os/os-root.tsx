@@ -24,13 +24,11 @@ import { CommandPalette } from './command-palette';
 import { useBusinessData } from './data-store';
 import { APPS } from './data';
 import { Dock } from './dock';
-import { Icon } from './icons';
 import { MenuBar } from './menubar';
 import { Window } from './window';
 import {
   ClientsApp,
   EmployeesApp,
-  InboxApp,
   ProjectsApp,
   ReportsApp,
   SettingsApp,
@@ -400,14 +398,6 @@ function Desktop({ signOut }: { signOut: () => void }) {
         run: () => openApp('projects'),
       });
     }
-    if (can(user, 'inbox', 'view')) {
-      list.push({
-        icon: 'filetext',
-        label: 'Review Inbox',
-        hint: 'Action',
-        run: () => openApp('inbox'),
-      });
-    }
     if (can(user, 'ledger', 'view')) {
       list.push({
         icon: 'book',
@@ -599,28 +589,7 @@ function Desktop({ signOut }: { signOut: () => void }) {
         onOpenSearch={() => setCmdkOpen(true)}
       />
 
-      {/* Desktop icons — only when no windows are open. Filtered by view perm. */}
-      {windows.length === 0 && visibleApps.length > 0 && (
-        <div className="desktop-icons">
-          {visibleApps.slice(0, 6).map((a) => (
-            <div
-              key={a.id}
-              className={`desktop-icon ${a.id === 'admin_console' ? 'brand' : ''}`}
-              onDoubleClick={() => openApp(a.id)}
-              onClick={(e) => {
-                const el = e.currentTarget;
-                el.classList.add('selected');
-                setTimeout(() => el.classList.remove('selected'), 1500);
-              }}
-            >
-              <div className="glyph">
-                <Icon name={a.icon} size={28} stroke={1.8} />
-              </div>
-              <div>{a.name}</div>
-            </div>
-          ))}
-        </div>
-      )}
+      {/* Desktop icons removed — apps launch from the dock (or Cmd+K) only. */}
 
       {/* Windows */}
       {windows.map((w) => {
@@ -729,12 +698,6 @@ function Desktop({ signOut }: { signOut: () => void }) {
                     canEdit={can(user, 'office', 'edit')}
                     canDelete={can(user, 'office', 'delete')}
                   />
-                </div>
-              );
-            case 'inbox':
-              return (
-                <div className="main">
-                  <InboxApp />
                 </div>
               );
             case 'ledger': {

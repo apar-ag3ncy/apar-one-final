@@ -51,7 +51,10 @@ export function TransactionDetailWindow({ transactionId }: TransactionDetailWind
   const firstDocId = transaction.sourceDocumentIds?.[0];
 
   return (
-    <div className="main" style={{ display: 'flex', flexDirection: 'column', flex: 1 }}>
+    <div
+      className="main"
+      style={{ display: 'flex', flexDirection: 'column', flex: 1, padding: 18 }}
+    >
       <TransactionDetail
         transaction={transaction}
         onNavigate={navigateBesideFocused}

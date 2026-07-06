@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, type ChangeEvent } from 'react';
+import { useEffect, useRef, useState, type ChangeEvent } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
@@ -108,9 +108,13 @@ export function AddressForm({
     },
   });
 
-  // Reset form when initial values change (switching between rows).
+  // Reset form only when the dialog opens (switching between rows). `initial`
+  // is a fresh object literal on every parent render, so keying the effect on
+  // it would wipe the user's in-progress typing whenever anything above
+  // re-renders (in the OS: the menubar clock, window focus/drag, …).
+  const wasOpen = useRef(false);
   useEffect(() => {
-    if (open) {
+    if (open && !wasOpen.current) {
       form.reset({
         kind: initial?.kind ?? 'billing',
         line1: initial?.line1 ?? '',
@@ -124,6 +128,7 @@ export function AddressForm({
         notes: initial?.notes ?? '',
       });
     }
+    wasOpen.current = open;
   }, [open, initial, form]);
 
   const submit = form.handleSubmit(async (values) => {

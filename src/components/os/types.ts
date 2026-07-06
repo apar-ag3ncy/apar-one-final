@@ -22,7 +22,6 @@ export type AppId =
   | 'projects'
   | 'employees'
   | 'attendance'
-  | 'inbox'
   | 'ledger'
   | 'reports'
   | 'office'
@@ -54,6 +53,8 @@ export type Client = {
   activity: string;
   logo: string;
   tone: string;
+  /** Signed URL for the uploaded brand logo — rendered instead of initials. */
+  logoUrl?: string | null;
 };
 
 export type Vendor = {

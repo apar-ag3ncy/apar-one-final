@@ -28,7 +28,6 @@ export type AppCapability =
   | 'app.projects.view'
   | 'app.employees.view'
   | 'app.attendance.view'
-  | 'app.inbox.view'
   | 'app.ledger.view'
   | 'app.reports.view'
   | 'app.office.view'
@@ -76,12 +75,6 @@ export const APP_REGISTRY: Readonly<Record<AppId, AppRegistryEntry>> = {
     minimumCapability: 'app.attendance.view',
     defaultSize: { width: 1180, height: 720 },
   },
-  inbox: {
-    id: 'inbox',
-    showInDock: true,
-    minimumCapability: 'app.inbox.view',
-    defaultSize: { width: 820, height: 560 },
-  },
   ledger: {
     id: 'ledger',
     showInDock: true,
@@ -123,7 +116,7 @@ export const APP_REGISTRY: Readonly<Record<AppId, AppRegistryEntry>> = {
   documents: {
     id: 'documents',
     showInDock: false,
-    minimumCapability: 'app.inbox.view', // Documents are a side of inbox/extraction
+    minimumCapability: 'app.settings.view', // any signed-in user can open a doc window
     defaultSize: { width: 800, height: 1000 }, // 4:5 portrait per amendment §10.2
   },
   bank_recon: {
