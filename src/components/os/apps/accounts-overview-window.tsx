@@ -116,6 +116,10 @@ export function AccountsOverviewWindow() {
   const today = todayIso();
   const fy = currentFyDefaults();
   const monthKey = today.slice(0, 7);
+  const monthLabel = new Date(`${monthKey}-01T00:00:00Z`).toLocaleDateString('en-IN', {
+    month: 'short',
+    year: 'numeric',
+  });
   const monthStart = monthStartIso(today);
   const openingAsOf = priorMonthEndIso(today);
 
@@ -296,7 +300,7 @@ export function AccountsOverviewWindow() {
                 openStatement({
                   codes: codesFor('4'),
                   positive: 'credit',
-                  title: `Income — ${monthKey}`,
+                  title: `Income — ${monthLabel}`,
                   ...monthRange,
                 })
               }
@@ -321,7 +325,7 @@ export function AccountsOverviewWindow() {
                 openStatement({
                   codes: [a.code],
                   positive: 'credit',
-                  title: `${a.code} ${a.name} — ${monthKey}`,
+                  title: `${a.name} — ${monthLabel}`,
                   ...monthRange,
                 })
               }
@@ -350,7 +354,7 @@ export function AccountsOverviewWindow() {
                 openStatement({
                   codes: codesFor('5'),
                   positive: 'debit',
-                  title: `Direct costs — ${monthKey}`,
+                  title: `Direct costs — ${monthLabel}`,
                   ...monthRange,
                 })
               }
@@ -362,7 +366,7 @@ export function AccountsOverviewWindow() {
                 openStatement({
                   codes: codesFor('6'),
                   positive: 'debit',
-                  title: `Operating expenses — ${monthKey}`,
+                  title: `Operating expenses — ${monthLabel}`,
                   ...monthRange,
                 })
               }
@@ -377,7 +381,7 @@ export function AccountsOverviewWindow() {
                 openStatement({
                   codes: [a.code],
                   positive: 'debit',
-                  title: `${a.code} ${a.name} — ${monthKey}`,
+                  title: `${a.name} — ${monthLabel}`,
                   ...monthRange,
                 })
               }
@@ -427,7 +431,7 @@ export function AccountsOverviewWindow() {
                 openStatement({
                   codes: ['2120'],
                   positive: 'credit',
-                  title: `Output GST — ${monthKey}, invoice by invoice`,
+                  title: `Output GST — ${monthLabel}, invoice by invoice`,
                   ...monthRange,
                 })
               }
@@ -510,7 +514,7 @@ export function AccountsOverviewWindow() {
                 openStatement({
                   codes: [a.code],
                   positive: 'debit',
-                  title: `${a.code} ${a.name}`,
+                  title: a.name,
                   to: today,
                 })
               }
@@ -525,7 +529,7 @@ export function AccountsOverviewWindow() {
                 openStatement({
                   codes: codesFor('4'),
                   positive: 'credit',
-                  title: `Income — ${monthKey}`,
+                  title: `Income — ${monthLabel}`,
                   ...monthRange,
                 })
               }
@@ -537,7 +541,7 @@ export function AccountsOverviewWindow() {
                 openStatement({
                   codes: codesFor('5'),
                   positive: 'debit',
-                  title: `Direct costs — ${monthKey}`,
+                  title: `Direct costs — ${monthLabel}`,
                   ...monthRange,
                 })
               }
@@ -549,7 +553,7 @@ export function AccountsOverviewWindow() {
                 openStatement({
                   codes: codesFor('6'),
                   positive: 'debit',
-                  title: `Operating expenses — ${monthKey}`,
+                  title: `Operating expenses — ${monthLabel}`,
                   ...monthRange,
                 })
               }
@@ -572,7 +576,7 @@ export function AccountsOverviewWindow() {
         <div style={gridStyle(4)}>
           <BoxCard title="Cash on hand">
             <Line
-              label="1110"
+              label="Cash in the office drawer"
               value={cash}
               strong
               onClick={() =>
@@ -819,7 +823,7 @@ function Breakdown({
           key={a.code}
           type="button"
           onClick={() => onOpen(a)}
-          title={`Open ${a.code} ${a.name}`}
+          title={`See every ${a.name} transaction`}
           style={{
             display: 'flex',
             justifyContent: 'space-between',
@@ -845,7 +849,7 @@ function Breakdown({
               whiteSpace: 'nowrap',
             }}
           >
-            <span style={{ fontVariantNumeric: 'tabular-nums' }}>{a.code}</span> {a.name}
+            {a.name}
           </span>
           <span
             style={{

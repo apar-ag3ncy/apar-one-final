@@ -79,8 +79,8 @@ export function AccountStatementWindow({
             {title}
           </div>
           <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-            Account{codes.length === 1 ? '' : 's'} {codes.join(', ')} — every posting in date
-            order. Click a row to open the full transaction and its document.
+            Every entry in date order, oldest first. Click a row to open the full transaction and
+            its document.
           </div>
         </div>
         <DateField label="From" value={fromDate} onChange={setFromDate} />
