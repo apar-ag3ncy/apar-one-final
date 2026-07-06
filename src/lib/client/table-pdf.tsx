@@ -6,13 +6,25 @@
 // dynamic `import()` inside `exportRows` / the DataTable exporters, never a
 // static import.
 
-import { Document, Image, Page, StyleSheet, Text, View, pdf } from '@react-pdf/renderer';
+import { Document, Font, Image, Page, StyleSheet, Text, View, pdf } from '@react-pdf/renderer';
 import * as React from 'react';
 
 import { APAR_ORANGE_MARK_DATA_URI } from '@/lib/brand/apar-orange-mark';
 
 /** A cell value the table can render. Callers coerce richer types to these. */
 export type PdfCell = string | number;
+
+// @react-pdf wraps cell text at whitespace, but a long *unbreakable* token
+// (reference/invoice numbers, account codes, emails, a run-on party name)
+// otherwise overflows its cell and overlaps the next column. A hyphenation
+// callback lets us insert break opportunities inside such tokens so they wrap
+// within the cell instead. Short/normal words are returned untouched (single
+// chunk = no internal break). Registered once at module load — this module is
+// only pulled in when a table PDF is actually exported, so it never touches the
+// server-rendered invoice/voucher PDFs.
+Font.registerHyphenationCallback((word) =>
+  word.length > 14 ? (word.match(/.{1,12}/g) ?? [word]) : [word],
+);
 
 const styles = StyleSheet.create({
   page: { paddingVertical: 28, paddingHorizontal: 26, fontSize: 8, color: '#1a1a1a' },
@@ -75,21 +87,28 @@ function TableDoc({
   // Wide tables breathe better on landscape A4.
   const landscape = headers.length > 6;
 
-  // Column widths as percentages that always sum to 100%. Default is an even
-  // split; when there are enough columns to make an even split cramped (>3),
-  // give the first column — typically a description/name — a modest extra share
-  // so long text there wraps over fewer lines. @react-pdf wraps cell <Text> by
-  // default (no numberOfLines), so nothing here clips; this only trades width.
-  const n = Math.max(1, headers.length);
+  // Content-aware column widths (percent, always summing to 100%): each column
+  // gets a share proportional to its widest value, so text-heavy columns
+  // (particulars, party, account) get room to wrap while short numeric columns
+  // (debit/credit, dates, codes) stay narrow — nothing is starved into
+  // overflowing its neighbour. Weights are clamped so one very long value can't
+  // swallow the table, and a sample cap keeps big ledgers fast.
   const colStyles = React.useMemo(() => {
-    if (n <= 3) {
-      const even = `${100 / n}%`;
-      return headers.map(() => ({ width: even }));
-    }
-    const firstShare = 100 / n + 6; // modest boost for the first column
-    const restShare = (100 - firstShare) / (n - 1);
-    return headers.map((_, i) => ({ width: `${i === 0 ? firstShare : restShare}%` }));
-  }, [headers, n]);
+    const SAMPLE = 400;
+    const lim = Math.min(rows.length, SAMPLE);
+    const weights = headers.map((h) => {
+      let w = String(h).length;
+      for (let i = 0; i < lim; i++) {
+        const len = fmtCell(rows[i]![h]).length;
+        if (len > w) w = len;
+      }
+      // Floor keeps tiny columns legible; ceiling stops a run-on cell from
+      // dominating (its text just wraps to more lines instead).
+      return Math.max(5, Math.min(34, w));
+    });
+    const total = weights.reduce((a, b) => a + b, 0) || 1;
+    return weights.map((w) => ({ width: `${((w / total) * 100).toFixed(3)}%` }));
+  }, [headers, rows]);
 
   return (
     <Document>
