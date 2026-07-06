@@ -457,6 +457,8 @@ function RecordReceiptDialog({
   const [clientBanks, setClientBanks] = useState<readonly BankAccountRow[]>([]);
   const [invoices, setInvoices] = useState<readonly OpenInvoiceRow[]>([]);
   const [mode, setMode] = useState<'bank' | 'cash'>('bank');
+  // NEFT / RTGS / IMPS / UPI — how the transfer arrived (bank mode only).
+  const [transferMethod, setTransferMethod] = useState<'neft' | 'rtgs' | 'imps' | 'upi' | ''>('');
   const [bankAccountId, setBankAccountId] = useState('');
   const [counterpartyBankAccountId, setCounterpartyBankAccountId] = useState('');
   const [paymentDate, setPaymentDate] = useState(todayISO());
@@ -476,6 +478,7 @@ function RecordReceiptDialog({
     queueMicrotask(() => {
       if (cancelled) return;
       setMode('bank');
+      setTransferMethod('');
       setBankAccountId('');
       setCounterpartyBankAccountId('');
       setPaymentDate(todayISO());
@@ -566,6 +569,7 @@ function RecordReceiptDialog({
       const result = await recordClientReceipt({
         clientId,
         mode,
+        transferMethod: mode === 'bank' && transferMethod ? transferMethod : null,
         bankAccountId: mode === 'bank' ? bankAccountId : null,
         counterpartyBankAccountId:
           mode === 'bank' && counterpartyBankAccountId ? counterpartyBankAccountId : null,
@@ -648,6 +652,35 @@ function RecordReceiptDialog({
               </button>
             ))}
           </div>
+
+          {mode === 'bank' ? (
+            <div className="os-field">
+              <span className="os-field-label">Transfer method</span>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {(['neft', 'rtgs', 'imps', 'upi'] as const).map((t) => (
+                  <button
+                    key={t}
+                    type="button"
+                    onClick={() => setTransferMethod((cur) => (cur === t ? '' : t))}
+                    disabled={submitting}
+                    style={{
+                      padding: '6px 14px',
+                      borderRadius: 999,
+                      fontSize: 12,
+                      cursor: 'pointer',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.04em',
+                      border: `1px solid ${transferMethod === t ? 'var(--apar-red, #E63A1F)' : 'var(--border, #e5e7eb)'}`,
+                      background: transferMethod === t ? 'rgba(230,58,31,0.08)' : 'transparent',
+                      color: 'inherit',
+                    }}
+                  >
+                    {t}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
 
           {mode === 'bank' ? (
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>

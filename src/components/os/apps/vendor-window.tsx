@@ -7,6 +7,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 
 import { ContactsSection } from '@/components/entity/contacts-section';
+import { AddressesSection } from '@/components/entity/addresses-section';
 import { BankAccountsSection } from '@/components/entity/bank-accounts-section';
 import { EntitySettingsSection } from '@/components/entity/entity-settings-section';
 import { VendorEditDialog } from './vendor-edit-dialog';
@@ -33,6 +34,7 @@ export type VendorWindowProps = {
 type VendorTab =
   | 'overview'
   | 'contacts'
+  | 'addresses'
   | 'bank'
   | 'documents'
   | 'bills'
@@ -44,6 +46,7 @@ type VendorTab =
 const TAB_LABELS: Record<VendorTab, string> = {
   overview: 'Overview',
   contacts: 'Contacts',
+  addresses: 'Addresses',
   bank: 'Bank accounts',
   documents: 'Documents',
   bills: 'Bills',
@@ -107,6 +110,7 @@ export function VendorWindow({ vendorId, onClose }: VendorWindowProps) {
   const tabs: readonly VendorTab[] = [
     'overview',
     'contacts',
+    'addresses',
     'bank',
     'documents',
     'bills',
@@ -142,6 +146,9 @@ export function VendorWindow({ vendorId, onClose }: VendorWindowProps) {
             entityName={vendor.name}
             initial={contacts}
           />
+        ) : null}
+        {tab === 'addresses' ? (
+          <AddressesSection entityType="vendor" entityId={vendor.id} entityName={vendor.name} />
         ) : null}
         {tab === 'bank' ? (
           <BankAccountsSection entityType="vendor" entityId={vendor.id} entityName={vendor.name} />

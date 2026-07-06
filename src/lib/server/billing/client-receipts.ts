@@ -46,6 +46,8 @@ export type ReceiptAllocationInput = z.input<typeof ReceiptAllocationSchema>;
 const RecordClientReceiptInputSchema = z.object({
   clientId: z.string().uuid(),
   mode: z.enum(['bank', 'cash']).default('bank'),
+  /** How the bank transfer arrived (NEFT/RTGS/IMPS/UPI) — captured on the posting. */
+  transferMethod: z.enum(['neft', 'rtgs', 'imps', 'upi']).nullish(),
   /** Our agency bank account (bank_accounts.id) — required when mode='bank'. */
   bankAccountId: z.string().uuid().nullish(),
   /** The client's bank account the money came from (entity_bank_accounts.id) — noted. */
@@ -132,6 +134,7 @@ export async function recordClientReceipt(
         input: {
           clientId: v.clientId,
           mode: v.mode,
+          transferMethod: v.transferMethod ?? null,
           bankAccountId: v.bankAccountId ?? null,
           counterpartyBankAccountId: v.counterpartyBankAccountId ?? null,
           amountPaise: v.totalPaise,

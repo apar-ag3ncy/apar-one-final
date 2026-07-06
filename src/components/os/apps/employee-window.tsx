@@ -501,63 +501,18 @@ function ProjectsLedBody({
         {projects.length === 0 ? (
           <Muted>No active projects led by this employee.</Muted>
         ) : (
-          <ul
-            style={{
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 6,
-              listStyle: 'none',
-              padding: 0,
-              margin: 0,
-            }}
-          >
+          <div style={cardGridStyle}>
             {projects.map((p) => (
-              <li
+              <EmployeeProjectCard
                 key={p.id}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 10,
-                  padding: '6px 10px',
-                  borderRadius: 8,
-                  border: '1px solid var(--border)',
-                  fontSize: 13,
-                }}
-              >
-                {p.code ? (
-                  <span
-                    style={{
-                      fontFamily: 'var(--os-font)',
-                      fontVariantNumeric: 'tabular-nums',
-                      letterSpacing: '0.02em',
-                      fontSize: 11,
-                      color: 'var(--text-muted)',
-                    }}
-                  >
-                    {p.code}
-                  </span>
-                ) : null}
-                <div style={{ flex: 1 }}>
-                  <EntityRef
-                    type="project"
-                    id={p.id}
-                    label={p.name}
-                    hideIcon
-                    onNavigate={navigateBesideFocused}
-                  />
-                </div>
-                <span
-                  style={{
-                    fontSize: 11,
-                    color: 'var(--text-muted)',
-                    textTransform: 'capitalize',
-                  }}
-                >
-                  {p.status.replace('_', ' ')}
-                </span>
-              </li>
+                projectId={p.id}
+                code={p.code}
+                name={p.name}
+                clientName={p.clientName}
+                status={p.status}
+              />
             ))}
-          </ul>
+          </div>
         )}
       </div>
 
@@ -566,66 +521,19 @@ function ProjectsLedBody({
         {memberships.length === 0 ? (
           <Muted>Not on any project team yet.</Muted>
         ) : (
-          <ul
-            style={{
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 6,
-              listStyle: 'none',
-              padding: 0,
-              margin: 0,
-            }}
-          >
+          <div style={cardGridStyle}>
             {memberships.map((m) => (
-              <li
+              <EmployeeProjectCard
                 key={m.memberId}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 10,
-                  padding: '6px 10px',
-                  borderRadius: 8,
-                  border: '1px solid var(--border)',
-                  fontSize: 13,
-                }}
-              >
-                {m.projectCode ? (
-                  <span
-                    style={{
-                      fontFamily: 'var(--os-font)',
-                      fontVariantNumeric: 'tabular-nums',
-                      letterSpacing: '0.02em',
-                      fontSize: 11,
-                      color: 'var(--text-muted)',
-                    }}
-                  >
-                    {m.projectCode}
-                  </span>
-                ) : null}
-                <div style={{ flex: 1 }}>
-                  <EntityRef
-                    type="project"
-                    id={m.projectId}
-                    label={m.projectName}
-                    hideIcon
-                    onNavigate={navigateBesideFocused}
-                  />
-                </div>
-                {m.roleNote ? (
-                  <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{m.roleNote}</span>
-                ) : null}
-                <span
-                  style={{
-                    fontSize: 11,
-                    color: 'var(--text-muted)',
-                    textTransform: 'capitalize',
-                  }}
-                >
-                  {m.projectStatus.replace('_', ' ')}
-                </span>
-              </li>
+                projectId={m.projectId}
+                code={m.projectCode}
+                name={m.projectName}
+                clientName={m.clientName}
+                status={m.projectStatus}
+                roleNote={m.roleNote}
+              />
             ))}
-          </ul>
+          </div>
         )}
       </div>
 
@@ -699,6 +607,103 @@ function ProjectsLedBody({
             ))}
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+/* Project cards — shared by "Projects led" and "Team member on". */
+
+const cardGridStyle: React.CSSProperties = {
+  display: 'grid',
+  gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))',
+  gap: 8,
+};
+
+const PROJECT_DB_STATUS_TONE: Record<string, { bg: string; fg: string; label: string }> = {
+  pitch: { bg: '#1a3b6e', fg: '#9ec2f0', label: 'Pitch' },
+  won: { bg: '#1a5e6e', fg: '#9ee2f0', label: 'Won' },
+  active: { bg: '#1f6b3b', fg: '#a4d8b3', label: 'Active' },
+  on_hold: { bg: '#7a5a17', fg: '#e7c980', label: 'On hold' },
+  completed: { bg: '#3a3a78', fg: '#bdbdf5', label: 'Completed' },
+  cancelled: { bg: '#3a3a3a', fg: '#bdbdbd', label: 'Cancelled' },
+};
+
+function EmployeeProjectCard({
+  projectId,
+  code,
+  name,
+  clientName,
+  status,
+  roleNote,
+}: {
+  projectId: string;
+  code: string | null;
+  name: string;
+  clientName: string;
+  status: string;
+  roleNote?: string | null;
+}) {
+  const tone = PROJECT_DB_STATUS_TONE[status] ?? {
+    bg: '#3a3a3a',
+    fg: '#bdbdbd',
+    label: status.replace('_', ' '),
+  };
+  return (
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 4,
+        padding: '10px 12px',
+        borderRadius: 10,
+        border: '1px solid var(--border)',
+        background: 'var(--content-2)',
+        minWidth: 0,
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        {code ? (
+          <span
+            style={{
+              fontFamily: 'var(--os-font)',
+              fontVariantNumeric: 'tabular-nums',
+              letterSpacing: '0.02em',
+              fontSize: 10.5,
+              color: 'var(--text-muted)',
+            }}
+          >
+            {code}
+          </span>
+        ) : null}
+        <div className="grow" style={{ flex: 1 }} />
+        <span
+          className="pill"
+          style={{ background: tone.bg, color: tone.fg, fontSize: 10.5, padding: '2px 8px' }}
+        >
+          {tone.label}
+        </span>
+      </div>
+      <div style={{ fontSize: 13.5, fontWeight: 600, minWidth: 0 }}>
+        <EntityRef
+          type="project"
+          id={projectId}
+          label={name}
+          hideIcon
+          onNavigate={navigateBesideFocused}
+        />
+      </div>
+      <div
+        style={{
+          fontSize: 12,
+          color: 'var(--text-muted)',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+        }}
+      >
+        for {clientName}
+        {roleNote ? ` · ${roleNote}` : ''}
       </div>
     </div>
   );

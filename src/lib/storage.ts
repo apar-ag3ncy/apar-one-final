@@ -173,6 +173,24 @@ export async function storeBank(
   return { objectKey };
 }
 
+/**
+ * Read a bank-account number straight out of the vault. Product decision
+ * (Jul 2026): bank accounts display fully revealed in the entity Bank tabs —
+ * no reveal ceremony, no per-view audit row. The vault stays the storage
+ * location (plaintext never sits in a normal column); this is just the
+ * server-side read that feeds the list. Returns null when the blob is gone.
+ */
+export async function readBankNumber(objectKey: string): Promise<string | null> {
+  try {
+    const admin = createAdminClient();
+    const { data, error } = await admin.storage.from(KYC_BUCKET).download(objectKey);
+    if (error || !data) return null;
+    return (await data.text()).trim() || null;
+  } catch {
+    return null;
+  }
+}
+
 /** Best-effort delete of a vault object (used to unwind a failed create). Never
  * throws — an orphaned blob is harmless to correctness; we log it for sweeping. */
 export async function removeVaultObject(objectKey: string): Promise<void> {

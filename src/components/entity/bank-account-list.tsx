@@ -21,7 +21,11 @@ export type BankAccount = {
   id: string;
   /** Bank display name, e.g. "HDFC Bank". */
   bankName: string;
-  /** Masked number (e.g. "XXXX XXXX 1234"). The full number lives in the vault. */
+  /**
+   * Account number as displayed. Fully revealed by default (product
+   * decision); falls back to the masked "XXXX XXXX 1234" form only when the
+   * vault blob backing the row couldn't be read.
+   */
   maskedNumber: string;
   /** IFSC is non-sensitive — store and display plain. */
   ifsc?: string | null;

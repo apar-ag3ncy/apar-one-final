@@ -45,6 +45,7 @@ import { ProjectWindow } from './apps/project-window';
 import { VendorWindow } from './apps/vendor-window';
 import { AttendanceApp } from './apps/attendance-app';
 import { PerClientPnLWindow } from './apps/per-client-pnl-window';
+import { AccountsOverviewWindow } from './apps/accounts-overview-window';
 import { TrialBalanceWindow } from './apps/trial-balance-window';
 import { BalanceSheetWindow } from './apps/balance-sheet-window';
 import { PnLWindow } from './apps/pnl-window';
@@ -741,6 +742,8 @@ function Desktop({ signOut }: { signOut: () => void }) {
                       <ReportsApp onOpenReport={openReport} />
                     </div>
                   );
+                case 'accounts-overview':
+                  return <AccountsOverviewWindow />;
                 case 'trial-balance':
                   return <TrialBalanceWindow />;
                 case 'balance-sheet':

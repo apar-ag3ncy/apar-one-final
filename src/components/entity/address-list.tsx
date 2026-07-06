@@ -91,6 +91,39 @@ export function AddressList({
   );
 }
 
+/**
+ * Google Maps preview for an address card. Uses the key-less maps embed
+ * (`output=embed`) so no API key is needed, plus an open-in-Maps link.
+ * The iframe is lazy-loaded so a window full of addresses stays light.
+ */
+function AddressMap({ address }: { address: Address }) {
+  const query = [address.line1, address.line2, address.city, address.state, address.postalCode]
+    .filter(Boolean)
+    .join(', ');
+  if (!query.trim()) return null;
+  const q = encodeURIComponent(query);
+  return (
+    <div className="mt-2">
+      <iframe
+        title={`Map of ${query}`}
+        src={`https://www.google.com/maps?q=${q}&output=embed`}
+        loading="lazy"
+        referrerPolicy="no-referrer-when-downgrade"
+        className="h-40 w-full rounded-md border"
+        style={{ border: '1px solid var(--border, #e5e7eb)' }}
+      />
+      <a
+        href={`https://www.google.com/maps/search/?api=1&query=${q}`}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="text-muted-foreground mt-1 inline-block text-xs hover:underline"
+      >
+        Open in Google Maps ↗
+      </a>
+    </div>
+  );
+}
+
 /** Address kinds are stored lowercase in the DB ("registered") — display Title Case. */
 function titleCase(s: string): string {
   return s
@@ -132,6 +165,7 @@ function AddressCard({
           {address.gstin ? (
             <p className="text-muted-foreground mt-1 font-mono text-xs">GSTIN {address.gstin}</p>
           ) : null}
+          <AddressMap address={address} />
         </div>
         <div className="flex shrink-0 items-center gap-1">
           {onSetPrimary ? (

@@ -23,6 +23,8 @@ export const VendorPaymentMadeInputSchema = z.object({
   vendorId: z.string().uuid(),
   /** 'bank' → 1120 (needs bankAccountId); 'cash' → 1110. */
   mode: z.enum(['bank', 'cash']).default('bank'),
+  /** How the transfer happened (NEFT/RTGS/IMPS/UPI) — captured, no posting impact. */
+  transferMethod: z.enum(['neft', 'rtgs', 'imps', 'upi']).nullish(),
   bankAccountId: z.string().uuid().nullish(),
   /** The vendor's bank account the money went to (entity_bank_accounts.id) — noted. */
   counterpartyBankAccountId: z.string().uuid().nullish(),
@@ -75,6 +77,7 @@ export function vendorPaymentMade(input: VendorPaymentMadeInput): PostingTemplat
           : {}),
       metadata: {
         mode: parsed.mode,
+        transfer_method: parsed.mode === 'bank' ? (parsed.transferMethod ?? null) : null,
         source: parsed.source,
         counterparty_bank_account_id: parsed.counterpartyBankAccountId ?? null,
         gst_paise: parsed.gstPaise.toString(),
