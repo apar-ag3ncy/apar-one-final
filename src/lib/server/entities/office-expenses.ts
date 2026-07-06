@@ -1188,3 +1188,86 @@ export async function permanentlyDeleteOfficeExpenseCategory(input: { id: string
     changes: { permanent: true },
   });
 }
+
+/* -------------------------------------------------------------------------- */
+/* Backfill — post historical (pre-ledger) office expenses to the GL           */
+/* -------------------------------------------------------------------------- */
+
+/** How many captured expenses are eligible to post but haven't yet. */
+export async function countUnpostedOfficeExpenses(): Promise<number> {
+  await getActorContext();
+  const [agg] = await db
+    .select({ n: sql<string>`count(*)::text` })
+    .from(officeExpenses)
+    .where(
+      and(
+        isNull(officeExpenses.deletedAt),
+        isNull(officeExpenses.transactionId),
+        sql`${officeExpenses.category} <> 'reimbursement'`,
+        sql`${officeExpenses.amountPaise} > 0`,
+      ),
+    );
+  return Number(agg?.n ?? '0');
+}
+
+export type BackfillLedgerResult = {
+  posted: number;
+  skipped: number;
+  errors: Array<{ id: string; message: string }>;
+};
+
+/**
+ * One-shot (repeatable) backfill: post every eligible office expense that
+ * isn't linked to the ledger yet (legacy capture-only rows + any import that
+ * failed to post). Best-effort per row — a failure (e.g. no period covers the
+ * date) is skipped and recorded, never aborts the batch. Safe to re-run: it
+ * only touches rows with a null transaction_id.
+ */
+export async function backfillOfficeExpenseLedgerPostings(): Promise<BackfillLedgerResult> {
+  const ctx = await getActorContext();
+  const rows = await db
+    .select()
+    .from(officeExpenses)
+    .where(
+      and(
+        isNull(officeExpenses.deletedAt),
+        isNull(officeExpenses.transactionId),
+        sql`${officeExpenses.category} <> 'reimbursement'`,
+        sql`${officeExpenses.amountPaise} > 0`,
+      ),
+    )
+    .orderBy(officeExpenses.expenseDate);
+
+  const result: BackfillLedgerResult = { posted: 0, skipped: 0, errors: [] };
+  for (const row of rows) {
+    try {
+      const txnId = await postExpenseToLedger(ctx, {
+        id: row.id,
+        category: row.category as OfficeExpenseCategory,
+        description: row.description,
+        expenseDate: row.expenseDate,
+        amountPaise: row.amountPaise,
+        gstPaise: row.gstPaise,
+        notes: row.notes,
+      });
+      await db
+        .update(officeExpenses)
+        .set({ transactionId: txnId })
+        .where(eq(officeExpenses.id, row.id));
+      result.posted += 1;
+    } catch (e) {
+      result.skipped += 1;
+      result.errors.push({ id: row.id, message: e instanceof Error ? e.message : 'unknown error' });
+    }
+  }
+
+  await logAudit({
+    actorId: ctx.userId,
+    entityType: 'office_expense',
+    entityId: '00000000-0000-0000-0000-000000000000',
+    action: 'update',
+    changes: { backfill_ledger: true, posted: result.posted, skipped: result.skipped },
+  });
+
+  return result;
+}
