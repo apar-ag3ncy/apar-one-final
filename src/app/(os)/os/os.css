@@ -104,35 +104,6 @@
   box-sizing: border-box;
 }
 
-/* -------------------------------------------------------------------------- */
-/* Text-overflow safety net                                                   */
-/* -------------------------------------------------------------------------- */
-/* Nothing on screen should be clipped: content text wraps to multiple lines
-   and long unbroken tokens (emails, URLs, GST / invoice numbers, account
-   codes, file names) break so they fit their box. Applied broadly to the
-   content-bearing containers used across the OS. Elements that must stay on
-   one line (numeric/date columns, pills, badges, tabs, the menubar and dock,
-   buttons, keyboard hints) set `white-space: nowrap` on themselves and win by
-   specificity / later declaration, so this net doesn't fight them. */
-.os-root .main,
-.os-root .main-header,
-.os-root .main-header .sub,
-.os-root .sidebar,
-.os-root .side-item,
-.os-root .proj-card,
-.os-root .proj-card .name,
-.os-root .proj-card .meta,
-.os-root .emp-card,
-.os-root .emp-card .name,
-.os-root .emp-card .role,
-.os-root .kanban-col-head .name,
-.os-root .inbox-row,
-.os-root .cmdk-row,
-.os-root .settings-row {
-  overflow-wrap: anywhere;
-  word-break: break-word;
-}
-
 /* Display headings — same SF stack, lighter weight + slight negative tracking
    so big titles read with the elegant Apple display look. */
 .os-root .font-display {
@@ -817,24 +788,6 @@
   border-bottom: 1px solid var(--border);
   color: var(--text);
   vertical-align: middle;
-}
-/* Table cells wrap by default; make sure long unbroken tokens (emails, GST /
-   invoice numbers, account codes, URLs) break inside the cell instead of
-   forcing the column wider and clipping. Numeric/date columns opt out inline
-   with .num / nowrap where needed. */
-.os-root .table thead th,
-.os-root .table tbody td {
-  white-space: normal;
-  overflow-wrap: anywhere;
-  word-break: break-word;
-}
-/* Currency / numeric cells (rendered with inline tabular-nums) stay on one
-   line — a rupee amount is one unbroken token and must never break
-   mid-number. Long font-mono codes have no tabular-nums, so they still wrap. */
-.os-root .table td[style*='tabular-nums'] {
-  white-space: nowrap;
-  overflow-wrap: normal;
-  word-break: normal;
 }
 .os-root .table tbody tr:hover {
   background: var(--hover);

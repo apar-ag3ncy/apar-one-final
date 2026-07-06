@@ -273,18 +273,9 @@ function StatementRow({
             display: 'flex',
             alignItems: 'center',
             gap: 6,
-            minWidth: 0,
           }}
         >
-          <span
-            style={{
-              fontFamily: 'var(--font-jetbrains-mono, monospace)',
-              fontSize: 11.5,
-              minWidth: 0,
-              overflowWrap: 'anywhere',
-              wordBreak: 'break-word',
-            }}
-          >
+          <span style={{ fontFamily: 'var(--font-jetbrains-mono, monospace)', fontSize: 11.5 }}>
             {primary}
           </span>
           {isDraft ? (

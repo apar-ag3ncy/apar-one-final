@@ -70,7 +70,7 @@ export function AdminConsole() {
               {initials(u.fullName)}
             </span>
             <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0, flex: 1 }}>
-              <span style={{ fontWeight: 600, overflowWrap: 'anywhere', wordBreak: 'break-word' }}>
+              <span style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis' }}>
                 {u.fullName}
               </span>
               <span

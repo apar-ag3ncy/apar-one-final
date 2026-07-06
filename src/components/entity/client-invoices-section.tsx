@@ -270,9 +270,7 @@ export function ClientInvoicesSection({ clientId, clientName }: ClientInvoicesSe
                     />
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2 text-sm font-medium">
-                        <span className="min-w-0 break-words [overflow-wrap:anywhere]">
-                          {inv.documentNumber}
-                        </span>
+                        <span className="truncate">{inv.documentNumber}</span>
                         <StatusBadge
                           tone={STATE_TONE[inv.state]}
                           label={STATE_LABEL[inv.state]}
@@ -583,9 +581,7 @@ function ManageThemesDialog({
                     style={{ background: t.primaryColor ?? 'var(--muted)' }}
                     aria-hidden
                   />
-                  <span className="min-w-0 text-sm font-medium break-words [overflow-wrap:anywhere]">
-                    {t.name}
-                  </span>
+                  <span className="truncate text-sm font-medium">{t.name}</span>
                   <span className="text-muted-foreground text-xs">
                     {t.kind === 'builtin' ? 'Built-in' : 'Imported'}
                   </span>

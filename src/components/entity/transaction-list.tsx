@@ -326,7 +326,7 @@ export function TransactionList({
                       <span className="text-muted-foreground">—</span>
                     )}
                   </TableCell>
-                  <TableCell className="text-muted-foreground max-w-xs px-4 text-sm break-words [overflow-wrap:anywhere]">
+                  <TableCell className="text-muted-foreground max-w-xs truncate px-4 text-sm">
                     {t.memo ?? <span className="text-muted-foreground">—</span>}
                   </TableCell>
                   <TableCell className="px-4 text-right font-mono text-sm tabular-nums">

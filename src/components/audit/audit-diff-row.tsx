@@ -48,17 +48,12 @@ export function AuditDiffRow({ changes }: { changes: ChangeDiff }) {
             key={col}
             className="grid grid-cols-[6.5rem_1fr_1fr] gap-2 rounded border border-dashed px-2 py-1"
           >
-            <span className="text-muted-foreground font-mono break-words [overflow-wrap:anywhere]">
-              {col}
-            </span>
-            <span
-              className="text-muted-foreground break-words [overflow-wrap:anywhere]"
-              title={before}
-            >
+            <span className="text-muted-foreground font-mono">{col}</span>
+            <span className="text-muted-foreground truncate" title={before}>
               <span className="mr-1 text-rose-500">−</span>
               {before}
             </span>
-            <span className="break-words [overflow-wrap:anywhere]" title={after}>
+            <span className="truncate" title={after}>
               <span className="mr-1 text-emerald-500">+</span>
               {after}
             </span>
