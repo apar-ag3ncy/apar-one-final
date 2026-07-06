@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
@@ -69,9 +69,13 @@ export function ContactForm({
     },
   });
 
-  // Reset form when initial values change (switching between rows).
+  // Reset form only when the dialog opens (switching between rows). `initial`
+  // is a fresh object literal on every parent render, so keying the effect on
+  // it would wipe the user's in-progress typing whenever anything above
+  // re-renders (in the OS: the menubar clock, window focus/drag, …).
+  const wasOpen = useRef(false);
   useEffect(() => {
-    if (open) {
+    if (open && !wasOpen.current) {
       form.reset({
         name: initial?.name ?? '',
         role: initial?.role ?? '',
@@ -81,6 +85,7 @@ export function ContactForm({
         notes: initial?.notes ?? '',
       });
     }
+    wasOpen.current = open;
   }, [open, initial, form]);
 
   const submit = form.handleSubmit(async (values) => {

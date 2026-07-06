@@ -384,13 +384,15 @@ function TeamBody({ projectId, canEdit }: { projectId: string; canEdit: boolean 
   const [members, setMembers] = useState<readonly ProjectMemberRow[]>([]);
   const [employees, setEmployees] = useState<readonly EmployeeOption[]>([]);
   const [loading, setLoading] = useState(true);
-  const [pick, setPick] = useState('');
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
+    queueMicrotask(() => {
+      if (!cancelled) setLoading(true);
+    });
     Promise.all([listProjectMembers(projectId), listEmployees()])
       .then(([m, emps]) => {
         if (cancelled) return;
@@ -411,20 +413,22 @@ function TeamBody({ projectId, canEdit }: { projectId: string; canEdit: boolean 
   const memberIds = new Set(members.map((m) => m.employeeId));
   const available = employees.filter((e) => !memberIds.has(e.id));
 
-  async function add() {
-    if (!pick || busy) return;
+  async function addMany(employeeIds: readonly string[]) {
+    if (employeeIds.length === 0 || busy) return;
     setBusy(true);
     setError(null);
     try {
-      const row = await addProjectMember({ projectId, employeeId: pick });
-      setMembers((prev) =>
-        prev.some((m) => m.id === row.id)
-          ? prev
-          : [...prev, row].sort((a, b) => a.employeeName.localeCompare(b.employeeName)),
+      const rows = await Promise.all(
+        employeeIds.map((employeeId) => addProjectMember({ projectId, employeeId })),
       );
-      setPick('');
+      setMembers((prev) => {
+        const seen = new Set(prev.map((m) => m.id));
+        const merged = [...prev, ...rows.filter((r) => !seen.has(r.id))];
+        return merged.sort((a, b) => a.employeeName.localeCompare(b.employeeName));
+      });
+      setPickerOpen(false);
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Failed to add member');
+      setError(e instanceof Error ? e.message : 'Failed to add team mates');
     } finally {
       setBusy(false);
     }
@@ -452,31 +456,31 @@ function TeamBody({ projectId, canEdit }: { projectId: string; canEdit: boolean 
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       {canEdit ? (
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-          <select
-            className="input"
-            value={pick}
-            onChange={(e) => setPick(e.target.value)}
-            disabled={busy || available.length === 0}
-          >
-            <option value="">
-              {available.length === 0 ? 'All employees added' : 'Add member…'}
-            </option>
-            {available.map((e) => (
-              <option key={e.id} value={e.id}>
-                {e.name}
-              </option>
-            ))}
-          </select>
           <button
             className="btn primary"
             type="button"
-            onClick={() => void add()}
-            disabled={busy || !pick}
+            onClick={() => setPickerOpen(true)}
+            disabled={busy || available.length === 0}
+            title={available.length === 0 ? 'Every employee is already on this project.' : undefined}
           >
             <Icon name="plus" size={13} />
-            Add member
+            Add team mate
           </button>
+          {available.length === 0 ? (
+            <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+              All employees are on this project.
+            </span>
+          ) : null}
         </div>
+      ) : null}
+
+      {pickerOpen ? (
+        <AddTeamMatesDialog
+          available={available}
+          busy={busy}
+          onCancel={() => setPickerOpen(false)}
+          onAdd={(ids) => void addMany(ids)}
+        />
       ) : null}
 
       {error ? <div style={{ fontSize: 12, color: 'var(--text-error, #c33)' }}>{error}</div> : null}
@@ -540,6 +544,165 @@ function TeamBody({ projectId, canEdit }: { projectId: string; canEdit: boolean 
   );
 }
 
+/**
+ * "Add team mate" popup — multi-select over the employees not yet on the
+ * project. Same os-modal chrome as the shared Modal in apps.tsx (checkbox
+ * list + search instead of a form).
+ */
+function AddTeamMatesDialog({
+  available,
+  busy,
+  onCancel,
+  onAdd,
+}: {
+  available: readonly EmployeeOption[];
+  busy: boolean;
+  onCancel: () => void;
+  onAdd: (employeeIds: readonly string[]) => void;
+}) {
+  const [query, setQuery] = useState('');
+  const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onCancel();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onCancel]);
+
+  const q = query.trim().toLowerCase();
+  const filtered = q ? available.filter((e) => e.name.toLowerCase().includes(q)) : available;
+
+  function toggle(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  return (
+    <div className="os-modal-overlay" onMouseDown={onCancel}>
+      <div className="os-modal" style={{ width: 440 }} onMouseDown={(e) => e.stopPropagation()}>
+        <div className="os-modal-head">
+          <div className="font-display" style={{ fontSize: 18 }}>
+            Add team mates
+          </div>
+          <button className="btn" type="button" onClick={onCancel} aria-label="Close">
+            <Icon name="close" size={13} />
+          </button>
+        </div>
+        <div className="os-modal-body">
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: 18 }}>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <input
+                className="input"
+                style={{ flex: 1 }}
+                autoFocus
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search employees…"
+              />
+              <button
+                className="btn"
+                type="button"
+                onClick={() => setSelected(new Set(filtered.map((e) => e.id)))}
+                disabled={filtered.length === 0}
+              >
+                All
+              </button>
+              <button
+                className="btn"
+                type="button"
+                onClick={() => setSelected(new Set())}
+                disabled={selected.size === 0}
+              >
+                Clear
+              </button>
+            </div>
+
+            {filtered.length === 0 ? (
+              <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0, padding: '8px 2px' }}>
+                {available.length === 0
+                  ? 'Every employee is already on this project.'
+                  : `No employees match “${query}”.`}
+              </p>
+            ) : (
+              <ul
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 4,
+                  listStyle: 'none',
+                  padding: 0,
+                  margin: 0,
+                  maxHeight: 280,
+                  overflowY: 'auto',
+                }}
+              >
+                {filtered.map((e) => (
+                  <li key={e.id}>
+                    <label
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 10,
+                        padding: '7px 10px',
+                        borderRadius: 8,
+                        border: '1px solid var(--border)',
+                        fontSize: 13,
+                        cursor: 'pointer',
+                        background: selected.has(e.id) ? 'var(--hover)' : 'transparent',
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selected.has(e.id)}
+                        onChange={() => toggle(e.id)}
+                        style={{ accentColor: 'var(--accent, #4a72ff)' }}
+                      />
+                      <span style={{ flex: 1 }}>{e.name}</span>
+                    </label>
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'flex-end',
+                gap: 8,
+                paddingTop: 6,
+                borderTop: '1px solid var(--border)',
+              }}
+            >
+              <button className="btn" type="button" onClick={onCancel} disabled={busy}>
+                Cancel
+              </button>
+              <button
+                className="btn primary"
+                type="button"
+                onClick={() => onAdd([...selected])}
+                disabled={busy || selected.size === 0}
+              >
+                <Icon name="plus" size={13} />
+                {busy
+                  ? 'Adding…'
+                  : selected.size === 0
+                    ? 'Add team mates'
+                    : `Add ${selected.size} team mate${selected.size === 1 ? '' : 's'}`}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* -------------------------------------------------------------------------- */
 /* Tasks                                                                       */
 /* -------------------------------------------------------------------------- */
@@ -552,7 +715,9 @@ const TASK_STATUSES: ReadonlyArray<{ value: ProjectTaskStatus; label: string }> 
 
 function TasksBody({ projectId, canEdit }: { projectId: string; canEdit: boolean }) {
   const [tasks, setTasks] = useState<readonly ProjectTaskRow[]>([]);
-  const [employees, setEmployees] = useState<readonly EmployeeOption[]>([]);
+  // Assignee options are the project's TEAM (project_members), not the whole
+  // employee directory — only people on the project can pick up its tasks.
+  const [team, setTeam] = useState<readonly EmployeeOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -564,12 +729,14 @@ function TasksBody({ projectId, canEdit }: { projectId: string; canEdit: boolean
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
-    Promise.all([listProjectTasks(projectId), listEmployees()])
-      .then(([t, emps]) => {
+    queueMicrotask(() => {
+      if (!cancelled) setLoading(true);
+    });
+    Promise.all([listProjectTasks(projectId), listProjectMembers(projectId)])
+      .then(([t, members]) => {
         if (cancelled) return;
         setTasks(t);
-        setEmployees(emps.map((e) => ({ id: e.id, name: e.fullName })));
+        setTeam(members.map((m) => ({ id: m.employeeId, name: m.employeeName })));
         setLoading(false);
       })
       .catch((e: unknown) => {
@@ -581,6 +748,21 @@ function TasksBody({ projectId, canEdit }: { projectId: string; canEdit: boolean
       cancelled = true;
     };
   }, [projectId]);
+
+  // A task may still point at someone who has since left the team; keep that
+  // assignee visible in its row's dropdown so the selection doesn't misrender.
+  function optionsFor(task?: ProjectTaskRow): readonly EmployeeOption[] {
+    if (
+      task?.assigneeEmployeeId &&
+      !team.some((m) => m.id === task.assigneeEmployeeId)
+    ) {
+      return [
+        ...team,
+        { id: task.assigneeEmployeeId, name: `${task.assigneeName ?? 'Unknown'} (not on team)` },
+      ];
+    }
+    return team;
+  }
 
   function replaceTask(row: ProjectTaskRow) {
     setTasks((prev) => prev.map((t) => (t.id === row.id ? row : t)));
@@ -685,10 +867,14 @@ function TasksBody({ projectId, canEdit }: { projectId: string; canEdit: boolean
             className="input"
             value={assignee}
             onChange={(e) => setAssignee(e.target.value)}
-            title="Assignee (optional)"
+            title={
+              team.length === 0
+                ? 'Add team mates in the Team tab to assign tasks.'
+                : 'Assignee (optional)'
+            }
           >
-            <option value="">Unassigned</option>
-            {employees.map((e) => (
+            <option value="">{team.length === 0 ? 'No team mates yet' : 'Unassigned'}</option>
+            {team.map((e) => (
               <option key={e.id} value={e.id}>
                 {e.name}
               </option>
@@ -773,7 +959,7 @@ function TasksBody({ projectId, canEdit }: { projectId: string; canEdit: boolean
                       title="Assignee"
                     >
                       <option value="">Unassigned</option>
-                      {employees.map((e) => (
+                      {optionsFor(t).map((e) => (
                         <option key={e.id} value={e.id}>
                           {e.name}
                         </option>

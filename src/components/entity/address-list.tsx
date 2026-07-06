@@ -91,6 +91,15 @@ export function AddressList({
   );
 }
 
+/** Address kinds are stored lowercase in the DB ("registered") — display Title Case. */
+function titleCase(s: string): string {
+  return s
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ');
+}
+
 function AddressCard({
   address,
   onEdit,
@@ -110,7 +119,7 @@ function AddressCard({
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-1.5">
             <span className="text-sm font-medium">
-              {address.label ?? address.kind ?? 'Address'}
+              {titleCase(address.label ?? address.kind ?? 'Address')}
             </span>
             {address.isPrimary ? <StatusBadge tone="success" label="Primary" dot={false} /> : null}
           </div>

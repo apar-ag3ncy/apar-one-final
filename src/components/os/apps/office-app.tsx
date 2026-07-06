@@ -685,7 +685,7 @@ export function OfficeApp({
       </div>
 
       {/* Expense table */}
-      <div style={{ flex: 1, overflow: 'auto' }}>
+      <div style={{ flex: 1, overflow: 'auto', padding: '0 16px 16px' }}>
         {rows === null ? (
           <p style={{ color: 'var(--text-muted)', fontSize: 13, padding: 24 }}>Loading…</p>
         ) : filtered.length === 0 ? (

@@ -74,7 +74,7 @@ export function DocumentWindow({
   }
 
   return (
-    <div className="main" style={{ display: 'flex', flex: 1, padding: 0 }}>
+    <div className="main" style={{ display: 'flex', flex: 1, padding: 16 }}>
       <DocumentViewer
         documentId={documentId}
         name={meta.name}

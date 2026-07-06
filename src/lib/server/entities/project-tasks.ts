@@ -373,6 +373,52 @@ export async function deleteProjectTask(input: { id: string }): Promise<void> {
 /* Employee-facing view                                                       */
 /* -------------------------------------------------------------------------- */
 
+export type EmployeeProjectMembershipRow = {
+  memberId: string;
+  projectId: string;
+  projectName: string;
+  projectCode: string | null;
+  projectStatus: string;
+  roleNote: string | null;
+};
+
+/**
+ * Projects this employee is a team member on (via project_members). The
+ * employee window renders these beside "Projects led" so adding a team mate
+ * in the project window is immediately visible from the Employees app too.
+ */
+export async function listEmployeeProjects(
+  employeeId: string,
+): Promise<readonly EmployeeProjectMembershipRow[]> {
+  await getActorContext();
+  const parsedEmployeeId = z.string().uuid().parse(employeeId);
+
+  const rows = await db
+    .select({
+      memberId: projectMembers.id,
+      projectId: projectMembers.projectId,
+      projectName: projects.name,
+      projectCode: projects.code,
+      projectStatus: projects.status,
+      roleNote: projectMembers.roleNote,
+    })
+    .from(projectMembers)
+    .innerJoin(projects, eq(projects.id, projectMembers.projectId))
+    .where(and(eq(projectMembers.employeeId, parsedEmployeeId), eq(projects.isArchived, false)))
+    .orderBy(asc(projects.name));
+
+  return rows.map(
+    (r): EmployeeProjectMembershipRow => ({
+      memberId: r.memberId,
+      projectId: r.projectId,
+      projectName: r.projectName,
+      projectCode: r.projectCode,
+      projectStatus: r.projectStatus,
+      roleNote: r.roleNote,
+    }),
+  );
+}
+
 export type EmployeeProjectTaskRow = {
   taskId: string;
   title: string;

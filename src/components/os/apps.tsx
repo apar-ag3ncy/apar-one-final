@@ -288,7 +288,7 @@ export function ClientsApp({
           New Client
         </button>
       </div>
-      <div style={{ flex: 1, overflow: 'auto' }}>
+      <div style={{ flex: 1, overflow: 'auto', padding: '0 16px 16px' }}>
         <table className="table">
           <thead>
             <tr>
@@ -754,7 +754,7 @@ export function VendorsApp({
           New Vendor
         </button>
       </div>
-      <div style={{ flex: 1, overflow: 'auto' }}>
+      <div style={{ flex: 1, overflow: 'auto', padding: '0 16px 16px' }}>
         <table className="table">
           <thead>
             <tr>
@@ -2964,7 +2964,7 @@ function DepartmentsModal({
 
   return (
     <Modal title="Manage Departments" onClose={onClose} width={520}>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12, padding: 18 }}>
         <div style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>
           Add, rename, or remove the departments teammates can be assigned to. Renaming updates
           everyone in that department; a department can’t be removed while people are still in it.

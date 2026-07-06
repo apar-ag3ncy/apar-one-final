@@ -463,7 +463,7 @@ function PermissionGrid({
       >
         <div style={{ fontWeight: 600 }}>Permissions</div>
       </div>
-      <div style={{ overflowX: 'auto' }}>
+      <div style={{ overflowX: 'auto', padding: '0 16px' }}>
         <table className="table" style={{ fontSize: 13, minWidth: 460 }}>
           <thead>
             <tr>
