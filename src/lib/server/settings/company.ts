@@ -11,6 +11,11 @@ import { requireCapability } from '@/lib/rbac';
 import { logAudit } from '@/lib/audit';
 import { sniffMime } from '@/lib/storage';
 import { getActorContext } from '@/lib/server/actor';
+import {
+  createBankLedgerMirror,
+  deactivateBankLedgerMirror,
+  updateBankLedgerMirror,
+} from '@/lib/server/settings/company-bank-ledger';
 import { createAdminClient } from '@/lib/supabase/server';
 import { getDocumentSignedUrl } from '@/lib/server/entities/documents';
 import { GSTIN_RE, IFSC_RE, PAN_RE } from '@/lib/validators';
@@ -389,6 +394,16 @@ export async function createCompanyBankAccount(input: BankInputShape): Promise<A
           updatedBy: ctx.userId,
         })
         .returning({ id: companyBankAccounts.id });
+      // Mirror into the ledger's agency bank accounts so it shows in the Bank
+      // Book (and can carry cash movements). Same txn → rolls back together.
+      await createBankLedgerMirror(tx, ctx.userId, row!.id, {
+        title: parsed.title,
+        accountNumber: parsed.accountNumber,
+        ifsc,
+        bankName: parsed.bankName,
+        branchName: norm(parsed.branchName),
+        notes: norm(parsed.notes),
+      });
       await logAudit({
         actorId: ctx.userId,
         entityType: 'company_bank_account',
@@ -425,18 +440,30 @@ export async function updateCompanyBankAccount(
       .limit(1);
     if (!existing) return fail('Bank account not found.');
 
-    await db
-      .update(companyBankAccounts)
-      .set({
+    await db.transaction(async (tx) => {
+      await tx
+        .update(companyBankAccounts)
+        .set({
+          title: parsed.title,
+          accountNumber: parsed.accountNumber,
+          ifsc,
+          bankName: parsed.bankName,
+          branchName: norm(parsed.branchName),
+          notes: norm(parsed.notes),
+          updatedBy: ctx.userId,
+        })
+        .where(eq(companyBankAccounts.id, id));
+      // Keep the ledger mirror's descriptive fields in step (upserts a mirror
+      // for accounts that predate this sync).
+      await updateBankLedgerMirror(tx, ctx.userId, id, {
         title: parsed.title,
         accountNumber: parsed.accountNumber,
         ifsc,
         bankName: parsed.bankName,
         branchName: norm(parsed.branchName),
         notes: norm(parsed.notes),
-        updatedBy: ctx.userId,
-      })
-      .where(eq(companyBankAccounts.id, id));
+      });
+    });
 
     await logAudit({
       actorId: ctx.userId,
@@ -508,6 +535,10 @@ export async function deleteCompanyBankAccount(id: string): Promise<ActionResult
         .update(companyBankAccounts)
         .set({ deletedAt: new Date(), isPrimary: false, updatedBy: ctx.userId })
         .where(eq(companyBankAccounts.id, id));
+
+      // Deactivate the ledger mirror (kept, not deleted — it may carry posted
+      // cash movements that must remain in the Bank Book).
+      await deactivateBankLedgerMirror(tx, ctx.userId, id);
 
       // If we removed the primary, promote the next surviving account so the
       // invoice payment block always has a default.
