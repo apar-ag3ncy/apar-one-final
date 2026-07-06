@@ -5,7 +5,7 @@ import { z } from 'zod';
 
 import { logAudit } from '@/lib/audit';
 import { db } from '@/lib/db/client';
-import { employees, projectMembers, projectTasks, projects } from '@/lib/db/schema';
+import { clients, employees, projectMembers, projectTasks, projects } from '@/lib/db/schema';
 import { AppError } from '@/lib/errors';
 import { requireCapability } from '@/lib/rbac';
 import { getActorContext } from '@/lib/server/actor';
@@ -379,6 +379,7 @@ export type EmployeeProjectMembershipRow = {
   projectName: string;
   projectCode: string | null;
   projectStatus: string;
+  clientName: string;
   roleNote: string | null;
 };
 
@@ -400,10 +401,12 @@ export async function listEmployeeProjects(
       projectName: projects.name,
       projectCode: projects.code,
       projectStatus: projects.status,
+      clientName: clients.name,
       roleNote: projectMembers.roleNote,
     })
     .from(projectMembers)
     .innerJoin(projects, eq(projects.id, projectMembers.projectId))
+    .innerJoin(clients, eq(clients.id, projects.clientId))
     .where(and(eq(projectMembers.employeeId, parsedEmployeeId), eq(projects.isArchived, false)))
     .orderBy(asc(projects.name));
 
@@ -414,6 +417,7 @@ export async function listEmployeeProjects(
       projectName: r.projectName,
       projectCode: r.projectCode,
       projectStatus: r.projectStatus,
+      clientName: r.clientName,
       roleNote: r.roleNote,
     }),
   );

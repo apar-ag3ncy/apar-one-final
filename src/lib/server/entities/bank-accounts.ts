@@ -9,7 +9,7 @@ import { entityBankAccounts } from '@/lib/db/schema';
 import { AppError } from '@/lib/errors';
 import { requireCapability, type Capability } from '@/lib/rbac';
 import { getActorContext } from '@/lib/server/actor';
-import { removeVaultObject, storeBank } from '@/lib/storage';
+import { readBankNumber, removeVaultObject, storeBank } from '@/lib/storage';
 
 export type BankAccountEntityType = 'client' | 'vendor' | 'employee' | 'project' | 'office';
 export type BankAccountTypeDb = 'current' | 'savings' | 'od' | 'escrow';
@@ -75,6 +75,13 @@ export type BankAccountRow = {
   branch: string | null;
   holderName: string;
   accountLast4: string;
+  /**
+   * Full account number, read from the vault at list time. Bank accounts
+   * display fully revealed in the Bank tabs (product decision, Jul 2026 — no
+   * reveal ceremony). Null when the vault blob is missing; the UI falls back
+   * to the masked last-4.
+   */
+  accountNumber: string | null;
   ifsc: string;
   accountType: BankAccountTypeDb;
   isPrimary: boolean;
@@ -84,13 +91,17 @@ export type BankAccountRow = {
   notes: string | null;
 };
 
-function rowToBank(r: typeof entityBankAccounts.$inferSelect): BankAccountRow {
+function rowToBank(
+  r: typeof entityBankAccounts.$inferSelect,
+  accountNumber: string | null = null,
+): BankAccountRow {
   return {
     id: r.id,
     bankName: r.bankName,
     branch: r.branch,
     holderName: r.holderName,
     accountLast4: r.accountLast4,
+    accountNumber,
     ifsc: r.ifsc,
     accountType: r.accountType,
     isPrimary: r.isPrimary,
@@ -135,7 +146,11 @@ export async function listBankAccounts(args: {
       ),
     )
     .orderBy(desc(entityBankAccounts.isPrimary), entityBankAccounts.bankName);
-  return rows.map(rowToBank);
+  // Bank accounts display fully revealed — pull each number from the vault
+  // alongside the row (few rows per entity; reads run in parallel).
+  return Promise.all(
+    rows.map(async (r) => rowToBank(r, await readBankNumber(r.vaultObjectKey))),
+  );
 }
 
 /* -------------------------------------------------------------------------- */

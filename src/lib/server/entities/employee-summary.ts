@@ -4,6 +4,7 @@ import { and, desc, eq, isNull, sql } from 'drizzle-orm';
 
 import { db } from '@/lib/db/client';
 import {
+  clients,
   employees,
   entityActivityLog,
   entityDocuments,
@@ -25,6 +26,7 @@ export type EmployeeProjectRow = {
   id: string;
   code: string | null;
   name: string;
+  clientName: string;
   status: 'pitch' | 'won' | 'active' | 'on_hold' | 'completed' | 'cancelled';
 };
 
@@ -96,9 +98,11 @@ export async function getEmployeeSummary(employeeId: string): Promise<EmployeeSu
         id: projects.id,
         code: projects.code,
         name: projects.name,
+        clientName: clients.name,
         status: projects.status,
       })
       .from(projects)
+      .innerJoin(clients, eq(clients.id, projects.clientId))
       .where(
         and(
           eq(projects.leadEmployeeId, employeeId),
@@ -206,6 +210,7 @@ export async function getEmployeeSummary(employeeId: string): Promise<EmployeeSu
       id: p.id,
       code: p.code,
       name: p.name,
+      clientName: p.clientName,
       status: p.status,
     })),
     achievements: achRows.map((a) => ({

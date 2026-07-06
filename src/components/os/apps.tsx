@@ -3152,6 +3152,16 @@ const OS_REPORT_GROUPS: ReadonlyArray<{
   reports: ReadonlyArray<{ slug: string; label: string; desc: string }>;
 }> = [
   {
+    heading: 'Overview',
+    reports: [
+      {
+        slug: 'accounts-overview',
+        label: 'Accounts Overview',
+        desc: 'The 5 boxes and monthly habits — cash, receivables, payables, GST, TDS, assets.',
+      },
+    ],
+  },
+  {
     heading: 'Financial statements',
     reports: [
       {

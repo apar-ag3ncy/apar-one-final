@@ -51,7 +51,10 @@ function rowToView(r: BankAccountRow): BankAccount {
   return {
     id: r.id,
     bankName: r.bankName,
-    maskedNumber: `XXXX XXXX ${r.accountLast4}`,
+    // Bank accounts display fully revealed (product decision) — the list
+    // action reads the number from the vault. Fall back to the masked last-4
+    // only when the vault blob is missing.
+    maskedNumber: r.accountNumber ?? `XXXX XXXX ${r.accountLast4}`,
     ifsc: r.ifsc,
     holderName: r.holderName,
     accountType: r.accountType,
@@ -200,7 +203,9 @@ export function BankAccountsSection({
       <BankAccountList
         accounts={rows.map(rowToView)}
         entityName={entityName}
-        canReveal={hasCapability('reveal_bank')}
+        // Numbers display fully revealed now, so the reveal ceremony is only a
+        // fallback for rows whose vault blob couldn't be read inline.
+        canReveal={hasCapability('reveal_bank') && rows.some((r) => !r.accountNumber)}
         onReveal={(accountId) => revealBankAction(accountId)}
         onAdd={
           canManage
