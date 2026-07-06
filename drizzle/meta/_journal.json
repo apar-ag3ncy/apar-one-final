@@ -372,6 +372,13 @@
       "when": 1781000090000,
       "tag": "0052_entity_type_period",
       "breakpoints": true
+    },
+    {
+      "idx": 53,
+      "version": "7",
+      "when": 1781100090000,
+      "tag": "0053_office_opening_and_categories",
+      "breakpoints": true
     }
   ]
 }

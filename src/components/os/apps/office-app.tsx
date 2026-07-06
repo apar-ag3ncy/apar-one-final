@@ -14,11 +14,14 @@ import {
 } from '@/lib/server-stub/entity-actions';
 import {
   createOfficeExpense,
+  createOfficeExpenseCategory,
   deleteOfficeExpense,
   getOfficeExpenseSummary,
+  listOfficeExpenseCategories,
   listOfficeExpenses,
   updateOfficeExpense,
   type OfficeExpenseCategory,
+  type OfficeExpenseCategoryRow,
   type OfficeExpensePaymentMethod,
   type OfficeExpenseRow,
   type OfficeExpenseStatus,
@@ -28,6 +31,14 @@ import {
   getSalaryPaymentsSummary,
   type SalaryPaymentsSummary,
 } from '@/lib/server/entities/payroll';
+import {
+  getOpeningBalancesStatus,
+  listOpeningBankOptions,
+  listPartnerUsers,
+  recordOpeningBalances,
+  type OpeningBankOption,
+  type PartnerOption,
+} from '@/lib/server/ledger/opening-balances';
 import { formatINR, paiseToDecimalRupees, parseRupeesToPaise } from '../format';
 import { Icon } from '../icons';
 import { osActions } from '@/lib/os/store';
@@ -97,6 +108,45 @@ function formatDate(iso: string): string {
   });
 }
 
+/** Current financial-year start (India FY = 1 Apr). e.g. Jul 2026 → "2026-04-01". */
+function fyStartIso(): string {
+  const now = new Date();
+  const y = now.getUTCMonth() >= 3 ? now.getUTCFullYear() : now.getUTCFullYear() - 1;
+  return `${y}-04-01`;
+}
+
+/** Prefix used to encode a custom category selection in the form <select>. */
+const CUSTOM_PREFIX = 'custom:';
+const CREATE_CATEGORY = '__create__';
+
+/**
+ * Human-readable category label for an expense row. Custom categories win;
+ * built-in "other" rows fall back to their Particulars note; everything else
+ * uses the built-in label.
+ */
+function effectiveCategoryLabel(r: OfficeExpenseRow): string {
+  if (r.customCategoryName) return r.customCategoryName;
+  if (r.category === 'other' && r.categoryNote) return `Other · ${r.categoryNote}`;
+  return CATEGORY_INDEX[r.category].label;
+}
+
+/** Dot / pill colour for an expense row — custom colour wins, else the built-in. */
+function effectiveCategoryColor(r: OfficeExpenseRow): string {
+  return r.customCategoryColor ?? CATEGORY_INDEX[r.category].color;
+}
+
+/** Preset swatches offered in the inline "create category" form. */
+const CATEGORY_SWATCHES: readonly string[] = [
+  '#5B6677',
+  '#C46A28',
+  '#2E8F5A',
+  '#3F4E8E',
+  '#7A2D4E',
+  '#9B3826',
+  '#D08A1E',
+  '#5E7344',
+];
+
 export function OfficeApp({
   canEdit = false,
   canDelete = false,
@@ -109,24 +159,44 @@ export function OfficeApp({
   const [salary, setSalary] = useState<SalaryPaymentsSummary | null>(null);
   const [employees, setEmployees] = useState<readonly EmployeeOption[]>([]);
   const [vendorOptions, setVendorOptions] = useState<readonly VendorOption[]>([]);
+  const [customCategories, setCustomCategories] = useState<readonly OfficeExpenseCategoryRow[]>([]);
   const [search, setSearch] = useState('');
-  const [activeCategory, setActiveCategory] = useState<OfficeExpenseCategory | 'all'>('all');
+  // `activeCategory` is 'all', a built-in category id, or `custom:<id>`.
+  const [activeCategory, setActiveCategory] = useState<OfficeExpenseCategory | 'all' | string>(
+    'all',
+  );
   const [statusFilter, setStatusFilter] = useState<OfficeExpenseStatus | 'all'>('all');
   const [showNew, setShowNew] = useState(false);
   const [editing, setEditing] = useState<OfficeExpenseRow | null>(null);
   const [confirmDel, setConfirmDel] = useState<OfficeExpenseRow | null>(null);
+  const [showOpening, setShowOpening] = useState(false);
   const [busy, setBusy] = useState(false);
+
+  // Re-fetch just the custom categories — called by the inline "create
+  // category" flow inside the expense form so a fresh category shows up
+  // immediately without reloading the whole app.
+  async function reloadCategories(): Promise<readonly OfficeExpenseCategoryRow[]> {
+    try {
+      const cats = await listOfficeExpenseCategories();
+      setCustomCategories(cats);
+      return cats;
+    } catch {
+      return customCategories;
+    }
+  }
 
   async function reload() {
     try {
-      const [list, sum, sal] = await Promise.all([
+      const [list, sum, sal, cats] = await Promise.all([
         listOfficeExpenses({}),
         getOfficeExpenseSummary(),
         getSalaryPaymentsSummary(),
+        listOfficeExpenseCategories(),
       ]);
       setRows(list);
       setSummary(sum);
       setSalary(sal);
+      setCustomCategories(cats);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Could not load office expenses');
     }
@@ -134,12 +204,18 @@ export function OfficeApp({
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([listOfficeExpenses({}), getOfficeExpenseSummary(), getSalaryPaymentsSummary()])
-      .then(([list, sum, sal]) => {
+    Promise.all([
+      listOfficeExpenses({}),
+      getOfficeExpenseSummary(),
+      getSalaryPaymentsSummary(),
+      listOfficeExpenseCategories(),
+    ])
+      .then(([list, sum, sal, cats]) => {
         if (cancelled) return;
         setRows(list);
         setSummary(sum);
         setSalary(sal);
+        setCustomCategories(cats);
       })
       .catch((e) => {
         if (!cancelled) {
@@ -196,7 +272,13 @@ export function OfficeApp({
     if (!rows) return [];
     const q = search.trim().toLowerCase();
     return rows.filter((r) => {
-      if (activeCategory !== 'all' && r.category !== activeCategory) return false;
+      if (activeCategory !== 'all') {
+        if (activeCategory.startsWith(CUSTOM_PREFIX)) {
+          if (r.customCategoryId !== activeCategory.slice(CUSTOM_PREFIX.length)) return false;
+        } else if (r.category !== activeCategory) {
+          return false;
+        }
+      }
       if (statusFilter !== 'all' && r.status !== statusFilter) return false;
       if (!q) return true;
       return (
@@ -281,7 +363,7 @@ export function OfficeApp({
     ];
     const data: Record<string, string | number>[] = filtered.map((r) => ({
       Date: r.expenseDate,
-      Category: CATEGORY_INDEX[r.category].label,
+      Category: effectiveCategoryLabel(r),
       Description: r.description,
       Reference: r.referenceNumber ?? '',
       'Vendor / Employee':
@@ -330,6 +412,20 @@ export function OfficeApp({
         >
           <Icon name="book" size={13} />
           Salary book
+        </button>
+        <button
+          className="btn"
+          type="button"
+          disabled={!canEdit || busy}
+          onClick={() => setShowOpening(true)}
+          title={
+            canEdit
+              ? 'Record opening balances — partners/admins only. Seeds cash, bank, assets & partner capital via Opening Balance Equity.'
+              : 'You need edit permission to record opening balances.'
+          }
+        >
+          <Icon name="book" size={13} />
+          Opening balances
         </button>
         <button
           className="btn primary"
@@ -418,6 +514,19 @@ export function OfficeApp({
             />
           );
         })}
+        {summary?.customByCategory.map((c) => {
+          const key = `${CUSTOM_PREFIX}${c.id}`;
+          return (
+            <CategoryChip
+              key={key}
+              active={activeCategory === key}
+              onClick={() => setActiveCategory(key)}
+              color={c.color ?? 'var(--text-dim)'}
+              label={c.name}
+              count={c.count}
+            />
+          );
+        })}
         <div style={{ flex: 1 }} />
         <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Status:</span>
         <select
@@ -468,7 +577,8 @@ export function OfficeApp({
             </thead>
             <tbody>
               {filtered.map((r) => {
-                const cat = CATEGORY_INDEX[r.category];
+                const catColor = effectiveCategoryColor(r);
+                const catLabel = effectiveCategoryLabel(r);
                 return (
                   <tr key={r.id} className="row-with-actions">
                     <td style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
@@ -477,10 +587,10 @@ export function OfficeApp({
                     <td>
                       <span
                         className="pill"
-                        style={{ background: 'transparent', borderColor: cat.color }}
+                        style={{ background: 'transparent', borderColor: catColor }}
                       >
-                        <span className="dot" style={{ background: cat.color }} />
-                        {cat.label}
+                        <span className="dot" style={{ background: catColor }} />
+                        {catLabel}
                       </span>
                     </td>
                     <td>
@@ -564,6 +674,8 @@ export function OfficeApp({
           mode="create"
           employees={employees}
           vendors={vendorOptions}
+          customCategories={customCategories}
+          onCategoriesChanged={reloadCategories}
           onClose={() => setShowNew(false)}
           onSubmit={handleCreate}
           busy={busy}
@@ -575,10 +687,15 @@ export function OfficeApp({
           initial={editing}
           employees={employees}
           vendors={vendorOptions}
+          customCategories={customCategories}
+          onCategoriesChanged={reloadCategories}
           onClose={() => setEditing(null)}
           onSubmit={(v) => handleUpdate(editing.id, v)}
           busy={busy}
         />
+      )}
+      {showOpening && (
+        <OpeningBalancesModal onClose={() => setShowOpening(false)} onPosted={() => reload()} />
       )}
       {confirmDel && (
         <ConfirmDialog
@@ -728,6 +845,10 @@ function EmptyState({ onAction, isFiltered }: { onAction?: () => void; isFiltere
 type ExpenseFormValues = {
   expenseDate: string;
   category: OfficeExpenseCategory;
+  /** FK to a user-defined category; only set when category === 'other'. */
+  customCategoryId: string | null;
+  /** Free-text "Particulars" for a built-in 'other' expense (no custom cat). */
+  categoryNote: string | null;
   description: string;
   /** FK to a row in the vendors directory. */
   vendorId: string | null;
@@ -750,6 +871,8 @@ function ExpenseFormModal({
   initial,
   employees,
   vendors,
+  customCategories,
+  onCategoriesChanged,
   onClose,
   onSubmit,
   busy,
@@ -758,14 +881,31 @@ function ExpenseFormModal({
   initial?: OfficeExpenseRow;
   employees: readonly EmployeeOption[];
   vendors: readonly VendorOption[];
+  customCategories: readonly OfficeExpenseCategoryRow[];
+  onCategoriesChanged: () => Promise<readonly OfficeExpenseCategoryRow[]>;
   onClose: () => void;
   onSubmit: (values: ExpenseFormValues) => void;
   busy: boolean;
 }) {
   const [expenseDate, setExpenseDate] = useState(initial?.expenseDate ?? todayIso());
-  const [category, setCategory] = useState<OfficeExpenseCategory>(
-    initial?.category ?? 'stationary',
+  // `categorySelection` encodes the dropdown value: a built-in category id,
+  // or `custom:<id>` for a user-defined category. Round-trips edit mode.
+  const [categorySelection, setCategorySelection] = useState<string>(
+    initial?.customCategoryId
+      ? `${CUSTOM_PREFIX}${initial.customCategoryId}`
+      : (initial?.category ?? 'stationary'),
   );
+  // The effective built-in enum value we submit. For a custom category this
+  // is always 'other'; for a built-in it's the id itself.
+  const category: OfficeExpenseCategory = categorySelection.startsWith(CUSTOM_PREFIX)
+    ? 'other'
+    : (categorySelection as OfficeExpenseCategory);
+  const [categoryNote, setCategoryNote] = useState(initial?.categoryNote ?? '');
+  // Inline "create new category" panel state.
+  const [creatingCategory, setCreatingCategory] = useState(false);
+  const [newCatName, setNewCatName] = useState('');
+  const [newCatColor, setNewCatColor] = useState<string>(CATEGORY_SWATCHES[0]!);
+  const [savingCategory, setSavingCategory] = useState(false);
   const [description, setDescription] = useState(initial?.description ?? '');
   // Initial selection rules:
   //   - row already references a directory vendor → its id
@@ -797,12 +937,23 @@ function ExpenseFormModal({
     descRef.current?.focus();
   }, []);
 
-  // Cascade sensible defaults when the user picks a category during create.
-  // Skipped in edit mode so we don't overwrite what's already on the row.
-  function changeCategory(next: OfficeExpenseCategory) {
-    setCategory(next);
+  // Handle a change on the Category <select>. `next` is a built-in id, a
+  // `custom:<id>` value, or the sentinel `__create__` (opens the inline
+  // create panel). Custom categories map to the built-in 'other' enum for
+  // the default cascade.
+  function changeCategory(next: string) {
+    if (next === CREATE_CATEGORY) {
+      setCreatingCategory(true);
+      setErr(null);
+      return;
+    }
+    setCategorySelection(next);
+    setErr(null);
     if (mode !== 'create') return;
-    if (next === 'reimbursement') {
+    const effective: OfficeExpenseCategory = next.startsWith(CUSTOM_PREFIX)
+      ? 'other'
+      : (next as OfficeExpenseCategory);
+    if (effective === 'reimbursement') {
       setStatus('pending');
       setPaymentMethod('employee_paid');
     } else {
@@ -811,11 +962,54 @@ function ExpenseFormModal({
     }
   }
 
+  // Persist a new custom category via the server action, then re-fetch the
+  // list in the parent and select the freshly created row. Never submits
+  // the surrounding expense form.
+  async function saveNewCategory() {
+    const name = newCatName.trim();
+    if (!name) {
+      setErr('Category name is required.');
+      return;
+    }
+    setSavingCategory(true);
+    setErr(null);
+    try {
+      const created = await createOfficeExpenseCategory({ name, color: newCatColor });
+      await onCategoriesChanged();
+      setCategorySelection(`${CUSTOM_PREFIX}${created.id}`);
+      setCreatingCategory(false);
+      setNewCatName('');
+      setNewCatColor(CATEGORY_SWATCHES[0]!);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Could not create the category.');
+    } finally {
+      setSavingCategory(false);
+    }
+  }
+
+  // Whether the current selection is a custom (user-defined) category.
+  const isCustomCategory = categorySelection.startsWith(CUSTOM_PREFIX);
+  const customCategoryId = isCustomCategory
+    ? categorySelection.slice(CUSTOM_PREFIX.length)
+    : null;
+  // Built-in "Other" with no custom category → needs a free-text Particulars.
+  const needsParticulars = category === 'other' && !isCustomCategory;
+
   function submit(e: FormEvent) {
     e.preventDefault();
+    // Don't submit the expense while the inline category creator is open.
+    if (creatingCategory) {
+      setErr('Finish creating the category first, or cancel it.');
+      return;
+    }
     const desc = description.trim();
     if (!desc) {
       setErr('Description is required.');
+      return;
+    }
+    const particulars = categoryNote.trim();
+    if (needsParticulars && !particulars) {
+      setErr('Particulars are required for an "Other" expense — describe what it is.');
       return;
     }
     const amountPaise = parseRupeesToPaise(amountRupees);
@@ -859,6 +1053,8 @@ function ExpenseFormModal({
     onSubmit({
       expenseDate,
       category,
+      customCategoryId,
+      categoryNote: needsParticulars ? particulars : null,
       description: desc,
       vendorId,
       vendorName: vendorNameOut,
@@ -887,18 +1083,132 @@ function ExpenseFormModal({
             required
           />
         </Field>
-        <Field label="Category">
-          <select
-            value={category}
-            onChange={(e) => changeCategory(e.target.value as OfficeExpenseCategory)}
-          >
+        <Field
+          label="Category"
+          hint={
+            isCustomCategory ? 'Custom category — posts to the ledger as "Other".' : undefined
+          }
+        >
+          <select value={categorySelection} onChange={(e) => changeCategory(e.target.value)}>
             {CATEGORY_DEFS.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.label} — {c.hint}
               </option>
             ))}
+            {customCategories.length > 0 && (
+              <optgroup label="Custom categories">
+                {customCategories.map((c) => (
+                  <option key={c.id} value={`${CUSTOM_PREFIX}${c.id}`}>
+                    {c.name}
+                    {c.hint ? ` — ${c.hint}` : ''}
+                  </option>
+                ))}
+              </optgroup>
+            )}
+            <option value={CREATE_CATEGORY}>+ Create new category…</option>
           </select>
         </Field>
+        {creatingCategory && (
+          <div
+            className="os-field"
+            style={{
+              gridColumn: '1 / -1',
+              gap: 8,
+              padding: 12,
+              border: '1px solid var(--border)',
+              borderRadius: 8,
+              background: 'var(--content-2)',
+            }}
+          >
+            <span className="os-field-label">New category</span>
+            <input
+              value={newCatName}
+              onChange={(e) => setNewCatName(e.target.value)}
+              placeholder="e.g. Subscriptions, Gifts, Legal fees"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  void saveNewCategory();
+                }
+              }}
+            />
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>Colour:</span>
+              {CATEGORY_SWATCHES.map((sw) => (
+                <button
+                  key={sw}
+                  type="button"
+                  aria-label={`Pick ${sw}`}
+                  onClick={() => setNewCatColor(sw)}
+                  style={{
+                    width: 20,
+                    height: 20,
+                    borderRadius: '50%',
+                    background: sw,
+                    border:
+                      newCatColor === sw
+                        ? '2px solid var(--text)'
+                        : '2px solid transparent',
+                    cursor: 'pointer',
+                    padding: 0,
+                  }}
+                />
+              ))}
+              <input
+                type="color"
+                value={newCatColor}
+                onChange={(e) => setNewCatColor(e.target.value)}
+                aria-label="Custom colour"
+                style={{
+                  width: 28,
+                  height: 24,
+                  padding: 0,
+                  border: '1px solid var(--border)',
+                  borderRadius: 6,
+                  background: 'transparent',
+                  cursor: 'pointer',
+                }}
+              />
+            </div>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button
+                type="button"
+                className="btn"
+                disabled={savingCategory}
+                onClick={() => {
+                  setCreatingCategory(false);
+                  setNewCatName('');
+                  setErr(null);
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn primary"
+                disabled={savingCategory || newCatName.trim() === ''}
+                onClick={() => void saveNewCategory()}
+              >
+                <Icon name="check" size={12} />
+                {savingCategory ? 'Creating…' : 'Create category'}
+              </button>
+            </div>
+          </div>
+        )}
+        {needsParticulars && (
+          <Field
+            label="Particulars — what is this expense?"
+            full
+            hint="Required for an “Other” expense — a short description of the spend."
+          >
+            <input
+              value={categoryNote}
+              onChange={(e) => setCategoryNote(e.target.value)}
+              placeholder="e.g. Courier charges, Notary stamp, Domain renewal"
+              maxLength={200}
+            />
+          </Field>
+        )}
         <Field label="Description" full>
           <input
             ref={descRef}
@@ -1020,12 +1330,448 @@ function ExpenseFormModal({
           <button type="button" className="btn" onClick={onClose} disabled={busy}>
             Cancel
           </button>
-          <button type="submit" className="btn primary" disabled={busy}>
+          <button
+            type="submit"
+            className="btn primary"
+            disabled={busy || creatingCategory || savingCategory}
+          >
             <Icon name="check" size={13} />
             {mode === 'create' ? 'Log expense' : 'Save changes'}
           </button>
         </div>
       </form>
+    </Modal>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Opening balances                                                            */
+/* -------------------------------------------------------------------------- */
+
+type OpeningBankLine = { key: string; bankAccountId: string; amount: string };
+type OpeningPartnerLine = { key: string; partnerUserId: string; amount: string };
+
+let openingLineSeq = 0;
+function nextOpeningKey(): string {
+  openingLineSeq += 1;
+  return `ln-${openingLineSeq}`;
+}
+
+/**
+ * Seeds the ledger's opening position: cash on hand (1110), bank balances
+ * (1120 sub-ledger), company assets (1510) on the asset side and partner
+ * capital (3100) on the equity side. The residual is auto-plugged to
+ * Opening Balance Equity (3900) so the entry always balances.
+ */
+function OpeningBalancesModal({
+  onClose,
+  onPosted,
+}: {
+  onClose: () => void;
+  onPosted: () => void;
+}) {
+  const [partners, setPartners] = useState<readonly PartnerOption[]>([]);
+  const [banks, setBanks] = useState<readonly OpeningBankOption[]>([]);
+  const [status, setStatus] = useState<{ alreadyPosted: boolean; postedAt: string | null } | null>(
+    null,
+  );
+  const [loading, setLoading] = useState(true);
+
+  const [asOfDate, setAsOfDate] = useState(fyStartIso());
+  const [cashRupees, setCashRupees] = useState('');
+  const [assetsRupees, setAssetsRupees] = useState('');
+  const [bankLines, setBankLines] = useState<OpeningBankLine[]>([
+    { key: nextOpeningKey(), bankAccountId: '', amount: '' },
+  ]);
+  const [partnerLines, setPartnerLines] = useState<OpeningPartnerLine[]>([
+    { key: nextOpeningKey(), partnerUserId: '', amount: '' },
+  ]);
+  const [notes, setNotes] = useState('');
+  const [err, setErr] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([listPartnerUsers(), listOpeningBankOptions(), getOpeningBalancesStatus()])
+      .then(([p, b, s]) => {
+        if (cancelled) return;
+        setPartners(p);
+        setBanks(b);
+        setStatus(s);
+      })
+      .catch((e) => {
+        if (!cancelled) {
+          toast.error(e instanceof Error ? e.message : 'Could not load opening-balance options');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Live totals — parse each rupee input to paise; blank/invalid → 0.
+  function toPaise(v: string): bigint {
+    const p = parseRupeesToPaise(v);
+    return p === null || p < 0n ? 0n : p;
+  }
+  const cashPaise = toPaise(cashRupees);
+  const assetsPaise = toPaise(assetsRupees);
+  const banksPaise = bankLines.reduce((acc, l) => acc + toPaise(l.amount), 0n);
+  const partnerPaise = partnerLines.reduce((acc, l) => acc + toPaise(l.amount), 0n);
+  const totalAssets = cashPaise + banksPaise + assetsPaise;
+  // Auto-plug to Opening Balance Equity (3900) so the entry balances.
+  const plug = totalAssets - partnerPaise;
+
+  function updateBankLine(key: string, patch: Partial<OpeningBankLine>) {
+    setBankLines((prev) => prev.map((l) => (l.key === key ? { ...l, ...patch } : l)));
+  }
+  function updatePartnerLine(key: string, patch: Partial<OpeningPartnerLine>) {
+    setPartnerLines((prev) => prev.map((l) => (l.key === key ? { ...l, ...patch } : l)));
+  }
+
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(asOfDate)) {
+      setErr('Pick a valid as-of date.');
+      return;
+    }
+    // Keep only lines that have both a selection and a positive amount.
+    const bankOut = bankLines
+      .filter((l) => l.bankAccountId && toPaise(l.amount) > 0n)
+      .map((l) => ({ bankAccountId: l.bankAccountId, amountPaise: toPaise(l.amount) }));
+    const partnerOut = partnerLines
+      .filter((l) => l.partnerUserId && toPaise(l.amount) > 0n)
+      .map((l) => ({ partnerUserId: l.partnerUserId, amountPaise: toPaise(l.amount) }));
+
+    if (totalAssets <= 0n && partnerOut.length === 0) {
+      setErr('Enter at least one opening figure — cash, a bank balance, assets or partner funds.');
+      return;
+    }
+
+    setSubmitting(true);
+    setErr(null);
+    try {
+      await recordOpeningBalances({
+        asOfDate,
+        cashInHandPaise: cashPaise,
+        companyAssetsPaise: assetsPaise,
+        bankLines: bankOut,
+        partnerLines: partnerOut,
+        notes: notes.trim() || null,
+      });
+      toast.success('Opening balances recorded.');
+      onPosted();
+      onClose();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not record opening balances');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <Modal title="Opening balances" onClose={onClose} width={640}>
+      {loading ? (
+        <div className="os-form">
+          <p style={{ color: 'var(--text-muted)', fontSize: 13, gridColumn: '1 / -1' }}>Loading…</p>
+        </div>
+      ) : (
+        <form onSubmit={submit} className="os-form">
+          {status?.alreadyPosted && (
+            <div
+              style={{
+                gridColumn: '1 / -1',
+                background: 'color-mix(in oklab, var(--amber) 14%, transparent)',
+                color: 'var(--amber)',
+                border: '1px solid color-mix(in oklab, var(--amber) 40%, transparent)',
+                padding: '9px 11px',
+                borderRadius: 7,
+                fontSize: 12.5,
+                lineHeight: 1.5,
+                display: 'flex',
+                gap: 8,
+                alignItems: 'flex-start',
+              }}
+            >
+              <Icon name="alert" size={14} style={{ flexShrink: 0, marginTop: 1 }} />
+              <span>
+                Opening balances were already recorded on{' '}
+                {status.postedAt ? formatDate(status.postedAt.slice(0, 10)) : 'an earlier date'}.
+                Posting again double-counts — reverse the earlier entry first.
+              </span>
+            </div>
+          )}
+          <div
+            style={{
+              gridColumn: '1 / -1',
+              fontSize: 12,
+              color: 'var(--text-muted)',
+              lineHeight: 1.5,
+            }}
+          >
+            Partners / admins only. Seeds the ledger&apos;s starting position — cash (1110), bank
+            balances (1120), company assets (1510) and partner capital (3100). The residual auto-plugs
+            to <strong>Opening Balance Equity (3900)</strong> so the entry always balances.
+          </div>
+
+          <Field label="As-of date" hint="Usually the financial-year start (1 Apr).">
+            <input
+              type="date"
+              value={asOfDate}
+              onChange={(e) => setAsOfDate(e.target.value)}
+              required
+            />
+          </Field>
+          <div />
+
+          <Field label="Cash in hand (₹)" hint="Physical cash — Cash on Hand (1110).">
+            <input
+              type="number"
+              min={0}
+              step="0.01"
+              value={cashRupees}
+              onChange={(e) => setCashRupees(e.target.value)}
+              placeholder="0.00"
+            />
+          </Field>
+          <Field label="Company assets (₹)" hint="Equipment & fixtures — Office Assets (1510).">
+            <input
+              type="number"
+              min={0}
+              step="0.01"
+              value={assetsRupees}
+              onChange={(e) => setAssetsRupees(e.target.value)}
+              placeholder="0.00"
+            />
+          </Field>
+
+          {/* Bank balances */}
+          <div style={{ gridColumn: '1 / -1' }}>
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                marginBottom: 6,
+              }}
+            >
+              <span className="os-field-label">Bank balances (1120)</span>
+              <button
+                type="button"
+                className="btn"
+                onClick={() =>
+                  setBankLines((prev) => [
+                    ...prev,
+                    { key: nextOpeningKey(), bankAccountId: '', amount: '' },
+                  ])
+                }
+              >
+                <Icon name="plus" size={12} />
+                Add bank
+              </button>
+            </div>
+            {banks.length === 0 ? (
+              <p style={{ fontSize: 12, color: 'var(--text-dim)' }}>
+                No bank accounts in the 1120 sub-ledger yet.
+              </p>
+            ) : (
+              bankLines.map((l) => (
+                <div
+                  key={l.key}
+                  style={{ display: 'flex', gap: 8, marginBottom: 6, alignItems: 'center' }}
+                >
+                  <select
+                    value={l.bankAccountId}
+                    onChange={(e) => updateBankLine(l.key, { bankAccountId: e.target.value })}
+                    style={{ flex: 2 }}
+                  >
+                    <option value="">— Pick a bank —</option>
+                    {banks.map((b) => (
+                      <option key={b.id} value={b.id}>
+                        {b.label}
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={l.amount}
+                    onChange={(e) => updateBankLine(l.key, { amount: e.target.value })}
+                    placeholder="0.00"
+                    style={{ flex: 1 }}
+                  />
+                  <button
+                    type="button"
+                    className="btn row-action row-delete"
+                    title="Remove"
+                    onClick={() =>
+                      setBankLines((prev) =>
+                        prev.length > 1 ? prev.filter((x) => x.key !== l.key) : prev,
+                      )
+                    }
+                    disabled={bankLines.length <= 1}
+                  >
+                    <Icon name="trash" size={12} />
+                  </button>
+                </div>
+              ))
+            )}
+          </div>
+
+          {/* Partner funds */}
+          <div style={{ gridColumn: '1 / -1' }}>
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                marginBottom: 6,
+              }}
+            >
+              <span className="os-field-label">Partner funds (3100)</span>
+              <button
+                type="button"
+                className="btn"
+                onClick={() =>
+                  setPartnerLines((prev) => [
+                    ...prev,
+                    { key: nextOpeningKey(), partnerUserId: '', amount: '' },
+                  ])
+                }
+              >
+                <Icon name="plus" size={12} />
+                Add partner
+              </button>
+            </div>
+            {partners.length === 0 ? (
+              <p style={{ fontSize: 12, color: 'var(--text-dim)' }}>
+                No partner users found.
+              </p>
+            ) : (
+              partnerLines.map((l) => (
+                <div
+                  key={l.key}
+                  style={{ display: 'flex', gap: 8, marginBottom: 6, alignItems: 'center' }}
+                >
+                  <select
+                    value={l.partnerUserId}
+                    onChange={(e) => updatePartnerLine(l.key, { partnerUserId: e.target.value })}
+                    style={{ flex: 2 }}
+                  >
+                    <option value="">— Pick a partner —</option>
+                    {partners.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={l.amount}
+                    onChange={(e) => updatePartnerLine(l.key, { amount: e.target.value })}
+                    placeholder="0.00"
+                    style={{ flex: 1 }}
+                  />
+                  <button
+                    type="button"
+                    className="btn row-action row-delete"
+                    title="Remove"
+                    onClick={() =>
+                      setPartnerLines((prev) =>
+                        prev.length > 1 ? prev.filter((x) => x.key !== l.key) : prev,
+                      )
+                    }
+                    disabled={partnerLines.length <= 1}
+                  >
+                    <Icon name="trash" size={12} />
+                  </button>
+                </div>
+              ))
+            )}
+          </div>
+
+          {/* Live balance panel */}
+          <div
+            style={{
+              gridColumn: '1 / -1',
+              background: 'var(--content-2)',
+              border: '1px solid var(--border)',
+              borderRadius: 8,
+              padding: 12,
+              display: 'grid',
+              gridTemplateColumns: '1fr 1fr',
+              gap: '6px 16px',
+              fontSize: 12.5,
+            }}
+          >
+            <span style={{ color: 'var(--text-muted)' }}>Total assets (cash + banks + assets)</span>
+            <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>
+              {formatINR(totalAssets)}
+            </span>
+            <span style={{ color: 'var(--text-muted)' }}>Partner funds (3100)</span>
+            <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>
+              {formatINR(partnerPaise)}
+            </span>
+            <span style={{ color: 'var(--text-muted)', gridColumn: '1 / -1', height: 1 }} />
+            <span style={{ color: 'var(--text)' }}>
+              Auto-plug → Opening Balance Equity (3900)
+            </span>
+            <span
+              style={{
+                textAlign: 'right',
+                fontVariantNumeric: 'tabular-nums',
+                fontWeight: 700,
+              }}
+            >
+              {formatINR(plug < 0n ? -plug : plug)}{' '}
+              <span style={{ color: 'var(--text-dim)', fontWeight: 400, fontSize: 11 }}>
+                {plug === 0n
+                  ? '(balanced)'
+                  : plug > 0n
+                    ? 'credit (equity)'
+                    : 'debit (contra)'}
+              </span>
+            </span>
+            <span
+              style={{
+                gridColumn: '1 / -1',
+                color: 'var(--text-dim)',
+                fontSize: 11,
+                lineHeight: 1.5,
+              }}
+            >
+              The entry always balances — 3900 absorbs the difference between what the office owns
+              and what the partners put in.
+            </span>
+          </div>
+
+          <Field label="Notes" full>
+            <textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              rows={2}
+              placeholder="Optional — e.g. carried forward from the FY24-25 closing balance sheet."
+            />
+          </Field>
+
+          {err && <div className="os-form-error">{err}</div>}
+          <div className="os-form-actions">
+            <button type="button" className="btn" onClick={onClose} disabled={submitting}>
+              Cancel
+            </button>
+            <button type="submit" className="btn primary" disabled={submitting}>
+              <Icon name="check" size={13} />
+              {submitting ? 'Posting…' : 'Record opening balances'}
+            </button>
+          </div>
+        </form>
+      )}
     </Modal>
   );
 }

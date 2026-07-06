@@ -2,6 +2,7 @@ import { bigint, date, index, pgEnum, pgTable, text, uuid } from 'drizzle-orm/pg
 
 import { auditColumns, timestamps } from './_shared';
 import { employees } from './employees';
+import { officeExpenseCategories } from './office_expense_categories';
 import { projects } from './projects';
 import { vendors } from './vendors';
 
@@ -83,6 +84,14 @@ export const officeExpenses = pgTable(
     status: officeExpenseStatusEnum().notNull().default('approved'),
     /** Optional reference number from the bill / receipt. */
     referenceNumber: text(),
+    /**
+     * Optional pin to a user-defined custom category. Only meaningful when
+     * `category='other'` — lets the OS Office app group "other" outflows
+     * into named buckets without extending the fixed enum. Nullable.
+     */
+    customCategoryId: uuid().references(() => officeExpenseCategories.id),
+    /** Free-text note paired with `customCategoryId`. Nullable. */
+    categoryNote: text(),
     notes: text(),
   },
   (t) => [
