@@ -176,9 +176,9 @@ export function InvoiceComposerDialog({
   const [busy, setBusy] = useState<null | 'preview' | 'finalize' | 'loading'>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
-  // Form state.
+  // Form state. Due date starts at today (editable) so no date field sits blank.
   const [documentDate, setDocumentDate] = useState(TODAY_ISO());
-  const [dueDate, setDueDate] = useState('');
+  const [dueDate, setDueDate] = useState(TODAY_ISO());
   const [placeOfSupply, setPlaceOfSupply] = useState(clientStateCode ?? '');
   const [terms, setTerms] = useState('');
   const [notes, setNotes] = useState('');

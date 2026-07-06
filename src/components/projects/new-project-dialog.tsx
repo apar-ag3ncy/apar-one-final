@@ -84,7 +84,8 @@ export function NewProjectDialog({
       leadEmployeeId: NONE_VALUE,
       accountManagerId: NONE_VALUE,
       feeRupees: '',
-      startedOn: '',
+      // Start date defaults to today (editable); target end stays open-ended.
+      startedOn: localTodayISO(),
       targetEndOn: '',
       notes: '',
     },
@@ -99,7 +100,7 @@ export function NewProjectDialog({
         leadEmployeeId: NONE_VALUE,
         accountManagerId: NONE_VALUE,
         feeRupees: '',
-        startedOn: '',
+        startedOn: localTodayISO(),
         targetEndOn: '',
         notes: '',
       });
@@ -295,4 +296,10 @@ function parseFeeRupeesToPaise(input: string | undefined): bigint {
   if (!Number.isFinite(n) || n < 0) return 0n;
   // Round to two decimals to avoid binary-float drift before scaling to paise.
   return BigInt(Math.round(n * 100));
+}
+
+function localTodayISO(): string {
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
