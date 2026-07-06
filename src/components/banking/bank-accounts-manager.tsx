@@ -95,9 +95,7 @@ export function BankAccountsManager({ banks }: { banks: readonly AgencyBankDetai
                   <LandmarkIcon className="mt-0.5 size-5 opacity-70" aria-hidden />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
-                      <p className="font-medium break-words [overflow-wrap:anywhere]">
-                        {b.displayName}
-                      </p>
+                      <p className="truncate font-medium">{b.displayName}</p>
                       {!b.isActive && (
                         <Badge variant="outline" className="text-muted-foreground">
                           Inactive

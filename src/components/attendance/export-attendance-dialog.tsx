@@ -434,7 +434,7 @@ export function ExportAttendanceDialog() {
                           checked={selected.has(e.id)}
                           onCheckedChange={() => toggle(e.id)}
                         />
-                        <span className="min-w-0 flex-1 break-words [overflow-wrap:anywhere]">
+                        <span className="flex-1 truncate">
                           {e.fullName}
                           <span className="text-muted-foreground"> · {e.employeeCode}</span>
                         </span>

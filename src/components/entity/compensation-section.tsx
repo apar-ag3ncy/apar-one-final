@@ -305,7 +305,7 @@ export function CompensationSection({ employeeId, employeeName }: CompensationSe
                   {BONUS_KIND_LABEL[b.kind]}
                 </span>
                 <span style={{ minWidth: 0 }}>
-                  <div style={{ overflowWrap: 'anywhere', wordBreak: 'break-word' }}>
+                  <div style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
                     {b.description}
                   </div>
                   <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
@@ -378,7 +378,7 @@ export function CompensationSection({ employeeId, employeeName }: CompensationSe
                     <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>
                       {formatDay(p.paidOn)}
                     </span>
-                    <span style={{ minWidth: 0, overflowWrap: 'anywhere', wordBreak: 'break-word' }}>
+                    <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>
                       {p.notes ?? <span style={{ color: 'var(--text-muted)' }}>—</span>}
                     </span>
                     <span className="font-display" style={{ fontVariantNumeric: 'tabular-nums' }}>

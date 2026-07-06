@@ -492,7 +492,7 @@ function VaultRow({
     return (
       <li className="flex items-center justify-between gap-3 px-6 py-3">
         <div className="min-w-0 space-y-1">
-          <span className="font-medium break-words [overflow-wrap:anywhere]">{item.title}</span>
+          <span className="truncate font-medium">{item.title}</span>
           <p className="text-destructive text-xs">
             This entry can&apos;t be decrypted — it may be corrupted. You can only remove it.
           </p>
@@ -513,13 +513,13 @@ function VaultRow({
     <li className="flex flex-col gap-2 px-6 py-3 sm:flex-row sm:items-center sm:justify-between">
       <div className="min-w-0 space-y-1">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="font-medium break-words [overflow-wrap:anywhere]">{item.title}</span>
+          <span className="truncate font-medium">{item.title}</span>
           {item.url ? (
             <a
               href={item.url.startsWith('http') ? item.url : `https://${item.url}`}
               target="_blank"
               rel="noreferrer"
-              className="text-muted-foreground max-w-48 text-xs underline break-words [overflow-wrap:anywhere]"
+              className="text-muted-foreground max-w-48 truncate text-xs underline"
             >
               {item.url}
             </a>

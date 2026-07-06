@@ -320,9 +320,7 @@ export function InvoiceFormatEditor() {
               />
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
-                  <span className="text-sm font-medium break-words [overflow-wrap:anywhere]">
-                    {t.name}
-                  </span>
+                  <span className="truncate text-sm font-medium">{t.name}</span>
                   {t.isDefault ? <StatusBadge tone="success" label="Default" /> : null}
                   {!t.editable ? (
                     <StatusBadge tone="neutral" label="Built-in" />

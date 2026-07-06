@@ -187,16 +187,14 @@ export function StatementClient({
                       {r.date}
                     </TableCell>
                     <TableCell className="max-w-xs text-sm">
-                      <div className="font-mono break-words [overflow-wrap:anywhere]">
+                      <div className="truncate font-mono">
                         {r.documentNumber ?? r.memo ?? r.reference}
                       </div>
                       {r.memo && r.documentNumber ? (
-                        <div className="text-muted-foreground text-xs break-words [overflow-wrap:anywhere]">
-                          {r.memo}
-                        </div>
+                        <div className="text-muted-foreground truncate text-xs">{r.memo}</div>
                       ) : null}
                       {r.bankAccountLabel ? (
-                        <div className="text-muted-foreground font-mono text-xs break-words [overflow-wrap:anywhere]">
+                        <div className="text-muted-foreground truncate font-mono text-xs">
                           via {r.bankAccountLabel}
                         </div>
                       ) : null}
