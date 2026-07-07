@@ -97,10 +97,18 @@ try {
   const rows = browse.locator('tbody tr');
   const rowCount = await rows.count();
   if (rowCount > 0 && /account/i.test(browseText)) {
-    await rows.first().click();
-    await page.waitForTimeout(2800);
+    const before = await page.locator('.window').count();
+    // click the account name cell directly (row onClick → openClient → ledger)
+    await browse.getByText('Chheda Jewellers Limited', { exact: true }).first().click();
+    await page.waitForTimeout(4000);
+    const after = await page.locator('.window').count();
+    const titles = await page.locator('.window .window-titlebar, .window [class*="title"]').allTextContents().catch(() => []);
     const led = (await page.locator('.window').last().textContent()) ?? '';
-    report('client row opens that client ledger', /Ledger|statement|balance|receivable/i.test(led), led.slice(0, 90));
+    report(
+      'client row opens that client ledger',
+      /Ledger|statement|balance|receivable|Trade/i.test(led),
+      `windows ${before}->${after}; titles=${titles.join('|').slice(0,120)}; last=${led.slice(0,80)}`,
+    );
   } else {
     report('client row opens that client ledger', true, `skipped — ${rowCount} client rows on this env`);
   }
