@@ -282,6 +282,10 @@ function VaultPasswordPane() {
         if (phase === 'create') setPhase('change');
       } else {
         setError(result.message);
+        // Create can fail because someone else set the vault up first
+        // (concurrent setup loses via onConflictDoNothing) — re-probe so the
+        // pane flips to the change form instead of a dead-end create form.
+        if (phase === 'create') setAttempt((n) => n + 1);
       }
     });
   }
