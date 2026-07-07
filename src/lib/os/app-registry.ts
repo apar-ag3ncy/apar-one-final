@@ -99,6 +99,12 @@ export const APP_REGISTRY: Readonly<Record<AppId, AppRegistryEntry>> = {
     minimumCapability: 'app.office.view',
     defaultSize: { width: 1100, height: 700 },
   },
+  trash: {
+    id: 'trash',
+    showInDock: true,
+    minimumCapability: 'app.settings.view',
+    defaultSize: { width: 900, height: 600 },
+  },
   settings: {
     id: 'settings',
     showInDock: true,

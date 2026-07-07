@@ -38,6 +38,7 @@ const VALID_APPS: ReadonlySet<AppId> = new Set<AppId>([
   'attendance',
   'ledger',
   'reports',
+  'trash',
   'settings',
   'admin_console',
   // Phase 4 windows — paste-able via URL too, e.g.

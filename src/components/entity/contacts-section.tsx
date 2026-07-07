@@ -131,9 +131,9 @@ export function ContactsSection({
       startTransition(() => {
         setContacts((prev) => prev.filter((row) => row.id !== c.id));
       });
-      toast.success('Contact archived.');
+      toast.success('Contact deleted.');
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Could not archive contact.';
+      const msg = err instanceof Error ? err.message : 'Could not delete contact.';
       toast.error(msg);
     } finally {
       setPendingDelete(null);
@@ -230,7 +230,7 @@ export function ContactsSection({
                   <br />
                 </>
               ) : null}
-              Archiving keeps the record queryable but hides it from this list.
+              Deleting removes the contact from this list (the record stays queryable).
               {canHardDelete
                 ? ' Hard delete removes it entirely — only available to the partner role.'
                 : ''}
@@ -247,7 +247,7 @@ export function ContactsSection({
               </AlertDialogAction>
             ) : null}
             <AlertDialogAction onClick={() => pendingDelete && handleSoftDelete(pendingDelete)}>
-              Archive
+              Delete
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

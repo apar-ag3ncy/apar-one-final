@@ -34,6 +34,7 @@ import { asc, eq } from 'drizzle-orm';
 
 import { getActorContext } from '@/lib/server/actor';
 import {
+  getApAging as realGetApAging,
   getArAging as realGetArAging,
   getPerClientPnL as realGetPerClientPnL,
   getTrialBalance as realGetTrialBalance,
@@ -238,10 +239,21 @@ export async function getAgingReport(args: {
   asOfDate: string;
 }): Promise<readonly AgingRow[]> {
   if (args.side === 'payable') {
-    // AP aging lands in P6 with bill_allocations. Empty list for now so
-    // the page surfaces an empty-state instead of fake numbers.
     await getActorContext();
-    return [];
+    const apRows = await realGetApAging({ asOfDate: args.asOfDate });
+    return apRows.map(
+      (r): AgingRow => ({
+        entityId: r.vendorId,
+        entityName: r.vendorName,
+        byBucket: {
+          '0-30': r.bucket0to30Paise,
+          '31-60': r.bucket31to60Paise,
+          '61-90': r.bucket61to90Paise,
+          '90+': r.bucket90PlusPaise,
+        },
+        totalPaise: r.totalOutstandingPaise,
+      }),
+    );
   }
   const rows = await realGetArAging({ asOfDate: args.asOfDate });
   return rows.map(

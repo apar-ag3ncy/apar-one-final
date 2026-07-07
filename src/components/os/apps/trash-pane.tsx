@@ -32,6 +32,26 @@ const KIND_LABEL: Record<TrashKind, string> = {
   document: 'Document',
 };
 
+/** Order + headings for the per-app sections in the Trash. */
+const SECTION_ORDER: readonly TrashKind[] = [
+  'client',
+  'vendor',
+  'employee',
+  'project',
+  'office_expense',
+  'office_expense_category',
+  'document',
+];
+const SECTION_LABEL: Record<TrashKind, string> = {
+  client: 'Clients',
+  vendor: 'Vendors',
+  employee: 'Employees',
+  project: 'Projects',
+  office_expense: 'Office — expenses',
+  office_expense_category: 'Office — expense categories',
+  document: 'Documents',
+};
+
 /** kind:id → the key used to track which row is busy / pending confirm. */
 function rowKey(item: TrashItemRow): string {
   return `${item.kind}:${item.id}`;
@@ -125,10 +145,11 @@ export function TrashPane() {
     <div>
       <div className="settings-row" style={{ alignItems: 'flex-start' }}>
         <div>
-          <div className="label">Trash &amp; archive</div>
+          <div className="label">Trash</div>
           <div className="desc">
-            Archived or deleted clients, vendors, teammates, projects, office expenses and documents.
-            Restore brings an item back; permanent delete cannot be undone.
+            Deleted clients, vendors, teammates, projects, office expenses and documents, grouped
+            by app. Restore brings an item back; permanent delete cannot be undone. Anything left
+            here for more than 30 days is disposed of automatically — only its log line remains.
           </div>
         </div>
       </div>
@@ -136,10 +157,24 @@ export function TrashPane() {
       <div style={{ padding: '4px 18px 8px' }}>
         {items.length === 0 ? (
           <div style={{ padding: '18px 0', color: 'var(--text-muted)', fontSize: 13 }}>
-            Trash is empty — nothing archived or deleted.
+            Trash is empty — nothing deleted.
           </div>
         ) : (
-          <table className="table">
+          SECTION_ORDER.filter((k) => items.some((i) => i.kind === k)).map((sectionKind) => (
+            <div key={sectionKind} style={{ marginBottom: 18 }}>
+              <div
+                style={{
+                  fontSize: 11,
+                  color: 'var(--text-muted)',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.06em',
+                  fontWeight: 600,
+                  padding: '8px 0 6px',
+                }}
+              >
+                {SECTION_LABEL[sectionKind]} ({items.filter((i) => i.kind === sectionKind).length})
+              </div>
+              <table className="table">
             <thead>
               <tr>
                 <th style={{ width: 130 }}>Type</th>
@@ -150,7 +185,7 @@ export function TrashPane() {
               </tr>
             </thead>
             <tbody>
-              {items.map((item) => {
+              {items.filter((i) => i.kind === sectionKind).map((item) => {
                 const key = rowKey(item);
                 const busy = busyKey === key;
                 const confirming = confirmKey === key;
@@ -238,7 +273,9 @@ export function TrashPane() {
                 );
               })}
             </tbody>
-          </table>
+              </table>
+            </div>
+          ))
         )}
       </div>
 

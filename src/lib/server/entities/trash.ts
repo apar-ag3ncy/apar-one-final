@@ -87,6 +87,9 @@ export type TrashLogRow = {
 
 const LIST_CAP = 500;
 
+/** Days an item stays in the Trash before it is disposed of automatically. */
+const TRASH_RETENTION_DAYS = 30;
+
 /** Normalise a timestamp column (Date | string | null) to an ISO string. */
 function toIso(value: Date | string | null): string | null {
   if (value == null) return null;
@@ -290,10 +293,29 @@ export async function listTrash(): Promise<readonly TrashItemRow[]> {
     }
   }
 
+  // 30-day retention: anything that has sat in the Trash longer than
+  // TRASH_RETENTION_DAYS is disposed of automatically the next time the
+  // Trash is opened. Best-effort per item — an entity still referenced by
+  // non-reversed ledger transactions refuses hard deletion and simply stays
+  // listed. Each successful purge leaves only its entity.hard_deleted log
+  // line (written by the kind-specific hard delete).
+  const cutoff = Date.now() - TRASH_RETENTION_DAYS * 86_400_000;
+  const purged = new Set<string>();
+  for (const item of items) {
+    if (!item.deletedAt || Date.parse(item.deletedAt) >= cutoff) continue;
+    try {
+      await permanentlyDeleteTrashItem({ kind: item.kind, id: item.id });
+      purged.add(`${item.kind}:${item.id}`);
+    } catch {
+      // Still referenced (or caller lacks the delete role) — keep it listed.
+    }
+  }
+  const live = items.filter((i) => !purged.has(`${i.kind}:${i.id}`));
+
   // Newest-first by the trash/archive timestamp; rows without one sort last.
   const at = (r: TrashItemRow): number => (r.deletedAt ? Date.parse(r.deletedAt) : 0);
-  items.sort((a, b) => at(b) - at(a));
-  return items.slice(0, LIST_CAP);
+  live.sort((a, b) => at(b) - at(a));
+  return live.slice(0, LIST_CAP);
 }
 
 /**

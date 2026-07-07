@@ -106,7 +106,7 @@ export function EntitySettingsSection({
       await callArchive(kind, entityId);
       onChanged?.();
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Archive failed');
+      setError(e instanceof Error ? e.message : 'Delete failed');
     } finally {
       setBusy(null);
     }
@@ -150,7 +150,8 @@ export function EntitySettingsSection({
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14, maxWidth: 560 }}>
       <Card title="Lifecycle">
         <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0, lineHeight: 1.5 }}>
-          Archive hides this {kind} from active lists but preserves its history. Restore unhides it.
+          Delete moves this {kind} to the Trash — recoverable for 30 days, then disposed of
+          automatically. Restore brings it back.
           Permanent delete removes the row entirely and refuses if any non-reversed transactions
           still reference it.
         </p>
@@ -171,7 +172,7 @@ export function EntitySettingsSection({
               onClick={handleArchive}
               disabled={!canArchive || busy !== null}
             >
-              {busy === 'archive' ? 'Archiving…' : 'Archive'}
+              {busy === 'archive' ? 'Deleting…' : 'Delete'}
             </button>
           )}
           {canHardDelete ? (

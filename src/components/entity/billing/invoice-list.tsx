@@ -45,7 +45,7 @@ const STATE_LABEL: Record<InvoiceState, string> = {
   sent: 'Sent',
   partially_paid: 'Partially paid',
   paid: 'Paid',
-  void: 'Void',
+  void: 'Deleted',
 };
 
 /**
@@ -113,7 +113,7 @@ export function InvoiceList({
       },
       {
         id: 'void',
-        label: 'Void',
+        label: 'Delete',
         tone: 'destructive',
         visible: capabilities?.canVoid ?? false,
         icon: <FileXIcon className="size-4" aria-hidden />,

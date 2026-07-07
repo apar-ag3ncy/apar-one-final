@@ -10,6 +10,28 @@ import type { ActivityEvent } from '@/components/entity/activity-feed';
 const PAGE_LIMIT = 30;
 
 /**
+ * Activity retention: log lines live for 30 days, then auto-delete. The
+ * purge runs opportunistically when a feed is read, throttled to once an
+ * hour per server instance so the live-polling feeds don't hammer it.
+ */
+const ACTIVITY_RETENTION_DAYS = 30;
+let lastActivityPurgeAt = 0;
+
+async function purgeExpiredActivity(): Promise<void> {
+  const now = Date.now();
+  if (now - lastActivityPurgeAt < 60 * 60 * 1000) return;
+  lastActivityPurgeAt = now;
+  try {
+    await db.execute(
+      sql`DELETE FROM entity_activity_log
+          WHERE created_at < now() - make_interval(days => ${ACTIVITY_RETENTION_DAYS})`,
+    );
+  } catch {
+    // Best effort — a failed purge never breaks the feed; retried next hour.
+  }
+}
+
+/**
  * Subset of the UI EntityType that the activity log keys events to.
  * The DB enum has 'office'; the UI EntityType has 'transaction' and
  * 'document'. The log row stores principal entities only, so we narrow
@@ -37,6 +59,7 @@ export async function getEntityActivity(args: {
   limit?: number;
 }): Promise<readonly ActivityEvent[]> {
   await getActorContext();
+  await purgeExpiredActivity();
   const limit = Math.min(args.limit ?? PAGE_LIMIT, 200);
 
   // Build the mention filter — sql JSONB containment against the typed shape.
