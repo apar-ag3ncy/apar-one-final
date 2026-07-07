@@ -5,7 +5,15 @@
 // reimbursements. System-of-record only — amounts are captured from the
 // source bill / receipt, never computed (CLAUDE rules #1, #2).
 
-import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type FormEvent,
+  type ReactNode,
+} from 'react';
 import { toast } from 'sonner';
 import * as XLSX from 'xlsx';
 
@@ -132,6 +140,69 @@ function fyStartIso(): string {
 const CUSTOM_PREFIX = 'custom:';
 const CREATE_CATEGORY = '__create__';
 
+/** Date-filter periods offered in the Office expense list. */
+type DatePreset = 'all' | 'week' | 'month' | 'last-month' | 'quarter' | 'fy' | 'custom';
+
+const DATE_PRESET_LABEL: Record<DatePreset, string> = {
+  all: 'All time',
+  week: 'This week',
+  month: 'This month',
+  'last-month': 'Last month',
+  quarter: 'This quarter',
+  fy: 'This financial year',
+  custom: 'Custom range…',
+};
+
+/** Shared look for the toolbar's filter <select>/<input> controls. */
+const selectFilterStyle: CSSProperties = {
+  background: 'var(--content-2)',
+  border: '1px solid var(--border)',
+  borderRadius: 6,
+  padding: '4px 8px',
+  fontSize: 12,
+  color: 'var(--text)',
+};
+
+/** Resolve a preset (or a custom from/to) to an inclusive [from, to] ISO range.
+ * `null` bounds mean "unbounded on that side". Uses the local calendar. */
+function dateRangeForPreset(
+  preset: DatePreset,
+  customFrom: string,
+  customTo: string,
+): { from: string | null; to: string | null } {
+  const iso = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = now.getMonth();
+  switch (preset) {
+    case 'week': {
+      // Monday–Sunday of the current week.
+      const diffToMon = (now.getDay() + 6) % 7;
+      const mon = new Date(y, m, now.getDate() - diffToMon);
+      const sun = new Date(y, m, now.getDate() - diffToMon + 6);
+      return { from: iso(mon), to: iso(sun) };
+    }
+    case 'month':
+      return { from: iso(new Date(y, m, 1)), to: iso(new Date(y, m + 1, 0)) };
+    case 'last-month':
+      return { from: iso(new Date(y, m - 1, 1)), to: iso(new Date(y, m, 0)) };
+    case 'quarter': {
+      const qs = Math.floor(m / 3) * 3;
+      return { from: iso(new Date(y, qs, 1)), to: iso(new Date(y, qs + 3, 0)) };
+    }
+    case 'fy': {
+      // Indian FY: 1 Apr – 31 Mar. Before April, the FY began the prior year.
+      const startYear = m >= 3 ? y : y - 1;
+      return { from: iso(new Date(startYear, 3, 1)), to: iso(new Date(startYear + 1, 2, 31)) };
+    }
+    case 'custom':
+      return { from: customFrom || null, to: customTo || null };
+    default:
+      return { from: null, to: null };
+  }
+}
+
 /**
  * Human-readable category label for an expense row. Custom categories win;
  * built-in "other" rows fall back to their Particulars note; everything else
@@ -179,6 +250,13 @@ export function OfficeApp({
     'all',
   );
   const [statusFilter, setStatusFilter] = useState<OfficeExpenseStatus | 'all'>('all');
+  // Date filter — a preset period or a custom from/to range.
+  const [datePreset, setDatePreset] = useState<DatePreset>('all');
+  const [customFrom, setCustomFrom] = useState('');
+  const [customTo, setCustomTo] = useState('');
+  // Sort — click a column header to sort by it; click again to flip direction.
+  const [sortKey, setSortKey] = useState<'date' | 'amount' | 'total'>('date');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [showNew, setShowNew] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [editing, setEditing] = useState<OfficeExpenseRow | null>(null);
@@ -320,10 +398,24 @@ export function OfficeApp({
     };
   }, []);
 
+  const dateRange = useMemo(
+    () => dateRangeForPreset(datePreset, customFrom, customTo),
+    [datePreset, customFrom, customTo],
+  );
+
+  function toggleSort(key: 'date' | 'amount' | 'total') {
+    if (sortKey === key) {
+      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortKey(key);
+      setSortDir('desc');
+    }
+  }
+
   const filtered = useMemo(() => {
     if (!rows) return [];
     const q = search.trim().toLowerCase();
-    return rows.filter((r) => {
+    const arr = rows.filter((r) => {
       if (activeCategory !== 'all') {
         if (activeCategory.startsWith(CUSTOM_PREFIX)) {
           if (r.customCategoryId !== activeCategory.slice(CUSTOM_PREFIX.length)) return false;
@@ -332,6 +424,8 @@ export function OfficeApp({
         }
       }
       if (statusFilter !== 'all' && r.status !== statusFilter) return false;
+      if (dateRange.from && r.expenseDate < dateRange.from) return false;
+      if (dateRange.to && r.expenseDate > dateRange.to) return false;
       if (!q) return true;
       return (
         r.description.toLowerCase().includes(q) ||
@@ -340,7 +434,20 @@ export function OfficeApp({
         (r.referenceNumber ?? '').toLowerCase().includes(q)
       );
     });
-  }, [rows, activeCategory, statusFilter, search]);
+    // Sort is stable, so equal keys keep the server's order (newest insert last).
+    arr.sort((a, b) => {
+      let cmp: number;
+      if (sortKey === 'date') {
+        cmp = a.expenseDate < b.expenseDate ? -1 : a.expenseDate > b.expenseDate ? 1 : 0;
+      } else {
+        const av = sortKey === 'amount' ? a.amountPaise : a.totalPaise;
+        const bv = sortKey === 'amount' ? b.amountPaise : b.totalPaise;
+        cmp = av < bv ? -1 : av > bv ? 1 : 0;
+      }
+      return sortDir === 'asc' ? cmp : -cmp;
+    });
+    return arr;
+  }, [rows, activeCategory, statusFilter, search, dateRange, sortKey, sortDir]);
 
   const topCategory = useMemo(() => {
     if (!summary || summary.byCategory.length === 0) return null;
@@ -680,18 +787,42 @@ export function OfficeApp({
           </button>
         ) : null}
         <div style={{ flex: 1 }} />
+        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Dates:</span>
+        <select
+          value={datePreset}
+          onChange={(e) => setDatePreset(e.target.value as DatePreset)}
+          style={selectFilterStyle}
+        >
+          {(Object.keys(DATE_PRESET_LABEL) as DatePreset[]).map((p) => (
+            <option key={p} value={p}>
+              {DATE_PRESET_LABEL[p]}
+            </option>
+          ))}
+        </select>
+        {datePreset === 'custom' && (
+          <>
+            <input
+              type="date"
+              aria-label="From date"
+              value={customFrom}
+              onChange={(e) => setCustomFrom(e.target.value)}
+              style={selectFilterStyle}
+            />
+            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>→</span>
+            <input
+              type="date"
+              aria-label="To date"
+              value={customTo}
+              onChange={(e) => setCustomTo(e.target.value)}
+              style={selectFilterStyle}
+            />
+          </>
+        )}
         <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Status:</span>
         <select
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value as OfficeExpenseStatus | 'all')}
-          style={{
-            background: 'var(--content-2)',
-            border: '1px solid var(--border)',
-            borderRadius: 6,
-            padding: '4px 8px',
-            fontSize: 12,
-            color: 'var(--text)',
-          }}
+          style={selectFilterStyle}
         >
           <option value="all">All</option>
           {(Object.keys(STATUS_LABEL) as OfficeExpenseStatus[]).map((s) => (
@@ -709,21 +840,43 @@ export function OfficeApp({
         ) : filtered.length === 0 ? (
           <EmptyState
             onAction={canEdit ? () => setShowNew(true) : undefined}
-            isFiltered={search !== '' || activeCategory !== 'all' || statusFilter !== 'all'}
+            isFiltered={
+              search !== '' ||
+              activeCategory !== 'all' ||
+              statusFilter !== 'all' ||
+              datePreset !== 'all'
+            }
           />
         ) : (
           <table className="table" style={{ minWidth: 760 }}>
             <thead>
               <tr>
-                <th>Date</th>
+                <SortableTh
+                  label="Date"
+                  active={sortKey === 'date'}
+                  dir={sortDir}
+                  onClick={() => toggleSort('date')}
+                />
                 <th>Category</th>
                 <th>Description</th>
                 <th>Vendor / Employee</th>
                 <th>Payment</th>
                 <th>Status</th>
-                <th style={{ textAlign: 'right' }}>Amount</th>
+                <SortableTh
+                  label="Amount"
+                  align="right"
+                  active={sortKey === 'amount'}
+                  dir={sortDir}
+                  onClick={() => toggleSort('amount')}
+                />
                 <th style={{ textAlign: 'right' }}>GST</th>
-                <th style={{ textAlign: 'right' }}>Total</th>
+                <SortableTh
+                  label="Total"
+                  align="right"
+                  active={sortKey === 'total'}
+                  dir={sortDir}
+                  onClick={() => toggleSort('total')}
+                />
                 <th style={{ width: 90 }} />
               </tr>
             </thead>
@@ -990,6 +1143,40 @@ export function OfficeApp({
 /* -------------------------------------------------------------------------- */
 /* Sub-components                                                             */
 /* -------------------------------------------------------------------------- */
+
+/** A clickable column header that sorts the list, showing an ▲/▼ when active. */
+function SortableTh({
+  label,
+  active,
+  dir,
+  onClick,
+  align,
+}: {
+  label: string;
+  active: boolean;
+  dir: 'asc' | 'desc';
+  onClick: () => void;
+  align?: 'right';
+}) {
+  return (
+    <th
+      onClick={onClick}
+      title={`Sort by ${label.toLowerCase()}`}
+      style={{
+        textAlign: align,
+        cursor: 'pointer',
+        userSelect: 'none',
+        whiteSpace: 'nowrap',
+        color: active ? 'var(--text)' : undefined,
+      }}
+    >
+      {label}
+      <span style={{ opacity: active ? 1 : 0.28, marginLeft: 4 }}>
+        {active ? (dir === 'asc' ? '▲' : '▼') : '↕'}
+      </span>
+    </th>
+  );
+}
 
 function KpiCard({ label, value, trend }: { label: string; value: ReactNode; trend?: string }) {
   return (
@@ -2329,7 +2516,10 @@ function parseSheetRows(ws: XLSX.WorkSheet): SheetParseResult {
     rows.push({
       expenseDate: isoDate,
       description,
-      categoryName: cell(row, 'category') || null,
+      // Imported expenses are deliberately filed under "Others" — we do NOT
+      // auto-create or auto-assign categories from the sheet. The user
+      // recategorises them from the list afterwards.
+      categoryName: null,
       amountPaise,
       paymentMethod: parseImportPaymentMode(cell(row, 'paymentMode')),
       referenceNumber,
@@ -2570,7 +2760,8 @@ function ImportOfficeExpensesModal({
           — a header row is required. Amounts are read from <strong>Total</strong>{' '}
           (falling back to <strong>Sub Total</strong>); each row is captured as-is.
           If the workbook has more than one sheet, choose which ones to import —
-          they&apos;re all brought in together.
+          they&apos;re all brought in together. Every imported expense is filed
+          under <strong>Others</strong> — recategorise them from the list afterwards.
         </div>
 
         <div style={{ gridColumn: '1 / -1', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -2767,7 +2958,7 @@ function ImportOfficeExpensesModal({
                         {r.expenseDate}
                       </td>
                       <td>{r.description}</td>
-                      <td style={{ color: 'var(--text-muted)' }}>{r.categoryName ?? '—'}</td>
+                      <td style={{ color: 'var(--text-muted)' }}>Others</td>
                       <td
                         className="font-mono"
                         style={{ fontSize: 11, color: 'var(--text-dim)' }}
