@@ -70,7 +70,9 @@ const CATEGORY_DEFS: ReadonlyArray<{
   { id: 'utilities', label: 'Utilities', color: '#D08A1E', hint: 'Power, internet, water' },
   { id: 'rent', label: 'Rent', color: '#7A2D4E', hint: 'Office rent' },
   { id: 'travel', label: 'Travel', color: '#3F4E8E', hint: 'Local cabs, fuel' },
-  { id: 'repairs', label: 'Repairs', color: '#1A1411', hint: 'Maintenance, AMC' },
+  // Teal — readable on both the light and dark OS themes (the old near-black
+  // #1A1411 vanished against the dark background).
+  { id: 'repairs', label: 'Repairs', color: '#2D8A8A', hint: 'Maintenance, AMC' },
   { id: 'reimbursement', label: 'Reimbursement', color: '#B5391E', hint: 'Paid by employee' },
   { id: 'other', label: 'Other', color: '#5E7344', hint: 'Anything else' },
 ];

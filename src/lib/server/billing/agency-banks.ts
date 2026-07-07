@@ -7,7 +7,7 @@ import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 
 import { db } from '@/lib/db/client';
-import { accounts, bankAccounts, transactions } from '@/lib/db/schema';
+import { accounts, bankAccounts, companyBankAccounts, transactions } from '@/lib/db/schema';
 import { AppError } from '@/lib/errors';
 import { type CurrentUserContext, requireCapability } from '@/lib/rbac';
 import { getActorContext } from '@/lib/server/actor';
@@ -40,8 +40,57 @@ export type AgencyBankAccountRow = {
   isActive: boolean;
 };
 
+/**
+ * Keep the ledger's bank list in sync with Settings: any bank the operator
+ * added under Settings ▸ Billing (`company_bank_accounts`) is mirrored into
+ * `bank_accounts` on first read, so every payment picker — receipts, vendor
+ * payments, salaries — sees it without a second data-entry step. Idempotent:
+ * each mirror is tagged `company:<id>` in `vault_object_key`. Opening balance
+ * starts at 0 (editable later from Settings ▸ Banking).
+ */
+async function mirrorCompanyBanksIntoLedger(actorId: string): Promise<void> {
+  const companyRows = await db.select().from(companyBankAccounts);
+  if (companyRows.length === 0) return;
+  const existing = await db
+    .select({ marker: bankAccounts.vaultObjectKey, last4: bankAccounts.accountLast4 })
+    .from(bankAccounts);
+  const markers = new Set(existing.map((e) => e.marker));
+  const last4s = new Set(existing.map((e) => e.last4));
+  let glId: string | null = null;
+  for (const c of companyRows) {
+    const marker = `company:${c.id}`;
+    if (markers.has(marker)) continue;
+    const digits = c.accountNumber.replace(/\D/g, '');
+    const last4 = digits.slice(-4) || '0000';
+    // A manually-created ledger bank with the same last-4 already covers it.
+    if (last4s.has(last4)) continue;
+    glId = glId ?? (await bankGlAccountId());
+    await db.insert(bankAccounts).values({
+      accountId: glId,
+      displayName: c.title,
+      bankName: c.bankName,
+      branch: c.branchName ?? null,
+      accountLast4: last4,
+      ifsc: c.ifsc,
+      accountType: 'current',
+      vaultObjectKey: marker,
+      openingBalancePaise: 0n,
+      openingBalanceDate: null,
+      isActive: true,
+      notes: 'Mirrored from Settings ▸ Billing bank accounts',
+      createdBy: actorId,
+      updatedBy: actorId,
+    });
+  }
+}
+
 export async function listAgencyBankAccounts(): Promise<readonly AgencyBankAccountRow[]> {
-  await getActorContext();
+  const ctx = await getActorContext();
+  try {
+    await mirrorCompanyBanksIntoLedger(ctx.userId);
+  } catch {
+    // The mirror is a convenience — a failure must never break the pickers.
+  }
   const rows = await db
     .select({
       id: bankAccounts.id,
