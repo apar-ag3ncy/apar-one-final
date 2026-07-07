@@ -568,7 +568,7 @@ function SalaryPaymentForm({
           setAmount((cur) => (touched ? cur : paiseToRupees(res.proratedGrossPaise)));
           setExpectedPaise(res.proratedGrossPaise);
           setAutoHint(
-            `Salary due for ${priorMonthLabel} — ${res.payableDays} of ${res.workingDays} days payable. Edit the amount if what was actually paid differs; both are stored.`,
+            `Salary due for ${priorMonthLabel} — ${res.payableDays} of ${res.daysInMonth} days paid (only days marked absent cut pay). Edit the amount if what was actually paid differs; both are stored.`,
           );
         } else {
           setAutoHint(
