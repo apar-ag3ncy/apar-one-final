@@ -71,13 +71,35 @@ const STATE_LABEL: Record<InvoiceRow['state'], string> = {
   sent: 'Sent',
   partially_paid: 'Partially paid',
   paid: 'Paid',
-  void: 'Void',
+  void: 'Deleted',
 };
 
 export type ClientInvoicesSectionProps = {
   clientId: string;
   clientName: string;
 };
+
+/**
+ * GSTR-1 rule: an invoice is deletable in its own month and until the 11th of
+ * the following month (inclusive) — after that its GST has been filed.
+ */
+function gstr1Deadline(documentDate: string): Date {
+  const d = new Date(`${documentDate.slice(0, 10)}T00:00:00Z`);
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 11));
+}
+
+function withinGstr1Window(documentDate: string): boolean {
+  const today = new Date(`${new Date().toISOString().slice(0, 10)}T00:00:00Z`);
+  return today.getTime() <= gstr1Deadline(documentDate).getTime();
+}
+
+function gstr1DeadlineLabel(documentDate: string): string {
+  return gstr1Deadline(documentDate).toLocaleDateString('en-IN', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  });
+}
 
 export function ClientInvoicesSection({ clientId, clientName }: ClientInvoicesSectionProps) {
   const { hasCapability } = useCurrentUser();
@@ -101,7 +123,9 @@ export function ClientInvoicesSection({ clientId, clientName }: ClientInvoicesSe
 
   const reloadInvoices = useCallback(async () => {
     const data = await listInvoices({ clientId });
-    setRows(data.rows);
+    // Deleted invoices (ledger reversed within the GSTR-1 window) drop out of
+    // the list entirely — the Activity tab keeps their log line.
+    setRows(data.rows.filter((r) => r.state !== 'void'));
   }, [clientId]);
 
   const reloadThemes = useCallback(async () => {
@@ -130,7 +154,7 @@ export function ClientInvoicesSection({ clientId, clientName }: ClientInvoicesSe
     ])
       .then(([inv, ths, rdy, banks]) => {
         if (cancelled) return;
-        setRows(inv.rows);
+        setRows(inv.rows.filter((r) => r.state !== 'void'));
         setThemes(ths);
         setReadiness(rdy);
         setBankAccounts(banks);
@@ -326,13 +350,15 @@ export function ClientInvoicesSection({ clientId, clientName }: ClientInvoicesSe
                         size="sm"
                         variant="ghost"
                         onClick={() => setDeleteTarget(inv)}
-                        disabled={inv.state === 'paid'}
+                        disabled={inv.state === 'paid' || !withinGstr1Window(inv.documentDate)}
                         title={
                           inv.state === 'paid'
                             ? 'Paid invoices can’t be deleted — issue a credit note.'
-                            : inv.state === 'draft'
-                              ? 'Delete draft invoice'
-                              : 'Delete (voids the invoice & reverses its ledger entry)'
+                            : !withinGstr1Window(inv.documentDate)
+                              ? `GSTR-1 window closed on ${gstr1DeadlineLabel(inv.documentDate)} — issue a credit note instead.`
+                              : inv.state === 'draft'
+                                ? 'Delete draft invoice'
+                                : `Delete — allowed until ${gstr1DeadlineLabel(inv.documentDate)} (GSTR-1 filing)`
                         }
                         aria-label="Delete invoice"
                       >
@@ -429,7 +455,7 @@ function DeleteInvoiceDialog({
         toast.success(`Deleted ${target!.documentNumber}.`);
       } else {
         await voidInvoice(target!.id, reason.trim());
-        toast.success(`Voided ${target!.documentNumber} and reversed its ledger entry.`);
+        toast.success(`Deleted ${target!.documentNumber} and reversed its ledger entry.`);
       }
       onDone();
     } catch (e) {
@@ -453,10 +479,10 @@ function DeleteInvoiceDialog({
               </>
             ) : (
               <>
-                <strong>{target.documentNumber}</strong> is{' '}
-                <strong>{target.state.replace('_', ' ')}</strong> and posted to the ledger, so it
-                can’t be hard-deleted. Deleting it will <strong>void</strong> the invoice and
-                reverse its ledger entry (the ledger is append-only). Give a reason.
+                Deleting <strong>{target.documentNumber}</strong> reverses its ledger entry and
+                removes it from this list. Invoices can be deleted until the{' '}
+                <strong>11th of the following month</strong> — after that the GSTR-1 covering them
+                is filed and a credit note is the correct fix. Give a reason.
               </>
             )}
           </DialogDescription>
@@ -477,7 +503,7 @@ function DeleteInvoiceDialog({
             Cancel
           </Button>
           <Button variant="destructive" onClick={submit} disabled={busy}>
-            {busy ? (isDraft ? 'Deleting…' : 'Voiding…') : isDraft ? 'Delete' : 'Void & delete'}
+            {busy ? 'Deleting…' : 'Delete invoice'}
           </Button>
         </DialogFooter>
       </DialogContent>

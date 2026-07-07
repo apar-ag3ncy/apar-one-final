@@ -86,7 +86,7 @@ const STATUS_LABELS: Record<TransactionStatus, string> = {
   pending_approval: 'Pending approval',
   posted: 'Posted',
   reversed: 'Reversed',
-  void: 'Void',
+  void: 'Deleted',
 };
 
 /**

@@ -372,7 +372,7 @@ export function ClientsApp({
                       <button
                         className="btn row-action row-delete"
                         type="button"
-                        title="Archive client"
+                        title="Delete client"
                         onClick={(e) => {
                           e.stopPropagation();
                           setConfirmDel(c);
@@ -464,10 +464,10 @@ export function ClientsApp({
       )}
       {confirmDel && (
         <ConfirmDialog
-          title={`Archive ${confirmDel.name}?`}
-          message={`Hides "${confirmDel.name}" from the active directory. Projects, transactions, and invoices that reference this client are kept intact and will display "${confirmDel.name} (ex-client)". A partner can restore the client later.`}
+          title={`Delete ${confirmDel.name}?`}
+          message={`Moves "${confirmDel.name}" to the Trash for 30 days — restore it from the Trash app any time before it is disposed of. Projects, transactions, and invoices that reference this client are kept intact and will display "${confirmDel.name} (ex-client)".`}
           destructive
-          confirmLabel="Archive client"
+          confirmLabel="Delete client"
           onCancel={() => setConfirmDel(null)}
           onConfirm={async () => {
             const target = confirmDel;
@@ -476,9 +476,9 @@ export function ClientsApp({
               await archiveClient(target.id);
               const next = await fetchClientList().catch(() => null);
               if (next) setDbClients(next);
-              toast.success(`Archived "${target.name}".`);
+              toast.success(`Moved "${target.name}" to the Trash.`);
             } catch (e) {
-              toast.error(e instanceof Error ? e.message : 'Could not archive the client.');
+              toast.error(e instanceof Error ? e.message : 'Could not delete the client.');
             }
           }}
         />
@@ -845,7 +845,7 @@ export function VendorsApp({
                       <button
                         className="btn row-action row-delete"
                         type="button"
-                        title="Archive vendor"
+                        title="Delete vendor"
                         onClick={(e) => {
                           e.stopPropagation();
                           setConfirmDel(v);
@@ -930,10 +930,10 @@ export function VendorsApp({
       )}
       {confirmDel && (
         <ConfirmDialog
-          title={`Archive ${confirmDel.name}?`}
-          message={`Hides "${confirmDel.name}" from the active vendor directory. Bills, expenses, and documents that reference this vendor are kept intact and will display "${confirmDel.name} (ex-vendor)". A partner can restore the vendor later.`}
+          title={`Delete ${confirmDel.name}?`}
+          message={`Moves "${confirmDel.name}" to the Trash for 30 days — restore it from the Trash app any time before it is disposed of. Bills, expenses, and documents that reference this vendor are kept intact and will display "${confirmDel.name} (ex-vendor)".`}
           destructive
-          confirmLabel="Archive vendor"
+          confirmLabel="Delete vendor"
           onCancel={() => setConfirmDel(null)}
           onConfirm={async () => {
             const target = confirmDel;
@@ -942,9 +942,9 @@ export function VendorsApp({
               await archiveVendor(target.id);
               const next = await fetchVendorList().catch(() => null);
               if (next) setDbVendors(next);
-              toast.success(`Archived "${target.name}".`);
+              toast.success(`Moved "${target.name}" to the Trash.`);
             } catch (e) {
-              toast.error(e instanceof Error ? e.message : 'Could not archive the vendor.');
+              toast.error(e instanceof Error ? e.message : 'Could not delete the vendor.');
             }
           }}
         />
@@ -1376,7 +1376,7 @@ export function ProjectsApp({
       toast.success('Project archived.');
       await reload();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Archive failed');
+      toast.error(e instanceof Error ? e.message : 'Delete failed');
     }
   }
 
@@ -1578,10 +1578,10 @@ export function ProjectsApp({
       )}
       {confirmDel && (
         <ConfirmDialog
-          title={`Archive ${confirmDel.code}?`}
+          title={`Delete ${confirmDel.code}?`}
           message={`This archives ${confirmDel.name}. Transactions and history stay; restore via partner action.`}
           destructive
-          confirmLabel="Archive project"
+          confirmLabel="Delete project"
           onCancel={() => setConfirmDel(null)}
           onConfirm={() => {
             if (confirmDel.id) void removeProjectAction(confirmDel.id);

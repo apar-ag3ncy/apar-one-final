@@ -50,6 +50,7 @@ import {
   parseAccountStatementRoute,
 } from './apps/account-statement-window';
 import { AppLauncher } from './apps/app-launcher';
+import { TrashPane } from './apps/trash-pane';
 import { AccountsOverviewWindow } from './apps/accounts-overview-window';
 import { TrialBalanceWindow } from './apps/trial-balance-window';
 import { BalanceSheetWindow } from './apps/balance-sheet-window';
@@ -789,6 +790,20 @@ function Desktop({ signOut }: { signOut: () => void }) {
             }
             case 'attendance':
               return <AttendanceApp canEdit={can(user, 'attendance', 'edit')} />;
+            case 'trash':
+              return (
+                <div className="main">
+                  <div className="main-header">
+                    <h2>Trash</h2>
+                    <span className="sub">
+                      deleted items stay recoverable for 30 days, then dispose automatically
+                    </span>
+                  </div>
+                  <div style={{ flex: 1, overflow: 'auto' }}>
+                    <TrashPane />
+                  </div>
+                </div>
+              );
             case 'office':
               return (
                 <div className="main">

@@ -40,6 +40,13 @@ export const APPS: readonly AppDef[] = [
   { id: 'reports', name: 'Reports', icon: 'chart', size: { w: 1000, h: 620 }, accent: '#2E8F5A' },
   { id: 'office', name: 'Office', icon: 'zap', size: { w: 1100, h: 700 }, accent: '#C46A28' },
   {
+    id: 'trash',
+    name: 'Trash',
+    icon: 'trash',
+    size: { w: 900, h: 600 },
+    accent: '#7A2D4E',
+  },
+  {
     id: 'settings',
     name: 'Settings',
     icon: 'settings',

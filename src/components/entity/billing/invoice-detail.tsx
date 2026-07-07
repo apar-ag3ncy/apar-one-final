@@ -68,7 +68,7 @@ const STATE_LABEL: Record<InvoiceState, string> = {
   sent: 'Sent',
   partially_paid: 'Partially paid',
   paid: 'Paid',
-  void: 'Void',
+  void: 'Deleted',
 };
 
 /**
@@ -182,7 +182,7 @@ export function InvoiceDetail({
                 onClick={() => onVoidClick(invoice.id)}
               >
                 <FileXIcon className="size-4" aria-hidden />
-                Void
+                Delete
               </Button>
             ) : null}
           </div>

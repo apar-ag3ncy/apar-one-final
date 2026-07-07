@@ -85,5 +85,11 @@ export function can(user: User, appId: AppId, action: keyof AppPermission): bool
       can(user, id, action),
     );
   }
+  // Trash is the recovery/disposal surface — mirrors the old Settings ▸ Trash
+  // gate (settings edit). Server actions additionally restrict permanent
+  // deletes to admins/partners.
+  if (appId === 'trash') {
+    return user.permissions.settings?.edit ?? false;
+  }
   return user.permissions[appId]?.[action] ?? false;
 }

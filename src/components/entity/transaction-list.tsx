@@ -107,7 +107,7 @@ const STATUS_LABELS: Record<string, string> = {
   pending_approval: 'Pending approval',
   posted: 'Posted',
   reversed: 'Reversed',
-  void: 'Void',
+  void: 'Deleted',
 };
 
 const KIND_LABELS: Record<string, string> = {

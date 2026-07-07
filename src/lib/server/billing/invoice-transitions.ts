@@ -210,8 +210,25 @@ export async function voidInvoice(id: string, reason: string): Promise<VoidInvoi
   if (current.state === 'paid') {
     throw new AppError(
       'validation',
-      `invoice ${invoiceId} is already paid; issue a credit note instead of voiding.`,
+      `invoice ${invoiceId} is already paid; issue a credit note instead of deleting.`,
     );
+  }
+
+  // GSTR-1 window: an invoice can be deleted in its own month or until the
+  // 11th of the following month — after that its GST output has been filed
+  // and the books must not change. (deleteDeadline = the 11th, inclusive.)
+  {
+    const docDate = new Date(`${String(current.documentDate).slice(0, 10)}T00:00:00Z`);
+    const deadline = new Date(Date.UTC(docDate.getUTCFullYear(), docDate.getUTCMonth() + 1, 11));
+    const today = new Date(new Date().toISOString().slice(0, 10) + 'T00:00:00Z');
+    if (today.getTime() > deadline.getTime()) {
+      throw new AppError(
+        'validation',
+        `Invoice ${current.documentNumber} is past its GSTR-1 window (deletable until ${deadline
+          .toISOString()
+          .slice(0, 10)}). Issue a credit note instead.`,
+      );
+    }
   }
 
   // If a ledger txn was posted (post-Phase 2.4), reverse it FIRST. Outside the
