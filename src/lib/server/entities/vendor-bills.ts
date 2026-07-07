@@ -380,6 +380,9 @@ export async function updateVendorBillDraft(
   const flags = await runValidations(template, {
     kind: VENDOR_BILL_KIND,
     attribution: parsed.attribution,
+    // Editing an existing draft — don't let external_ref_clash flag the bill
+    // against its own row (the invoice number is usually unchanged).
+    excludeTransactionId: transactionId,
   });
 
   try {

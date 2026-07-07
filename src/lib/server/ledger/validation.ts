@@ -1,6 +1,6 @@
 import 'server-only';
 
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, ne, sql } from 'drizzle-orm';
 
 import { AppError } from '@/lib/errors';
 import { db, type DbClient } from '@/lib/db/client';
@@ -34,7 +34,13 @@ type Rule = {
 
 export async function runValidations(
   template: PostingTemplateResult,
-  inputs: { kind: string; attribution?: string },
+  inputs: {
+    kind: string;
+    attribution?: string;
+    /** When re-validating an existing transaction (edit), its own id — so the
+     *  external_ref_clash rule doesn't flag the row against itself. */
+    excludeTransactionId?: string;
+  },
   client: DbClient = db,
 ): Promise<ValidationFlag[]> {
   const enabled = await client
@@ -57,7 +63,7 @@ export async function runValidations(
 async function runOne(
   rule: Rule,
   template: PostingTemplateResult,
-  inputs: { kind: string; attribution?: string },
+  inputs: { kind: string; attribution?: string; excludeTransactionId?: string },
   client: DbClient,
 ): Promise<ValidationFlag | null> {
   switch (rule.code) {
@@ -84,10 +90,18 @@ async function runOne(
       return null;
 
     case 'external_ref_clash': {
+      // On edit, the transaction being re-validated already carries this
+      // external_ref — exclude it so a bill doesn't clash with itself.
+      const clashWhere = inputs.excludeTransactionId
+        ? and(
+            eq(transactions.externalRef, template.externalRef),
+            ne(transactions.id, inputs.excludeTransactionId),
+          )
+        : eq(transactions.externalRef, template.externalRef);
       const existing = await client
         .select({ id: transactions.id })
         .from(transactions)
-        .where(eq(transactions.externalRef, template.externalRef))
+        .where(clashWhere)
         .limit(1);
       if (existing[0]) {
         const flag: ValidationFlag = {
