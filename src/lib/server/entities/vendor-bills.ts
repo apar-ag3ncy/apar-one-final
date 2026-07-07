@@ -463,11 +463,10 @@ export async function updateVendorBillDraft(
       flags: flags.map((f) => ({ code: f.code, severity: f.severity, message: f.message })),
     };
   } catch (e) {
-    if (e instanceof AppError) throw e;
-    throw new AppError(
-      'internal',
-      e instanceof Error ? e.message : 'Failed to update vendor bill draft',
-    );
+    // DIAG (temporary): surface the raw DB/error message as a returned flag so
+    // it isn't stripped by Next's production error masking. Revert after use.
+    const dbg = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
+    return { transactionId, flags: [{ code: 'debug', severity: 'info', message: `DBGERR::${dbg}` }] };
   }
 }
 
