@@ -189,10 +189,13 @@ export function ClientsApp({
   openClient,
   canEdit = false,
   canDelete = false,
+  readOnly = false,
 }: {
   openClient: (c: Client) => void;
   canEdit?: boolean;
   canDelete?: boolean;
+  /** Accounts cockpit browse: no create/edit affordances at all — pure view. */
+  readOnly?: boolean;
 }) {
   const [search, setSearch] = useState('');
   const [showNew, setShowNew] = useState(false);
@@ -283,16 +286,18 @@ export function ClientsApp({
             onChange={(e) => setSearch(e.target.value)}
           />
         </div>
-        <button
-          className="btn primary"
-          type="button"
-          disabled={!canEdit}
-          onClick={() => setShowNew(true)}
-          title={canEdit ? undefined : 'You need edit permission to create clients.'}
-        >
-          <Icon name="plus" size={13} />
-          New Client
-        </button>
+        {!readOnly && (
+          <button
+            className="btn primary"
+            type="button"
+            disabled={!canEdit}
+            onClick={() => setShowNew(true)}
+            title={canEdit ? undefined : 'You need edit permission to create clients.'}
+          >
+            <Icon name="plus" size={13} />
+            New Client
+          </button>
+        )}
       </div>
       <div style={{ flex: 1, overflow: 'auto', padding: '0 16px 16px' }}>
         <table className="table">
@@ -400,7 +405,9 @@ export function ClientsApp({
                   {loadError
                     ? `Couldn't load clients: ${loadError}`
                     : data.clients.length === 0
-                      ? 'No clients yet — click "New Client" to add the first.'
+                      ? readOnly
+                        ? 'No clients yet.'
+                        : 'No clients yet — click "New Client" to add the first.'
                       : `No clients match "${search}".`}
                 </td>
               </tr>
@@ -686,11 +693,14 @@ export function VendorsApp({
   openVendor,
   canEdit = false,
   canDelete = false,
+  readOnly = false,
 }: {
   store: VendorStore;
   openVendor: (v: Vendor) => void;
   canEdit?: boolean;
   canDelete?: boolean;
+  /** Accounts cockpit browse: no create/edit affordances at all — pure view. */
+  readOnly?: boolean;
 }) {
   const [search, setSearch] = useState('');
   const [showNew, setShowNew] = useState(false);
@@ -765,16 +775,18 @@ export function VendorsApp({
             onChange={(e) => setSearch(e.target.value)}
           />
         </div>
-        <button
-          className="btn primary"
-          type="button"
-          disabled={!canEdit}
-          onClick={() => setShowNew(true)}
-          title={canEdit ? undefined : 'You need edit permission to create vendors.'}
-        >
-          <Icon name="plus" size={13} />
-          New Vendor
-        </button>
+        {!readOnly && (
+          <button
+            className="btn primary"
+            type="button"
+            disabled={!canEdit}
+            onClick={() => setShowNew(true)}
+            title={canEdit ? undefined : 'You need edit permission to create vendors.'}
+          >
+            <Icon name="plus" size={13} />
+            New Vendor
+          </button>
+        )}
       </div>
       <div style={{ flex: 1, overflow: 'auto', padding: '0 16px 16px' }}>
         <table className="table">

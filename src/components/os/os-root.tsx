@@ -682,6 +682,7 @@ function Desktop({ signOut }: { signOut: () => void }) {
                       }
                       canEdit={false}
                       canDelete={false}
+                      readOnly
                     />
                   </div>
                 );
@@ -710,6 +711,7 @@ function Desktop({ signOut }: { signOut: () => void }) {
                       }
                       canEdit={false}
                       canDelete={false}
+                      readOnly
                     />
                   </div>
                 );
