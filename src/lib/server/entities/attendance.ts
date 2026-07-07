@@ -60,33 +60,11 @@ export async function markAttendance(input: MarkAttendanceInput): Promise<Attend
   const ctx = await getActorContext();
   const parsed = MarkAttendanceSchema.parse(input);
 
-  const existing = await db
-    .select()
-    .from(attendanceRecords)
-    .where(
-      and(
-        eq(attendanceRecords.employeeId, parsed.employeeId),
-        eq(attendanceRecords.date, parsed.date),
-        isNull(attendanceRecords.deletedAt),
-      ),
-    )
-    .limit(1);
-
-  if (existing[0]) {
-    const [row] = await db
-      .update(attendanceRecords)
-      .set({
-        status: parsed.status,
-        leaveId: parsed.leaveId ?? null,
-        notes: parsed.notes ?? null,
-        updatedBy: ctx.userId,
-      })
-      .where(eq(attendanceRecords.id, existing[0].id))
-      .returning();
-    if (!row) throw new AppError('internal', 'attendance update returned no row');
-    return rowToAttendance(row);
-  }
-
+  // One row per (employee, date). The unique index is on (employee_id, date)
+  // and does NOT exclude soft-deleted rows, so a previously-cleared entry for
+  // that day would make a plain insert throw a duplicate-key error. Upsert on
+  // the conflict instead — updating and reviving (deleted_at → null) whatever
+  // row already holds that slot. Atomic, so it's also race-safe.
   const [row] = await db
     .insert(attendanceRecords)
     .values({
@@ -98,8 +76,18 @@ export async function markAttendance(input: MarkAttendanceInput): Promise<Attend
       createdBy: ctx.userId,
       updatedBy: ctx.userId,
     })
+    .onConflictDoUpdate({
+      target: [attendanceRecords.employeeId, attendanceRecords.date],
+      set: {
+        status: parsed.status,
+        leaveId: parsed.leaveId ?? null,
+        notes: parsed.notes ?? null,
+        deletedAt: null,
+        updatedBy: ctx.userId,
+      },
+    })
     .returning();
-  if (!row) throw new AppError('internal', 'attendance insert returned no row');
+  if (!row) throw new AppError('internal', 'attendance upsert returned no row');
   return rowToAttendance(row);
 }
 
@@ -266,31 +254,15 @@ export async function markAttendanceBulk(input: {
   let written = 0;
   await db.transaction(async (tx) => {
     for (const { employeeId, date } of input.pairs) {
-      const existing = await tx
-        .select({ id: attendanceRecords.id })
-        .from(attendanceRecords)
-        .where(
-          and(
-            eq(attendanceRecords.employeeId, employeeId),
-            eq(attendanceRecords.date, date),
-            isNull(attendanceRecords.deletedAt),
-          ),
-        )
-        .limit(1);
-      if (existing[0]) {
-        await tx
-          .update(attendanceRecords)
-          .set({ status, updatedBy: ctx.userId })
-          .where(eq(attendanceRecords.id, existing[0].id));
-      } else {
-        await tx.insert(attendanceRecords).values({
-          employeeId,
-          date,
-          status,
-          createdBy: ctx.userId,
-          updatedBy: ctx.userId,
+      // Upsert (see markAttendance) — revives a cleared slot instead of
+      // colliding with it on the (employee_id, date) unique index.
+      await tx
+        .insert(attendanceRecords)
+        .values({ employeeId, date, status, createdBy: ctx.userId, updatedBy: ctx.userId })
+        .onConflictDoUpdate({
+          target: [attendanceRecords.employeeId, attendanceRecords.date],
+          set: { status, deletedAt: null, updatedBy: ctx.userId },
         });
-      }
       written++;
     }
   });
@@ -531,21 +503,22 @@ export async function importAttendance(
         continue;
       }
 
-      if (existing[0]) {
-        await db
-          .update(attendanceRecords)
-          .set({ status: row.status, notes, updatedBy: ctx.userId })
-          .where(eq(attendanceRecords.id, existing[0].id));
-      } else {
-        await db.insert(attendanceRecords).values({
+      // Upsert (see markAttendance) — revives a cleared slot rather than
+      // colliding with it on the (employee_id, date) unique index.
+      await db
+        .insert(attendanceRecords)
+        .values({
           employeeId: empId,
           date: row.date,
           status: row.status,
           notes,
           createdBy: ctx.userId,
           updatedBy: ctx.userId,
+        })
+        .onConflictDoUpdate({
+          target: [attendanceRecords.employeeId, attendanceRecords.date],
+          set: { status: row.status, notes, deletedAt: null, updatedBy: ctx.userId },
         });
-      }
       successCount++;
     } catch (e) {
       errors.push({
