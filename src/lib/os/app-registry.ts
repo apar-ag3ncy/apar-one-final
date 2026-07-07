@@ -47,13 +47,13 @@ export type AppRegistryEntry = {
 export const APP_REGISTRY: Readonly<Record<AppId, AppRegistryEntry>> = {
   clients: {
     id: 'clients',
-    showInDock: false, // lives inside a launcher (Accounts)
+    showInDock: true, // its own dock app (manage clients); Accounts also has a read-only Clients view
     minimumCapability: 'app.clients.view',
     defaultSize: { width: 880, height: 580 },
   },
   vendors: {
     id: 'vendors',
-    showInDock: false, // lives inside a launcher (Accounts)
+    showInDock: true, // its own dock app (manage vendors); Accounts also has a read-only Vendors view
     minimumCapability: 'app.vendors.view',
     defaultSize: { width: 880, height: 560 },
   },

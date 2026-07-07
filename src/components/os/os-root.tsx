@@ -656,11 +656,36 @@ function Desktop({ signOut }: { signOut: () => void }) {
             w.app !== 'ledger' &&
             w.app !== 'reports' &&
             !(w.app === 'employees' && w.entityId === 'directory') &&
-            !(w.app === 'office' && w.entityId === 'expenses')
+            !(w.app === 'office' && w.entityId === 'expenses') &&
+            // The Accounts cockpit opens Clients/Vendors in a read-only
+            // financial-browse mode via the 'ledgers' sentinel — not a detail.
+            !(w.app === 'clients' && w.entityId === 'ledgers') &&
+            !(w.app === 'vendors' && w.entityId === 'ledgers')
           )
             return renderDetail(w);
           switch (w.app) {
             case 'clients':
+              // 'ledgers' sentinel (from the Accounts cockpit): the same
+              // directory, read-only, but each row opens that client's LEDGER
+              // instead of the editable profile. A plain open (dock app) is
+              // the full management directory.
+              if (w.entityId === 'ledgers') {
+                return (
+                  <div className="main">
+                    <ClientsApp
+                      openClient={(c) =>
+                        openApp('ledger', {
+                          entityId: `client:${c.id}`,
+                          title: `${c.name} — Ledger`,
+                          position: 'beside-focused',
+                        })
+                      }
+                      canEdit={false}
+                      canDelete={false}
+                    />
+                  </div>
+                );
+              }
               return (
                 <div className="main">
                   <ClientsApp
@@ -671,6 +696,24 @@ function Desktop({ signOut }: { signOut: () => void }) {
                 </div>
               );
             case 'vendors':
+              if (w.entityId === 'ledgers') {
+                return (
+                  <div className="main">
+                    <VendorsApp
+                      store={vendorStore}
+                      openVendor={(v) =>
+                        openApp('ledger', {
+                          entityId: `vendor:${v.id}`,
+                          title: `${v.name} — Ledger`,
+                          position: 'beside-focused',
+                        })
+                      }
+                      canEdit={false}
+                      canDelete={false}
+                    />
+                  </div>
+                );
+              }
               return (
                 <div className="main">
                   <VendorsApp
@@ -704,12 +747,26 @@ function Desktop({ signOut }: { signOut: () => void }) {
                 </div>
               );
             case 'accounts': {
+              // The founder's read-only cockpit: view every account — the
+              // office's, each client's, each vendor's. Managing clients and
+              // vendors happens in their own dock apps; here it's all viewing.
               const accountOptions = [
+                can(user, 'ledger', 'view')
+                  ? {
+                      app: 'ledger' as const,
+                      name: 'Ledgers',
+                      desc: 'Every account in one place — the office, each client, each vendor, with live balances.',
+                      icon: 'book' as const,
+                      accent: '#5B6677',
+                    }
+                  : null,
                 can(user, 'clients', 'view')
                   ? {
                       app: 'clients' as const,
+                      entityId: 'ledgers',
+                      title: 'Client accounts',
                       name: 'Clients',
-                      desc: 'The client directory — invoices, receipts, projects, ledgers.',
+                      desc: "Open any client's account — their invoices, receipts, transactions and running balance.",
                       icon: 'building' as const,
                       accent: '#E63A1F',
                     }
@@ -717,8 +774,10 @@ function Desktop({ signOut }: { signOut: () => void }) {
                 can(user, 'vendors', 'view')
                   ? {
                       app: 'vendors' as const,
+                      entityId: 'ledgers',
+                      title: 'Vendor accounts',
                       name: 'Vendors',
-                      desc: 'The vendor directory — bills, payments, TDS, ledgers.',
+                      desc: "Open any vendor's account — their bills, payments, TDS and running balance.",
                       icon: 'truck' as const,
                       accent: '#C46A28',
                     }
@@ -726,17 +785,19 @@ function Desktop({ signOut }: { signOut: () => void }) {
                 can(user, 'ledger', 'view')
                   ? {
                       app: 'ledger' as const,
-                      name: 'Ledgers',
-                      desc: 'Every book — office cash & bank, per-client, per-vendor, TDS.',
-                      icon: 'book' as const,
-                      accent: '#5B6677',
+                      entityId: 'office',
+                      title: 'Office account',
+                      name: 'Office',
+                      desc: "The office's own account — cash, bank, spending and salaries, with running totals.",
+                      icon: 'zap' as const,
+                      accent: '#7A4E2D',
                     }
                   : null,
                 can(user, 'reports', 'view')
                   ? {
                       app: 'reports' as const,
                       name: 'Reports',
-                      desc: 'Accounts Overview, P&L, balance sheet, GST & TDS, registers.',
+                      desc: 'Trial balance, P&L, balance sheet, GST & TDS, registers and the overview.',
                       icon: 'chart' as const,
                       accent: '#2E8F5A',
                     }
@@ -745,10 +806,10 @@ function Desktop({ signOut }: { signOut: () => void }) {
               return (
                 <AppLauncher
                   heading="Accounts"
-                  sub="Pick where you're headed."
+                  sub="View every account — office, clients, vendors — in detail."
                   options={accountOptions}
                   onPick={(o) => {
-                    openApp(o.app, { entityId: o.entityId, position: 'center' });
+                    openApp(o.app, { entityId: o.entityId, title: o.title, position: 'center' });
                     osActions.closeWindow(w.id);
                   }}
                 />
