@@ -252,11 +252,6 @@ export function ClientWindow({ clientId, onClose }: ClientWindowProps) {
         {tab === 'activity' ? <ActivityBody clientId={client.id} /> : null}
         {tab === 'settings' ? (
           <div style={{ display: 'grid', gap: 24 }}>
-            {/* Address management lives here too — clients manage their (multiple)
-                addresses from Settings, in addition to the dedicated Addresses
-                tab. One primary, others secondary; add / edit / set-primary /
-                remove. */}
-            <AddressesSection entityType="client" entityId={client.id} entityName={client.name} />
             <EntitySettingsSection
               kind="client"
               entityId={client.id}

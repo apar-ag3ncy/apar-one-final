@@ -1,6 +1,12 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useTransition } from 'react';
+import { toast } from 'sonner';
+import {
+  changeVaultPassword,
+  getVaultStatus,
+  setupVault,
+} from '@/lib/server/settings/vault';
 import { Icon } from '../icons';
 import { initials } from '../format';
 import { APPS } from '../data';
@@ -107,8 +113,36 @@ export function AdminConsole() {
           />
         )}
 
+        <h4 style={{ marginTop: 18 }}>System</h4>
+        <div
+          className={`side-item admin-user ${selectedId === VAULT_SECTION ? 'active' : ''}`}
+          onClick={() => setSelectedId(VAULT_SECTION)}
+        >
+          <span
+            className="avatar"
+            style={{ width: 22, height: 22, fontSize: 9, background: 'var(--apar-red-deep)' }}
+            aria-hidden
+          >
+            <Icon name="shield" size={11} />
+          </span>
+          <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0, flex: 1 }}>
+            <span style={{ fontWeight: 600 }}>Vault password</span>
+            <span style={{ fontSize: 10, opacity: 0.75 }}>Create or change the master key</span>
+          </span>
+        </div>
       </div>
 
+      {selectedId === VAULT_SECTION ? (
+        <div className="main">
+          <div className="main-header">
+            <h2>Vault password</h2>
+            <span className="sub">the one key that encrypts everything in the vault</span>
+          </div>
+          <div style={{ flex: 1, overflow: 'auto', padding: 20 }}>
+            <VaultPasswordPane />
+          </div>
+        </div>
+      ) : (
       <div className="main">
         <div className="main-header">
           <h2>Admin</h2>
@@ -177,7 +211,185 @@ export function AdminConsole() {
           )}
         </div>
       </div>
+      )}
     </>
+  );
+}
+
+/** Sidebar selection sentinel for the Vault password section (not a user id). */
+const VAULT_SECTION = '__vault__';
+
+/* -------------------------------------------------------------------------- */
+/* Vault password — create when unconfigured, change when configured          */
+/* -------------------------------------------------------------------------- */
+
+function VaultPasswordPane() {
+  const [phase, setPhase] = useState<'loading' | 'denied' | 'error' | 'create' | 'change'>(
+    'loading',
+  );
+  const [attempt, setAttempt] = useState(0);
+  const [pending, startTransition] = useTransition();
+  const [current, setCurrent] = useState('');
+  const [next, setNext] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    getVaultStatus()
+      .then((s) => {
+        if (cancelled) return;
+        if (!s.ok) {
+          setPhase(s.denied ? 'denied' : 'error');
+          return;
+        }
+        setPhase(s.configured ? 'change' : 'create');
+      })
+      .catch(() => {
+        if (!cancelled) setPhase('error');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [attempt]);
+
+  function submit() {
+    setError(null);
+    if (next.length < 8) {
+      setError('The vault password must be at least 8 characters.');
+      return;
+    }
+    if (next !== confirm) {
+      setError('The new passwords do not match.');
+      return;
+    }
+    if (phase === 'change' && !current) {
+      setError('Enter the current vault password.');
+      return;
+    }
+    startTransition(async () => {
+      const result =
+        phase === 'create' ? await setupVault(next) : await changeVaultPassword(current, next);
+      if (result.ok) {
+        toast.success(
+          phase === 'create'
+            ? 'Vault created. Unlock it with your new vault password.'
+            : 'Vault password changed. Every entry was re-encrypted under the new key.',
+        );
+        setCurrent('');
+        setNext('');
+        setConfirm('');
+        if (phase === 'create') setPhase('change');
+      } else {
+        setError(result.message);
+        // Create can fail because someone else set the vault up first
+        // (concurrent setup loses via onConflictDoNothing) — re-probe so the
+        // pane flips to the change form instead of a dead-end create form.
+        if (phase === 'create') setAttempt((n) => n + 1);
+      }
+    });
+  }
+
+  if (phase === 'loading') {
+    return <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>Checking the vault…</div>;
+  }
+  if (phase === 'denied') {
+    return (
+      <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>
+        You don&apos;t have access to manage the vault.
+      </div>
+    );
+  }
+  if (phase === 'error') {
+    return (
+      <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>
+        Could not load the vault.{' '}
+        <button
+          type="button"
+          className="btn"
+          onClick={() => {
+            setPhase('loading');
+            setAttempt((n) => n + 1);
+          }}
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
+
+  const creating = phase === 'create';
+  return (
+    <div style={{ maxWidth: 440 }}>
+      <p style={{ margin: '0 0 14px', fontSize: 12.5, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+        {creating
+          ? 'The vault has no password yet. Pick one — everything stored in the vault is encrypted with it, and there is no recovery if it is lost.'
+          : 'Changing the password re-encrypts every vault entry under a fresh key. The current password is required — without it the entries cannot be decrypted, so there is no recovery if it is lost.'}
+      </p>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {!creating && (
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <span className="admin-field-label">Current vault password</span>
+            <input
+              className="admin-input"
+              type="password"
+              autoComplete="off"
+              data-1p-ignore
+              data-lpignore="true"
+              data-bwignore
+              value={current}
+              onChange={(e) => setCurrent(e.target.value)}
+              disabled={pending}
+            />
+          </label>
+        )}
+        <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <span className="admin-field-label">{creating ? 'Vault password' : 'New vault password'}</span>
+          <input
+            className="admin-input"
+            type="password"
+            autoComplete="new-password"
+            data-1p-ignore
+            data-lpignore="true"
+            data-bwignore
+            value={next}
+            onChange={(e) => setNext(e.target.value)}
+            disabled={pending}
+          />
+        </label>
+        <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <span className="admin-field-label">Confirm {creating ? 'password' : 'new password'}</span>
+          <input
+            className="admin-input"
+            type="password"
+            autoComplete="new-password"
+            data-1p-ignore
+            data-lpignore="true"
+            data-bwignore
+            value={confirm}
+            onChange={(e) => setConfirm(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && submit()}
+            disabled={pending}
+          />
+        </label>
+        {error ? (
+          <div role="alert" style={{ color: 'var(--apar-red)', fontSize: 12 }}>
+            {error}
+          </div>
+        ) : null}
+        <div>
+          <button type="button" className="btn primary" onClick={submit} disabled={pending}>
+            {pending
+              ? creating
+                ? 'Creating…'
+                : 'Changing…'
+              : creating
+                ? 'Create vault password'
+                : 'Change vault password'}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
