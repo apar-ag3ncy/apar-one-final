@@ -66,7 +66,7 @@ try {
   const t1 = await mText();
   report('sheet picker shown', /Which sheets should be imported/.test(t1));
   report('lists January / February / Summary', /January/.test(t1) && /February/.test(t1) && /Summary/.test(t1), t1.slice(0, 160));
-  report('per-sheet row counts (2 rows / 1 row)', /2 rows/.test(t1) && /1 row\b/.test(t1));
+  report('per-sheet row counts (2 rows / 1 row)', /2 rows/.test(t1) && /1 row(?![a-z])/.test(t1));
   report("invalid sheet flagged can't import", /can’t import|no “Name”/.test(t1));
   await shot('ms-01-picker');
 
