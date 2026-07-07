@@ -355,6 +355,28 @@ function opexAccountFor(category: OfficeExpenseCategory): string {
   return OPEX_ACCOUNT_BY_CATEGORY[category] ?? '6900';
 }
 
+/**
+ * The debit side of an office-expense posting. Custom categories whose name
+ * reads like an asset bucket ("Assets", "Fixed asset", …) CAPITALIZE — they
+ * post to 1510 Office Equipment & Assets, which is exactly what the Accounts
+ * Overview's "Stuff box" reads. Everything else stays operating spend.
+ */
+async function debitAccountFor(
+  category: OfficeExpenseCategory,
+  customCategoryId: string | null,
+): Promise<string> {
+  if (customCategoryId) {
+    const [cat] = await db
+      .select({ name: officeExpenseCategories.name })
+      .from(officeExpenseCategories)
+      .where(eq(officeExpenseCategories.id, customCategoryId))
+      .limit(1);
+    if (cat && /asset/i.test(cat.name)) return '1510';
+    return '6900';
+  }
+  return opexAccountFor(category);
+}
+
 // Whether a captured expense should hit the GL. Reimbursements have their own
 // lifecycle (owed to an employee, paid later) and are not posted here.
 function shouldPostToLedger(category: OfficeExpenseCategory, amountPaise: bigint): boolean {
@@ -364,6 +386,8 @@ function shouldPostToLedger(category: OfficeExpenseCategory, amountPaise: bigint
 type PostableRow = {
   id: string;
   category: OfficeExpenseCategory;
+  /** Custom category id (office_expense_categories) — drives asset routing. */
+  customCategoryId: string | null;
   description: string;
   expenseDate: string;
   amountPaise: bigint;
@@ -382,8 +406,9 @@ async function postExpenseToLedger(
 ): Promise<string> {
   const net = row.amountPaise;
   const gst = row.gstPaise;
+  const debitCode = await debitAccountFor(row.category, row.customCategoryId);
   const legs = [
-    { accountCode: opexAccountFor(row.category), side: 'debit' as const, amountPaise: net },
+    { accountCode: debitCode, side: 'debit' as const, amountPaise: net },
     ...(gst > 0n ? [{ accountCode: '1250', side: 'debit' as const, amountPaise: gst }] : []),
     { accountCode: '1110', side: 'credit' as const, amountPaise: net + gst },
   ];
@@ -495,6 +520,7 @@ export async function createOfficeExpense(
       transactionId = await postExpenseToLedger(ctx, {
         id: row.id,
         category: row.category as OfficeExpenseCategory,
+        customCategoryId: row.customCategoryId ?? null,
         description: row.description,
         expenseDate: row.expenseDate,
         amountPaise: row.amountPaise,
@@ -603,6 +629,7 @@ export async function updateOfficeExpense(
       ? await postExpenseToLedger(ctx, {
           id: row.id,
           category: row.category as OfficeExpenseCategory,
+          customCategoryId: row.customCategoryId ?? null,
           description: row.description,
           expenseDate: row.expenseDate,
           amountPaise: row.amountPaise,
@@ -1268,6 +1295,7 @@ export async function importOfficeExpenses(input: {
           const txnId = await postExpenseToLedger(ctx, {
             id: insertedRow.id,
             category,
+            customCategoryId: insertedRow.customCategoryId ?? null,
             description: insertedRow.description,
             expenseDate: insertedRow.expenseDate,
             amountPaise: insertedRow.amountPaise,
@@ -1512,6 +1540,7 @@ export async function backfillOfficeExpenseLedgerPostings(input?: {
       const txnId = await postExpenseToLedger(ctx, {
         id: row.id,
         category: row.category as OfficeExpenseCategory,
+        customCategoryId: row.customCategoryId ?? null,
         description: row.description,
         expenseDate: row.expenseDate,
         amountPaise: row.amountPaise,
