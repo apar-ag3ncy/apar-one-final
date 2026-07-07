@@ -59,13 +59,13 @@ export const APP_REGISTRY: Readonly<Record<AppId, AppRegistryEntry>> = {
   },
   projects: {
     id: 'projects',
-    showInDock: true,
+    showInDock: false, // lives inside a launcher (Office)
     minimumCapability: 'app.projects.view',
     defaultSize: { width: 1080, height: 620 },
   },
   employees: {
     id: 'employees',
-    showInDock: true,
+    showInDock: false, // lives inside a launcher (Office)
     minimumCapability: 'app.employees.view',
     defaultSize: { width: 880, height: 560 },
   },
@@ -113,7 +113,7 @@ export const APP_REGISTRY: Readonly<Record<AppId, AppRegistryEntry>> = {
   },
   admin_console: {
     id: 'admin_console',
-    showInDock: true,
+    showInDock: false, // lives inside a launcher (Settings)
     minimumCapability: 'app.admin_console.view',
     defaultSize: { width: 980, height: 620 },
   },
