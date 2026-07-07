@@ -566,6 +566,26 @@ export async function createSalaryStructure(
   requireCapability(ctx, 'manage_salary_structures');
   const parsed = CreateSalaryStructureSchema.parse(input);
 
+  // A second version starting the SAME day would overlap (the close below
+  // only clips versions that began earlier) — refuse up front.
+  const [sameFrom] = await db
+    .select({ id: salaryStructures.id })
+    .from(salaryStructures)
+    .where(
+      and(
+        eq(salaryStructures.employeeId, parsed.employeeId),
+        isNull(salaryStructures.deletedAt),
+        sql`${salaryStructures.effectiveFrom} = ${parsed.effectiveFrom}::date`,
+      ),
+    )
+    .limit(1);
+  if (sameFrom) {
+    throw new AppError(
+      'validation',
+      `A salary update already starts on ${parsed.effectiveFrom} — delete it first or pick another date.`,
+    );
+  }
+
   const newId = await db.transaction(async (tx) => {
     // Close prior structures that STARTED BEFORE this one and still cover its
     // start (open, or ending on/after it), setting their effective_to to the
@@ -712,6 +732,27 @@ export async function restoreSalaryStructure(input: { id: string }): Promise<voi
     .where(and(eq(salaryStructures.id, parsed.id), isNotNull(salaryStructures.deletedAt)))
     .limit(1);
   if (!row) throw new AppError('not_found', 'Salary update not found in the Trash.');
+
+  // An active version with the SAME start date would overlap the restored one
+  // (the clip below only closes versions that began earlier) — refuse instead
+  // of leaving payroll with two structures in force for the same span.
+  const [sameFrom] = await db
+    .select({ id: salaryStructures.id })
+    .from(salaryStructures)
+    .where(
+      and(
+        eq(salaryStructures.employeeId, row.employeeId),
+        isNull(salaryStructures.deletedAt),
+        sql`${salaryStructures.effectiveFrom} = ${row.effectiveFrom}::date`,
+      ),
+    )
+    .limit(1);
+  if (sameFrom) {
+    throw new AppError(
+      'validation',
+      `A salary update effective ${row.effectiveFrom} already exists — delete it first to restore this one.`,
+    );
+  }
 
   await db.transaction(async (tx) => {
     // Clip earlier active versions that cover this one's start (same guard as
@@ -991,6 +1032,15 @@ export async function restoreSalaryPayment(input: { id: string }): Promise<void>
   if (!row) throw new AppError('not_found', 'Salary payment not found in the Trash.');
 
   const mode = row.paymentMethod === 'bank' ? ('bank' as const) : ('cash' as const);
+  // The bank account FK is ON DELETE SET NULL — restoring a bank payment whose
+  // account is gone would silently fall back to crediting office cash. Refuse
+  // with a clear message instead.
+  if (mode === 'bank' && !row.bankAccountId) {
+    throw new AppError(
+      'validation',
+      'This payment was made from a bank account that no longer exists. Record it afresh instead of restoring.',
+    );
+  }
   const externalRef = `SAL-${row.paidOn}-${row.employeeId.slice(0, 8)}-${Date.now()}`;
   const { transactionId } = await createDraftTransaction(ctx, {
     kind: 'salary_disbursement',

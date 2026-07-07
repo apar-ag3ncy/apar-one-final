@@ -2713,11 +2713,15 @@ function ManageCategoriesModal({
         ? { fromCategoryId: fromId, toCustomCategoryId: target.slice(CUSTOM_PREFIX.length) }
         : { fromCategoryId: fromId, toCategory: target };
       const res = await reassignOfficeExpenseCategoryEntries(args);
-      toast.success(
-        res.reposted > 0
-          ? `Moved ${res.moved} entries · ${res.reposted} re-posted to the ledger`
-          : `Moved ${res.moved} ${res.moved === 1 ? 'entry' : 'entries'}`,
-      );
+      if (res.failed > 0) {
+        toast.error(`Moved ${res.moved}, but ${res.failed} failed — retry to finish the move.`);
+      } else {
+        toast.success(
+          res.reposted > 0
+            ? `Moved ${res.moved} entries · ${res.reposted} re-posted to the ledger`
+            : `Moved ${res.moved} ${res.moved === 1 ? 'entry' : 'entries'}`,
+        );
+      }
       await refreshUsage();
       onChanged();
     } catch (e) {

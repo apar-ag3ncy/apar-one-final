@@ -5,7 +5,15 @@ import { z } from 'zod';
 
 import { logAudit } from '@/lib/audit';
 import { db } from '@/lib/db/client';
-import { documents, employees, officeExpenseCategories, officeExpenses, vendors } from '@/lib/db/schema';
+import {
+  accounts,
+  documents,
+  employees,
+  officeExpenseCategories,
+  officeExpenses,
+  postings,
+  vendors,
+} from '@/lib/db/schema';
 import { AppError } from '@/lib/errors';
 import { requireCapability } from '@/lib/rbac';
 import { getActorContext } from '@/lib/server/actor';
@@ -1176,16 +1184,19 @@ const ReassignSchema = z
 /**
  * Bulk re-assign: move every entry of one custom category to another category
  * (custom or built-in), reversing + reposting each posted entry whose debit
- * account changes (asset-named categories post to 1510, the rest to their
- * opex account). Trashed entries are re-pointed too (no ledger effect — their
- * transactions were already reversed). After this the source category is
- * empty and can be deleted.
+ * account changes. The OLD debit account is read from the entry's actual
+ * posted transaction (not inferred from the category name) — entries edited
+ * across categories before the customCategoryId repost fix can sit on a stale
+ * account, and those are exactly the postings this must correct. Trashed
+ * entries are re-pointed without ledger effect (their transactions were
+ * already reversed). Per-row failures don't abort the batch — the counts
+ * report what moved, what re-posted, and what failed.
  */
 export async function reassignOfficeExpenseCategoryEntries(input: {
   fromCategoryId: string;
   toCustomCategoryId?: string | null;
   toCategory?: string | null;
-}): Promise<{ moved: number; reposted: number }> {
+}): Promise<{ moved: number; reposted: number; failed: number }> {
   const ctx = await getActorContext();
   const parsed = ReassignSchema.parse(input);
 
@@ -1216,11 +1227,10 @@ export async function reassignOfficeExpenseCategoryEntries(input: {
     toCatName = toCat.name;
   }
 
-  // The debit account is a function of the category alone, so old/new resolve
-  // once for the whole batch (entries under a custom category are 'other').
-  const oldDebit = /asset/i.test(fromCat.name) ? '1510' : '6900';
   const newDebit = parsed.toCustomCategoryId
-    ? /asset/i.test(toCatName ?? '') ? '1510' : '6900'
+    ? /asset/i.test(toCatName ?? '')
+      ? '1510'
+      : '6900'
     : opexAccountFor(parsed.toCategory as OfficeExpenseCategory);
   const nextCategory = (
     parsed.toCustomCategoryId ? 'other' : parsed.toCategory
@@ -1232,37 +1242,84 @@ export async function reassignOfficeExpenseCategoryEntries(input: {
     .from(officeExpenses)
     .where(eq(officeExpenses.customCategoryId, parsed.fromCategoryId));
 
+  // Fail fast on capabilities if any live posted row may need a ledger move —
+  // better a clean refusal than a half-moved batch (recordSalaryPayment's
+  // orphan-draft rule).
+  const anyPosted = rows.some((r) => r.deletedAt == null && r.transactionId);
+  if (anyPosted) {
+    requireCapability(ctx, 'reverse_transaction');
+    requireCapability(ctx, 'post_transaction');
+  }
+
+  /** The debit account this expense's posted transaction ACTUALLY hit. */
+  async function postedDebitAccount(transactionId: string): Promise<string | null> {
+    const [leg] = await db
+      .select({ code: accounts.code })
+      .from(postings)
+      .innerJoin(accounts, eq(accounts.id, postings.accountId))
+      .where(
+        and(
+          eq(postings.transactionId, transactionId),
+          eq(postings.side, 'debit'),
+          sql`${accounts.code} <> '1250'`,
+        ),
+      )
+      .limit(1);
+    return leg?.code ?? null;
+  }
+
   let moved = 0;
   let reposted = 0;
+  let failed = 0;
   for (const row of rows) {
-    await db
-      .update(officeExpenses)
-      .set({ category: nextCategory, customCategoryId: nextCustomId, updatedBy: ctx.userId })
-      .where(eq(officeExpenses.id, row.id));
-    moved += 1;
-
-    // Live, posted, and the GL account moves → reverse + repost. Trashed rows
-    // were reversed at delete time and unposted rows have nothing to move.
-    if (row.deletedAt == null && row.transactionId && oldDebit !== newDebit) {
-      await reverseTransaction(ctx, {
-        transactionId: row.transactionId,
-        reason: `Category re-assigned — ${fromCat.name} → ${toCatName ?? nextCategory}: ${row.description}`.slice(0, 200),
-      });
-      const nextTxnId = await postExpenseToLedger(ctx, {
-        id: row.id,
-        category: nextCategory as OfficeExpenseCategory,
-        customCategoryId: nextCustomId,
-        description: row.description,
-        expenseDate: row.expenseDate,
-        amountPaise: row.amountPaise,
-        gstPaise: row.gstPaise,
-        notes: row.notes,
-      });
+    try {
+      let nextTxnId: string | null | undefined; // undefined → keep as is
+      if (row.deletedAt == null && row.transactionId) {
+        const oldDebit = await postedDebitAccount(row.transactionId);
+        if (oldDebit !== null && oldDebit !== newDebit) {
+          await reverseTransaction(ctx, {
+            transactionId: row.transactionId,
+            reason:
+              `Category re-assigned — ${fromCat.name} → ${toCatName ?? nextCategory}: ${row.description}`.slice(
+                0,
+                200,
+              ),
+          });
+          try {
+            nextTxnId = await postExpenseToLedger(ctx, {
+              id: row.id,
+              category: nextCategory,
+              customCategoryId: nextCustomId,
+              description: row.description,
+              expenseDate: row.expenseDate,
+              amountPaise: row.amountPaise,
+              gstPaise: row.gstPaise,
+              notes: row.notes,
+            });
+            reposted += 1;
+          } catch (e) {
+            // Reversed but the fresh posting failed: leave the row UNPOSTED
+            // (transactionId null) so the Office app's "Post N to ledger"
+            // backfill can pick it up — never point a live row at a reversed
+            // transaction.
+            nextTxnId = null;
+            console.error('[office-expenses] reassign repost failed:', row.id, e);
+          }
+        }
+      }
       await db
         .update(officeExpenses)
-        .set({ transactionId: nextTxnId })
+        .set({
+          category: nextCategory,
+          customCategoryId: nextCustomId,
+          updatedBy: ctx.userId,
+          ...(nextTxnId !== undefined ? { transactionId: nextTxnId } : {}),
+        })
         .where(eq(officeExpenses.id, row.id));
-      reposted += 1;
+      if (row.deletedAt == null) moved += 1;
+    } catch (e) {
+      failed += 1;
+      console.error('[office-expenses] reassign failed for row:', row.id, e);
     }
   }
 
@@ -1275,9 +1332,10 @@ export async function reassignOfficeExpenseCategoryEntries(input: {
       reassigned_to: parsed.toCustomCategoryId ?? parsed.toCategory,
       moved,
       reposted,
+      failed,
     },
   });
-  return { moved, reposted };
+  return { moved, reposted, failed };
 }
 
 /* -------------------------------------------------------------------------- */
