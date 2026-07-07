@@ -4,6 +4,7 @@ import { desc, eq, inArray, isNotNull, or } from 'drizzle-orm';
 
 import { db } from '@/lib/db/client';
 import {
+  bonusesAndPerks,
   clients,
   documents,
   employees,
@@ -12,6 +13,8 @@ import {
   officeExpenseCategories,
   officeExpenses,
   projects,
+  salaryPayments,
+  salaryStructures,
   users,
   vendors,
 } from '@/lib/db/schema';
@@ -29,6 +32,14 @@ import {
   restoreOfficeExpenseCategory,
   permanentlyDeleteOfficeExpenseCategory,
 } from '@/lib/server/entities/office-expenses';
+import {
+  restoreSalaryPayment,
+  permanentlyDeleteSalaryPayment,
+  restoreSalaryStructure,
+  permanentlyDeleteSalaryStructure,
+  restoreBonusOrPerk,
+  permanentlyDeleteBonusOrPerk,
+} from '@/lib/server/entities/payroll';
 import { restoreProject, hardDeleteProject } from '@/lib/server/entities/projects';
 import { restoreVendor, hardDeleteVendor } from '@/lib/server/entities/vendors';
 
@@ -64,6 +75,9 @@ const TRASH_KINDS = [
   'project',
   'office_expense',
   'office_expense_category',
+  'salary_payment',
+  'salary_structure',
+  'bonus',
   'document',
 ] as const;
 
@@ -263,6 +277,89 @@ export async function listTrash(): Promise<readonly TrashItemRow[]> {
     }
   }
 
+  // -- Salary payments (soft-delete; ledger effect reversed on delete) ------
+  {
+    const rows = await db
+      .select({
+        id: salaryPayments.id,
+        amountPaise: salaryPayments.amountPaise,
+        paidOn: salaryPayments.paidOn,
+        employeeName: employees.fullName,
+        deletedAt: salaryPayments.deletedAt,
+      })
+      .from(salaryPayments)
+      .innerJoin(employees, eq(employees.id, salaryPayments.employeeId))
+      .where(isNotNull(salaryPayments.deletedAt))
+      .limit(LIST_CAP);
+    for (const r of rows) {
+      pushItem({
+        kind: 'salary_payment',
+        id: r.id,
+        label: `₹${(Number(r.amountPaise) / 100).toLocaleString('en-IN')} — ${r.employeeName}`,
+        sublabel: `paid ${r.paidOn}`,
+        deletedAt: toIso(r.deletedAt),
+        reason: 'trashed',
+      });
+    }
+  }
+
+  // -- Salary updates (structure versions; soft-delete) ---------------------
+  {
+    const rows = await db
+      .select({
+        id: salaryStructures.id,
+        ctcMonthlyPaise: salaryStructures.ctcMonthlyPaise,
+        effectiveFrom: salaryStructures.effectiveFrom,
+        employeeName: employees.fullName,
+        deletedAt: salaryStructures.deletedAt,
+      })
+      .from(salaryStructures)
+      .innerJoin(employees, eq(employees.id, salaryStructures.employeeId))
+      .where(isNotNull(salaryStructures.deletedAt))
+      .limit(LIST_CAP);
+    for (const r of rows) {
+      pushItem({
+        kind: 'salary_structure',
+        id: r.id,
+        label: `CTC ₹${(Number(r.ctcMonthlyPaise) / 100).toLocaleString('en-IN')}/mo — ${r.employeeName}`,
+        sublabel: `effective ${r.effectiveFrom}`,
+        deletedAt: toIso(r.deletedAt),
+        reason: 'trashed',
+      });
+    }
+  }
+
+  // -- Bonuses & perks (soft-delete) ----------------------------------------
+  {
+    const rows = await db
+      .select({
+        id: bonusesAndPerks.id,
+        description: bonusesAndPerks.description,
+        amountPaise: bonusesAndPerks.amountPaise,
+        bonusDate: bonusesAndPerks.bonusDate,
+        employeeName: employees.fullName,
+        deletedAt: bonusesAndPerks.deletedAt,
+      })
+      .from(bonusesAndPerks)
+      .innerJoin(employees, eq(employees.id, bonusesAndPerks.employeeId))
+      .where(isNotNull(bonusesAndPerks.deletedAt))
+      .limit(LIST_CAP);
+    for (const r of rows) {
+      const amt =
+        r.amountPaise == null
+          ? 'in-kind'
+          : `₹${(Number(r.amountPaise) / 100).toLocaleString('en-IN')}`;
+      pushItem({
+        kind: 'bonus',
+        id: r.id,
+        label: `${r.description} (${amt}) — ${r.employeeName}`,
+        sublabel: r.bonusDate,
+        deletedAt: toIso(r.deletedAt),
+        reason: 'trashed',
+      });
+    }
+  }
+
   // -- Documents (status='soft_deleted') — label = filename/title ----------
   {
     const rows = await db
@@ -345,6 +442,15 @@ export async function restoreTrashItem(input: { kind: TrashKind; id: string }): 
     case 'office_expense_category':
       await restoreOfficeExpenseCategory({ id });
       return;
+    case 'salary_payment':
+      await restoreSalaryPayment({ id });
+      return;
+    case 'salary_structure':
+      await restoreSalaryStructure({ id });
+      return;
+    case 'bonus':
+      await restoreBonusOrPerk({ id });
+      return;
     case 'document':
       await restoreDocument(id);
       return;
@@ -392,6 +498,15 @@ export async function permanentlyDeleteTrashItem(input: {
     case 'office_expense_category':
       await permanentlyDeleteOfficeExpenseCategory({ id });
       return;
+    case 'salary_payment':
+      await permanentlyDeleteSalaryPayment({ id });
+      return;
+    case 'salary_structure':
+      await permanentlyDeleteSalaryStructure({ id });
+      return;
+    case 'bonus':
+      await permanentlyDeleteBonusOrPerk({ id });
+      return;
     case 'document':
       // permanentlyDeleteDocument returns { fileRemoved } — the trash surface
       // doesn't need it, so we discard.
@@ -425,6 +540,12 @@ export async function listTrashLog(): Promise<readonly TrashLogRow[]> {
         'entity.restored',
         'entity.hard_deleted',
         'document.deleted',
+        'salary_payment.deleted',
+        'salary_payment.restored',
+        'salary_structure.deleted',
+        'salary_structure.restored',
+        'bonus.deleted',
+        'bonus.restored',
       ]),
     )
     .orderBy(desc(entityActivityLog.createdAt))

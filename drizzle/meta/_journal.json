@@ -421,6 +421,13 @@
       "when": 1781700090000,
       "tag": "0059_client_logo",
       "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "7",
+      "when": 1781800090000,
+      "tag": "0060_salary_bonus_event_kinds",
+      "breakpoints": true
     }
   ]
 }

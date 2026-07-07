@@ -78,6 +78,14 @@ export const EVENT_REGISTRY = [
   'salary_run.posted',
   'salary_run.reversed',
   'bonus.recorded',
+  // Payroll deletability (0060): salary payments / structures / bonuses can be
+  // deleted into the Trash and restored; each move is a logged event.
+  'salary_payment.deleted',
+  'salary_payment.restored',
+  'salary_structure.deleted',
+  'salary_structure.restored',
+  'bonus.deleted',
+  'bonus.restored',
   'reimbursement.submitted',
   'reimbursement.approved',
   'reimbursement.rejected',

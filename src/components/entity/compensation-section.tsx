@@ -15,7 +15,9 @@ import { toast } from 'sonner';
 
 import {
   createSalaryStructure,
+  deleteBonusOrPerk,
   deleteSalaryPayment,
+  deleteSalaryStructure,
   listEmployeeBonuses,
   listEmployeeSalaryPayments,
   listEmployeeSalaryStructures,
@@ -224,8 +226,9 @@ export function CompensationSection({ employeeId, employeeName }: CompensationSe
         </OsCard>
       )}
 
-      {/* Salary — history */}
-      {canView && structures.length > 1 ? (
+      {/* Salary — history (every version listed so a wrong update is deletable;
+          deleting one re-extends the previous version over its span) */}
+      {canView && structures.length > 0 ? (
         <OsCard title="Salary history">
           <table className="table" style={{ width: '100%', fontSize: 12 }}>
             <thead>
@@ -236,6 +239,7 @@ export function CompensationSection({ employeeId, employeeName }: CompensationSe
                 <th style={{ ...th, textAlign: 'right' }}>HRA</th>
                 <th style={{ ...th, textAlign: 'right' }}>Special</th>
                 <th style={{ ...th, textAlign: 'right' }}>Monthly CTC</th>
+                {canManageSalary ? <th style={{ ...th, width: 36 }} /> : null}
               </tr>
             </thead>
             <tbody>
@@ -251,6 +255,29 @@ export function CompensationSection({ employeeId, employeeName }: CompensationSe
                   <td style={{ ...td, textAlign: 'right', fontWeight: 600 }}>
                     {formatINR(s.ctcMonthlyPaise)}
                   </td>
+                  {canManageSalary ? (
+                    <td style={{ ...td, textAlign: 'right' }}>
+                      <button
+                        type="button"
+                        className="btn"
+                        title="Delete this salary update (recoverable from Trash for 30 days)"
+                        style={{ padding: '2px 8px' }}
+                        onClick={async () => {
+                          try {
+                            await deleteSalaryStructure({ id: s.id });
+                            await reload();
+                            toast.success('Salary update moved to Trash.');
+                          } catch (e) {
+                            toast.error(
+                              e instanceof Error ? e.message : 'Could not delete the salary update',
+                            );
+                          }
+                        }}
+                      >
+                        ✕
+                      </button>
+                    </td>
+                  ) : null}
                 </tr>
               ))}
             </tbody>
@@ -299,7 +326,7 @@ export function CompensationSection({ employeeId, employeeName }: CompensationSe
                 key={b.id}
                 style={{
                   display: 'grid',
-                  gridTemplateColumns: '110px 1fr auto',
+                  gridTemplateColumns: canRecordBonus ? '110px 1fr auto auto' : '110px 1fr auto',
                   alignItems: 'center',
                   gap: 10,
                   padding: '8px 10px',
@@ -343,6 +370,25 @@ export function CompensationSection({ employeeId, employeeName }: CompensationSe
                 <span className="font-display" style={{ fontVariantNumeric: 'tabular-nums' }}>
                   {b.amountPaise !== null ? formatINR(b.amountPaise) : 'in-kind'}
                 </span>
+                {canRecordBonus ? (
+                  <button
+                    type="button"
+                    className="btn"
+                    title="Delete this bonus (recoverable from Trash for 30 days)"
+                    style={{ padding: '2px 8px' }}
+                    onClick={async () => {
+                      try {
+                        await deleteBonusOrPerk({ id: b.id });
+                        await reload();
+                        toast.success('Bonus moved to Trash.');
+                      } catch (e) {
+                        toast.error(e instanceof Error ? e.message : 'Could not delete the bonus');
+                      }
+                    }}
+                  >
+                    ✕
+                  </button>
+                ) : null}
               </li>
             ))}
           </ul>

@@ -613,7 +613,10 @@ export async function updateOfficeExpense(
     (rest.expenseDate !== undefined && rest.expenseDate !== existing.expenseDate) ||
     (rest.category !== undefined && rest.category !== existing.category) ||
     (rest.amountPaise !== undefined && rest.amountPaise !== existing.amountPaise) ||
-    (rest.gstPaise !== undefined && rest.gstPaise !== existing.gstPaise);
+    (rest.gstPaise !== undefined && rest.gstPaise !== existing.gstPaise) ||
+    // A custom-category change can reroute the debit account (asset-named
+    // categories post to 1510, the rest to 6900) — repost to keep the GL true.
+    (rest.customCategoryId !== undefined && rest.customCategoryId !== existing.customCategoryId);
   const wasPosted = !!existing.transactionId;
   const willPost = shouldPostToLedger(row.category as OfficeExpenseCategory, row.amountPaise);
   let posted = row;
@@ -1111,6 +1114,22 @@ export async function deleteOfficeExpenseCategory(args: { id: string }): Promise
   const ctx = await getActorContext();
   const parsed = z.object({ id: z.string().uuid() }).parse(args);
 
+  // A category still carrying entries cannot be deleted — the user must move
+  // its expenses to another category first (bulk re-assign in the Office app).
+  const [usage] = await db
+    .select({ count: sql<string>`count(*)::text` })
+    .from(officeExpenses)
+    .where(
+      and(eq(officeExpenses.customCategoryId, parsed.id), isNull(officeExpenses.deletedAt)),
+    );
+  const inUse = usage ? Number(usage.count) : 0;
+  if (inUse > 0) {
+    throw new AppError(
+      'validation',
+      `This category still has ${inUse} ${inUse === 1 ? 'entry' : 'entries'}. Move them to another category first, then delete it.`,
+    );
+  }
+
   const result = await db
     .update(officeExpenseCategories)
     .set({ deletedAt: new Date(), updatedBy: ctx.userId })
@@ -1127,6 +1146,138 @@ export async function deleteOfficeExpenseCategory(args: { id: string }): Promise
     action: 'delete',
     changes: { soft_delete: true },
   });
+}
+
+/** How many live expenses still reference a custom category (all-time). */
+export async function getOfficeExpenseCategoryUsage(args: {
+  id: string;
+}): Promise<{ activeCount: number }> {
+  await getActorContext();
+  const parsed = z.object({ id: z.string().uuid() }).parse(args);
+  const [row] = await db
+    .select({ count: sql<string>`count(*)::text` })
+    .from(officeExpenses)
+    .where(and(eq(officeExpenses.customCategoryId, parsed.id), isNull(officeExpenses.deletedAt)));
+  return { activeCount: row ? Number(row.count) : 0 };
+}
+
+const ReassignSchema = z
+  .object({
+    fromCategoryId: z.string().uuid(),
+    /** Move entries to another custom category… */
+    toCustomCategoryId: z.string().uuid().nullable().optional(),
+    /** …or to a built-in category (reimbursement excluded — different lifecycle). */
+    toCategory: CategoryEnum.exclude(['reimbursement']).nullable().optional(),
+  })
+  .refine((v) => !!v.toCustomCategoryId !== !!v.toCategory, {
+    message: 'Pick exactly one target: a custom category or a built-in one.',
+  });
+
+/**
+ * Bulk re-assign: move every entry of one custom category to another category
+ * (custom or built-in), reversing + reposting each posted entry whose debit
+ * account changes (asset-named categories post to 1510, the rest to their
+ * opex account). Trashed entries are re-pointed too (no ledger effect — their
+ * transactions were already reversed). After this the source category is
+ * empty and can be deleted.
+ */
+export async function reassignOfficeExpenseCategoryEntries(input: {
+  fromCategoryId: string;
+  toCustomCategoryId?: string | null;
+  toCategory?: string | null;
+}): Promise<{ moved: number; reposted: number }> {
+  const ctx = await getActorContext();
+  const parsed = ReassignSchema.parse(input);
+
+  if (parsed.toCustomCategoryId === parsed.fromCategoryId) {
+    throw new AppError('validation', 'Pick a different category to move the entries to.');
+  }
+
+  const [fromCat] = await db
+    .select({ id: officeExpenseCategories.id, name: officeExpenseCategories.name })
+    .from(officeExpenseCategories)
+    .where(eq(officeExpenseCategories.id, parsed.fromCategoryId))
+    .limit(1);
+  if (!fromCat) throw new AppError('not_found', 'Source category not found.');
+
+  let toCatName: string | null = null;
+  if (parsed.toCustomCategoryId) {
+    const [toCat] = await db
+      .select({ id: officeExpenseCategories.id, name: officeExpenseCategories.name })
+      .from(officeExpenseCategories)
+      .where(
+        and(
+          eq(officeExpenseCategories.id, parsed.toCustomCategoryId),
+          isNull(officeExpenseCategories.deletedAt),
+        ),
+      )
+      .limit(1);
+    if (!toCat) throw new AppError('not_found', 'Target category not found.');
+    toCatName = toCat.name;
+  }
+
+  // The debit account is a function of the category alone, so old/new resolve
+  // once for the whole batch (entries under a custom category are 'other').
+  const oldDebit = /asset/i.test(fromCat.name) ? '1510' : '6900';
+  const newDebit = parsed.toCustomCategoryId
+    ? /asset/i.test(toCatName ?? '') ? '1510' : '6900'
+    : opexAccountFor(parsed.toCategory as OfficeExpenseCategory);
+  const nextCategory = (
+    parsed.toCustomCategoryId ? 'other' : parsed.toCategory
+  ) as OfficeExpenseCategory;
+  const nextCustomId = parsed.toCustomCategoryId ?? null;
+
+  const rows = await db
+    .select()
+    .from(officeExpenses)
+    .where(eq(officeExpenses.customCategoryId, parsed.fromCategoryId));
+
+  let moved = 0;
+  let reposted = 0;
+  for (const row of rows) {
+    await db
+      .update(officeExpenses)
+      .set({ category: nextCategory, customCategoryId: nextCustomId, updatedBy: ctx.userId })
+      .where(eq(officeExpenses.id, row.id));
+    moved += 1;
+
+    // Live, posted, and the GL account moves → reverse + repost. Trashed rows
+    // were reversed at delete time and unposted rows have nothing to move.
+    if (row.deletedAt == null && row.transactionId && oldDebit !== newDebit) {
+      await reverseTransaction(ctx, {
+        transactionId: row.transactionId,
+        reason: `Category re-assigned — ${fromCat.name} → ${toCatName ?? nextCategory}: ${row.description}`.slice(0, 200),
+      });
+      const nextTxnId = await postExpenseToLedger(ctx, {
+        id: row.id,
+        category: nextCategory as OfficeExpenseCategory,
+        customCategoryId: nextCustomId,
+        description: row.description,
+        expenseDate: row.expenseDate,
+        amountPaise: row.amountPaise,
+        gstPaise: row.gstPaise,
+        notes: row.notes,
+      });
+      await db
+        .update(officeExpenses)
+        .set({ transactionId: nextTxnId })
+        .where(eq(officeExpenses.id, row.id));
+      reposted += 1;
+    }
+  }
+
+  await logAudit({
+    actorId: ctx.userId,
+    entityType: 'office_expense_category',
+    entityId: parsed.fromCategoryId,
+    action: 'update',
+    changes: {
+      reassigned_to: parsed.toCustomCategoryId ?? parsed.toCategory,
+      moved,
+      reposted,
+    },
+  });
+  return { moved, reposted };
 }
 
 /* -------------------------------------------------------------------------- */
