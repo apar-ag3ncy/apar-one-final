@@ -49,6 +49,7 @@ import {
   AccountStatementWindow,
   parseAccountStatementRoute,
 } from './apps/account-statement-window';
+import { AppLauncher } from './apps/app-launcher';
 import { AccountsOverviewWindow } from './apps/accounts-overview-window';
 import { TrialBalanceWindow } from './apps/trial-balance-window';
 import { BalanceSheetWindow } from './apps/balance-sheet-window';
@@ -645,11 +646,17 @@ function Desktop({ signOut }: { signOut: () => void }) {
           }
           // The 'ledger' and 'reports' apps use `entityId` as a routing key
           // (not an entity uuid lookup) — e.g. ledger 'office'/'client:<uuid>'
-          // and reports 'trial-balance'/'statement'/etc. Skip the
-          // resolveEntity path (which would fall back to "no longer
-          // available") — the switch below handles every report/ledger shape
-          // natively.
-          if (w.entityId && w.app !== 'ledger' && w.app !== 'reports') return renderDetail(w);
+          // and reports 'trial-balance'/'statement'/etc. The employees app
+          // additionally uses the 'directory' sentinel (launcher → team grid).
+          // Skip the resolveEntity path (which would fall back to "no longer
+          // available") — the switch below handles every routed shape natively.
+          if (
+            w.entityId &&
+            w.app !== 'ledger' &&
+            w.app !== 'reports' &&
+            !(w.app === 'employees' && w.entityId === 'directory')
+          )
+            return renderDetail(w);
           switch (w.app) {
             case 'clients':
               return (
@@ -681,19 +688,105 @@ function Desktop({ signOut }: { signOut: () => void }) {
                   />
                 </div>
               );
-            case 'employees':
-              // entityId branch is handled earlier by renderDetail() —
-              // when an employee row is clicked the UUID block in
-              // renderDetail() returns <EmployeeWindow>. This case
-              // covers only the no-entity team grid.
+            case 'employees': {
+              // UUID entityIds are handled earlier by renderDetail() →
+              // <EmployeeWindow>. 'directory' (set by the launcher) renders
+              // the team grid; a plain open shows the launcher so the user
+              // picks between the directory and Attendance.
+              if (w.entityId === 'directory') {
+                return (
+                  <div className="main">
+                    <EmployeesApp
+                      canEdit={can(user, 'employees', 'edit')}
+                      canDelete={can(user, 'employees', 'delete')}
+                    />
+                  </div>
+                );
+              }
+              const employeeOptions = [
+                can(user, 'employees', 'view')
+                  ? {
+                      app: 'employees' as const,
+                      entityId: 'directory',
+                      name: 'Team',
+                      desc: 'The employee directory — profiles, compensation, documents, projects.',
+                      icon: 'users' as const,
+                      accent: '#9B3826',
+                    }
+                  : null,
+                can(user, 'attendance', 'view')
+                  ? {
+                      app: 'attendance' as const,
+                      name: 'Attendance',
+                      desc: 'The day-by-day attendance matrix, leaves and holidays.',
+                      icon: 'check' as const,
+                      accent: '#2E8F5A',
+                    }
+                  : null,
+              ].filter((o) => o !== null);
               return (
-                <div className="main">
-                  <EmployeesApp
-                    canEdit={can(user, 'employees', 'edit')}
-                    canDelete={can(user, 'employees', 'delete')}
-                  />
-                </div>
+                <AppLauncher
+                  heading="Employees"
+                  sub="Pick where you're headed."
+                  options={employeeOptions}
+                  onPick={(o) => {
+                    openApp(o.app, { entityId: o.entityId, position: 'center' });
+                    osActions.closeWindow(w.id);
+                  }}
+                />
               );
+            }
+            case 'accounts': {
+              const accountOptions = [
+                can(user, 'clients', 'view')
+                  ? {
+                      app: 'clients' as const,
+                      name: 'Clients',
+                      desc: 'The client directory — invoices, receipts, projects, ledgers.',
+                      icon: 'building' as const,
+                      accent: '#E63A1F',
+                    }
+                  : null,
+                can(user, 'vendors', 'view')
+                  ? {
+                      app: 'vendors' as const,
+                      name: 'Vendors',
+                      desc: 'The vendor directory — bills, payments, TDS, ledgers.',
+                      icon: 'truck' as const,
+                      accent: '#C46A28',
+                    }
+                  : null,
+                can(user, 'ledger', 'view')
+                  ? {
+                      app: 'ledger' as const,
+                      name: 'Ledgers',
+                      desc: 'Every book — office cash & bank, per-client, per-vendor, TDS.',
+                      icon: 'book' as const,
+                      accent: '#5B6677',
+                    }
+                  : null,
+                can(user, 'reports', 'view')
+                  ? {
+                      app: 'reports' as const,
+                      name: 'Reports',
+                      desc: 'Accounts Overview, P&L, balance sheet, GST & TDS, registers.',
+                      icon: 'chart' as const,
+                      accent: '#2E8F5A',
+                    }
+                  : null,
+              ].filter((o) => o !== null);
+              return (
+                <AppLauncher
+                  heading="Accounts"
+                  sub="Pick where you're headed."
+                  options={accountOptions}
+                  onPick={(o) => {
+                    openApp(o.app, { entityId: o.entityId, position: 'center' });
+                    osActions.closeWindow(w.id);
+                  }}
+                />
+              );
+            }
             case 'attendance':
               return <AttendanceApp canEdit={can(user, 'attendance', 'edit')} />;
             case 'office':

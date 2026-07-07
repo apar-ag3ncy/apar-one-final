@@ -47,13 +47,13 @@ export type AppRegistryEntry = {
 export const APP_REGISTRY: Readonly<Record<AppId, AppRegistryEntry>> = {
   clients: {
     id: 'clients',
-    showInDock: true,
+    showInDock: false, // lives inside a launcher (Accounts)
     minimumCapability: 'app.clients.view',
     defaultSize: { width: 880, height: 580 },
   },
   vendors: {
     id: 'vendors',
-    showInDock: true,
+    showInDock: false, // lives inside a launcher (Accounts)
     minimumCapability: 'app.vendors.view',
     defaultSize: { width: 880, height: 560 },
   },
@@ -71,19 +71,25 @@ export const APP_REGISTRY: Readonly<Record<AppId, AppRegistryEntry>> = {
   },
   attendance: {
     id: 'attendance',
-    showInDock: true,
+    showInDock: false, // lives inside a launcher (Employees)
     minimumCapability: 'app.attendance.view',
     defaultSize: { width: 1180, height: 720 },
   },
+  accounts: {
+    id: 'accounts',
+    showInDock: true,
+    minimumCapability: 'app.ledger.view',
+    defaultSize: { width: 700, height: 460 },
+  },
   ledger: {
     id: 'ledger',
-    showInDock: true,
+    showInDock: false, // lives inside a launcher (Accounts)
     minimumCapability: 'app.ledger.view',
     defaultSize: { width: 1100, height: 680 },
   },
   reports: {
     id: 'reports',
-    showInDock: true,
+    showInDock: false, // lives inside a launcher (Accounts)
     minimumCapability: 'app.reports.view',
     defaultSize: { width: 1000, height: 620 },
   },

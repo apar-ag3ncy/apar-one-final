@@ -26,6 +26,16 @@ export const APPS: readonly AppDef[] = [
     size: { w: 1180, h: 720 },
     accent: '#2E8F5A',
   },
+  // Accounts — launcher shell for Clients / Vendors / Ledgers / Reports.
+  // The member apps keep their own ids and windows; only the dock entry is
+  // consolidated (they're hidden from the dock via APP_REGISTRY.showInDock).
+  {
+    id: 'accounts',
+    name: 'Accounts',
+    icon: 'book',
+    size: { w: 700, h: 460 },
+    accent: '#5B6677',
+  },
   { id: 'ledger', name: 'Ledger', icon: 'book', size: { w: 920, h: 580 }, accent: '#5B6677' },
   { id: 'reports', name: 'Reports', icon: 'chart', size: { w: 1000, h: 620 }, accent: '#2E8F5A' },
   { id: 'office', name: 'Office', icon: 'zap', size: { w: 1100, h: 700 }, accent: '#C46A28' },
