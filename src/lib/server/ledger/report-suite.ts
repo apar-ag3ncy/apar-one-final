@@ -364,7 +364,13 @@ async function fetchRegister(args: {
     JOIN accounts a ON a.id = p.account_id
     ${partyJoin}
     LEFT JOIN projects pr ON pr.id = t.project_id
-    WHERE t.kind = ${args.kind} AND t.status = 'posted' AND ${notReversed(args.includeReversed)}
+    WHERE t.kind = ${args.kind}
+      -- Drafts are INCLUDED (with their status shown) so a freshly-recorded
+      -- bill/invoice is visible immediately — same decision the ledger
+      -- statements made: "I just entered it but the register is empty" reads
+      -- as a bug. Reversed pairs stay excluded.
+      AND t.status IN ('draft', 'posted')
+      AND ${notReversed(args.includeReversed)}
       AND t.txn_date >= ${args.from}::date AND t.txn_date <= ${args.to}::date
     GROUP BY t.id, t.txn_date, t.external_ref, t.kind, t.status, party.name, pr.name
     ORDER BY t.txn_date ASC, t.created_at ASC

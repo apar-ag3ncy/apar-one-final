@@ -119,6 +119,15 @@ function RegisterWindow({
                 </td>
                 <td style={{ fontFamily: 'var(--font-jetbrains-mono, monospace)', fontSize: 11.5 }}>
                   {r.documentNumber}
+                  {r.status !== 'posted' ? (
+                    <span
+                      className="pill amber"
+                      style={{ marginLeft: 8, fontSize: 9.5, padding: '1px 7px' }}
+                      title="Recorded but not posted to the books yet — post it from the Bills/Invoices tab."
+                    >
+                      Draft
+                    </span>
+                  ) : null}
                 </td>
                 <td>{r.partyName ?? '—'}</td>
                 <td style={{ color: 'var(--text-muted)' }}>{r.projectName ?? '—'}</td>
