@@ -2230,7 +2230,115 @@ type ImportPreview = {
   rows: ImportOfficeExpenseRow[];
   warnings: Array<{ row: number; message: string }>;
   skipped: number;
+  /** Which sheets contributed the rows — for the summary line. */
+  sheets: string[];
 };
+
+type SheetParseResult =
+  | {
+      ok: true;
+      rows: ImportOfficeExpenseRow[];
+      warnings: Array<{ row: number; message: string }>;
+      skipped: number;
+    }
+  | { ok: false; error: string };
+
+/**
+ * Parse ONE worksheet into importable office-expense rows. Headers are matched
+ * by case-insensitive alias; unreadable rows become warnings, not failures. A
+ * sheet with no header / no Name / no amount column returns { ok:false } so a
+ * multi-sheet import can skip it and carry on with the rest.
+ */
+function parseSheetRows(ws: XLSX.WorkSheet): SheetParseResult {
+  const aoa = XLSX.utils.sheet_to_json<unknown[]>(ws, {
+    header: 1,
+    raw: false,
+    defval: '',
+    blankrows: false,
+  });
+  if (aoa.length < 2) return { ok: false, error: 'no data rows under a header' };
+
+  const headers = (aoa[0] as unknown[]).map((h) => normaliseImportHeader(String(h ?? '')));
+  const colIndex = {} as Record<ImportColumnKey, number>;
+  for (const key of Object.keys(IMPORT_COLUMN_ALIASES) as ImportColumnKey[]) {
+    colIndex[key] = firstImportHeaderIndex(headers, IMPORT_COLUMN_ALIASES[key]);
+  }
+  if (colIndex.name === -1) return { ok: false, error: 'no “Name”/“Description” column' };
+  if (colIndex.total === -1 && colIndex.subTotal === -1) {
+    return { ok: false, error: 'no “Total”/“Sub Total” amount column' };
+  }
+
+  const cell = (row: unknown[], key: ImportColumnKey): string => {
+    const idx = colIndex[key];
+    if (idx === -1) return '';
+    return String(row[idx] ?? '').trim();
+  };
+  const rawCell = (row: unknown[], key: ImportColumnKey): unknown => {
+    const idx = colIndex[key];
+    if (idx === -1) return '';
+    return row[idx];
+  };
+
+  const rows: ImportOfficeExpenseRow[] = [];
+  const warnings: Array<{ row: number; message: string }> = [];
+  let skipped = 0;
+
+  for (let i = 1; i < aoa.length; i++) {
+    const row = aoa[i] as unknown[];
+    if (row.every((c) => String(c ?? '').trim() === '')) {
+      skipped += 1;
+      continue;
+    }
+    const rowNo = i + 1; // 1-based, header = row 1
+
+    const description = cell(row, 'name');
+    if (!description) {
+      warnings.push({ row: rowNo, message: 'No Name/Description — skipped.' });
+      skipped += 1;
+      continue;
+    }
+
+    const isoDate = parseImportDate(rawCell(row, 'date'));
+    if (!isoDate) {
+      warnings.push({ row: rowNo, message: `Unreadable date "${cell(row, 'date')}" — skipped.` });
+      skipped += 1;
+      continue;
+    }
+
+    const totalStr = cell(row, 'total') || cell(row, 'subTotal');
+    const amountPaise = parseRupeesToPaise(totalStr.replace(/\s+/g, ''));
+    if (amountPaise === null || amountPaise <= 0n) {
+      warnings.push({ row: rowNo, message: `Unreadable amount "${totalStr}" — skipped.` });
+      skipped += 1;
+      continue;
+    }
+
+    const invoiceNo = cell(row, 'invoiceNo');
+    const serialNo = cell(row, 'serialNo');
+    const referenceNumber = invoiceNo || serialNo || null;
+
+    const noteParts: string[] = [];
+    const approval = cell(row, 'approval');
+    if (approval) noteParts.push(`Approved by: ${approval}`);
+    if (serialNo && referenceNumber !== serialNo) noteParts.push(`Serial: ${serialNo}`);
+    const unit = cell(row, 'unit');
+    const perUnit = cell(row, 'perUnit');
+    if (unit) noteParts.push(`Qty: ${unit}`);
+    if (perUnit) noteParts.push(`Per unit: ${perUnit}`);
+
+    rows.push({
+      expenseDate: isoDate,
+      description,
+      categoryName: cell(row, 'category') || null,
+      amountPaise,
+      paymentMethod: parseImportPaymentMode(cell(row, 'paymentMode')),
+      referenceNumber,
+      notes: noteParts.length > 0 ? noteParts.join(' · ') : null,
+    });
+  }
+
+  return { ok: true, rows, warnings, skipped };
+}
 
 /**
  * Bulk-import office expenses from an Excel / CSV sheet. Parses client-side with
@@ -2247,22 +2355,76 @@ function ImportOfficeExpensesModal({
   onImported: () => void;
 }) {
   const [file, setFile] = useState<File | null>(null);
+  // Parse every sheet once on upload; toggling the picker just recombines
+  // these cached results instead of re-reading the file each time.
+  const [sheetInfos, setSheetInfos] = useState<
+    readonly { name: string; result: SheetParseResult; count: number }[]
+  >([]);
+  const [selectedSheets, setSelectedSheets] = useState<readonly string[]>([]);
   const [preview, setPreview] = useState<ImportPreview | null>(null);
   const [parsing, setParsing] = useState(false);
   const [committing, setCommitting] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
+  // Show the sheet picker only when the workbook has more than one sheet.
+  const multiSheet = sheetInfos.length > 1;
+
   function reset() {
     setFile(null);
+    setSheetInfos([]);
+    setSelectedSheets([]);
     setPreview(null);
     setErr(null);
     if (fileInputRef.current) fileInputRef.current.value = '';
   }
 
+  /** Combine the cached rows of every selected sheet into one preview. */
+  function buildPreview(
+    infos: readonly { name: string; result: SheetParseResult; count: number }[],
+    selected: ReadonlySet<string>,
+  ) {
+    const multi = infos.length > 1;
+    const rows: ImportOfficeExpenseRow[] = [];
+    const warnings: Array<{ row: number; message: string }> = [];
+    let skipped = 0;
+    const sheets: string[] = [];
+    for (const info of infos) {
+      if (!selected.has(info.name)) continue;
+      if (!info.result.ok) {
+        warnings.push({ row: 0, message: `Sheet “${info.name}” skipped — ${info.result.error}.` });
+        continue;
+      }
+      sheets.push(info.name);
+      rows.push(...info.result.rows);
+      skipped += info.result.skipped;
+      for (const w of info.result.warnings) {
+        warnings.push({
+          row: w.row,
+          message: multi ? `Sheet “${info.name}” · ${w.message}` : w.message,
+        });
+      }
+    }
+    setPreview({ rows, warnings, skipped, sheets });
+  }
+
+  function applySelection(next: readonly string[]) {
+    setSelectedSheets(next);
+    buildPreview(sheetInfos, new Set(next));
+  }
+  function toggleSheet(name: string) {
+    applySelection(
+      selectedSheets.includes(name)
+        ? selectedSheets.filter((n) => n !== name)
+        : [...selectedSheets, name],
+    );
+  }
+
   async function handleFile(selected: File) {
     setErr(null);
     setPreview(null);
+    setSheetInfos([]);
+    setSelectedSheets([]);
     if (!/\.(xlsx|xls|csv)$/i.test(selected.name)) {
       setErr('Pick an Excel (.xlsx, .xls) or CSV file.');
       setFile(null);
@@ -2275,118 +2437,32 @@ function ImportOfficeExpensesModal({
         type: 'array',
         cellDates: true,
       });
-      const sheetName = wb.SheetNames[0];
-      if (!sheetName) throw new Error('The workbook has no sheets.');
-      const ws = wb.Sheets[sheetName]!;
-      const aoa = XLSX.utils.sheet_to_json<unknown[]>(ws, {
-        header: 1,
-        raw: false,
-        defval: '',
-        blankrows: false,
+      if (wb.SheetNames.length === 0) throw new Error('The workbook has no sheets.');
+      const infos = wb.SheetNames.map((name) => {
+        const ws = wb.Sheets[name];
+        const result: SheetParseResult = ws
+          ? parseSheetRows(ws)
+          : { ok: false, error: 'the sheet is empty' };
+        return { name, result, count: result.ok ? result.rows.length : 0 };
       });
-      if (aoa.length < 2) {
-        throw new Error('The sheet has no data rows under the header.');
-      }
+      setSheetInfos(infos);
 
-      const headers = (aoa[0] as unknown[]).map((h) => normaliseImportHeader(String(h ?? '')));
-      const colIndex = {} as Record<ImportColumnKey, number>;
-      for (const key of Object.keys(IMPORT_COLUMN_ALIASES) as ImportColumnKey[]) {
-        colIndex[key] = firstImportHeaderIndex(headers, IMPORT_COLUMN_ALIASES[key]);
-      }
-      if (colIndex.name === -1) {
-        throw new Error(
-          'Could not find a "Name" / "Description" column. Download the template and keep the header row.',
-        );
-      }
-      if (colIndex.total === -1 && colIndex.subTotal === -1) {
-        throw new Error('Could not find a "Total" (or "Sub Total") amount column.');
-      }
-
-      const cell = (row: unknown[], key: ImportColumnKey): string => {
-        const idx = colIndex[key];
-        if (idx === -1) return '';
-        return String(row[idx] ?? '').trim();
-      };
-      const rawCell = (row: unknown[], key: ImportColumnKey): unknown => {
-        const idx = colIndex[key];
-        if (idx === -1) return '';
-        return row[idx];
-      };
-
-      const rows: ImportOfficeExpenseRow[] = [];
-      const warnings: Array<{ row: number; message: string }> = [];
-      let skipped = 0;
-
-      for (let i = 1; i < aoa.length; i++) {
-        const row = aoa[i] as unknown[];
-        // Skip fully-blank rows.
-        if (row.every((c) => String(c ?? '').trim() === '')) {
-          skipped += 1;
-          continue;
+      const importable = infos.filter((i) => i.result.ok && i.count > 0);
+      if (importable.length === 0) {
+        if (infos.length === 1 && !infos[0]!.result.ok) {
+          throw new Error(`This sheet can’t be imported — ${infos[0]!.result.error}.`);
         }
-        const rowNo = i + 1; // 1-based, header = row 1
-
-        const description = cell(row, 'name');
-        if (!description) {
-          warnings.push({ row: rowNo, message: 'No Name/Description — skipped.' });
-          skipped += 1;
-          continue;
-        }
-
-        const isoDate = parseImportDate(rawCell(row, 'date'));
-        if (!isoDate) {
-          warnings.push({ row: rowNo, message: `Unreadable date "${cell(row, 'date')}" — skipped.` });
-          skipped += 1;
-          continue;
-        }
-
-        // Amount → prefer Total, fall back to Sub Total. Strip spaces so
-        // "₹ 35, 500.00" / "35 500" still parse (parseRupeesToPaise already
-        // handles a leading ₹ and commas).
-        const totalStr = cell(row, 'total') || cell(row, 'subTotal');
-        const amountPaise = parseRupeesToPaise(totalStr.replace(/\s+/g, ''));
-        if (amountPaise === null || amountPaise <= 0n) {
-          warnings.push({
-            row: rowNo,
-            message: `Unreadable amount "${totalStr}" — skipped.`,
-          });
-          skipped += 1;
-          continue;
-        }
-
-        // Reference: prefer Invoice No; keep Serial No in notes when both exist.
-        const invoiceNo = cell(row, 'invoiceNo');
-        const serialNo = cell(row, 'serialNo');
-        const referenceNumber = invoiceNo || serialNo || null;
-
-        const noteParts: string[] = [];
-        const approval = cell(row, 'approval');
-        if (approval) noteParts.push(`Approved by: ${approval}`);
-        // Serial No goes to notes when it wasn't used as the reference.
-        if (serialNo && referenceNumber !== serialNo) noteParts.push(`Serial: ${serialNo}`);
-        const unit = cell(row, 'unit');
-        const perUnit = cell(row, 'perUnit');
-        if (unit) noteParts.push(`Qty: ${unit}`);
-        if (perUnit) noteParts.push(`Per unit: ${perUnit}`);
-
-        rows.push({
-          expenseDate: isoDate,
-          description,
-          categoryName: cell(row, 'category') || null,
-          amountPaise,
-          paymentMethod: parseImportPaymentMode(cell(row, 'paymentMode')),
-          referenceNumber,
-          notes: noteParts.length > 0 ? noteParts.join(' · ') : null,
-        });
+        throw new Error('No sheet has importable rows — check the date and amount columns.');
       }
-
-      if (rows.length === 0) {
-        throw new Error('No importable rows were found — check the date and amount columns.');
-      }
-      setPreview({ rows, warnings, skipped });
+      // Default: import every sheet that has rows; the picker (multi-sheet
+      // only) lets the user narrow it down.
+      const defaultSel = importable.map((i) => i.name);
+      setSelectedSheets(defaultSel);
+      buildPreview(infos, new Set(defaultSel));
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Could not read the file.');
       setPreview(null);
+      setSheetInfos([]);
     } finally {
       setParsing(false);
     }
@@ -2493,6 +2569,8 @@ function ImportOfficeExpensesModal({
           Upload an Excel (.xlsx, .xls) or CSV sheet. Columns are matched by name
           — a header row is required. Amounts are read from <strong>Total</strong>{' '}
           (falling back to <strong>Sub Total</strong>); each row is captured as-is.
+          If the workbook has more than one sheet, choose which ones to import —
+          they&apos;re all brought in together.
         </div>
 
         <div style={{ gridColumn: '1 / -1', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -2532,6 +2610,85 @@ function ImportOfficeExpensesModal({
           )}
         </div>
 
+        {multiSheet && (
+          <div
+            style={{
+              gridColumn: '1 / -1',
+              border: '1px solid var(--border)',
+              borderRadius: 8,
+              padding: '10px 12px',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <strong style={{ fontSize: 12.5 }}>Which sheets should be imported?</strong>
+              <div style={{ flex: 1 }} />
+              <button
+                type="button"
+                className="btn"
+                style={{ padding: '2px 8px', fontSize: 11.5 }}
+                onClick={() =>
+                  applySelection(
+                    sheetInfos.filter((i) => i.result.ok && i.count > 0).map((i) => i.name),
+                  )
+                }
+              >
+                All
+              </button>
+              <button
+                type="button"
+                className="btn"
+                style={{ padding: '2px 8px', fontSize: 11.5 }}
+                onClick={() => applySelection([])}
+              >
+                None
+              </button>
+            </div>
+            <div
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 2,
+                marginTop: 8,
+                maxHeight: 168,
+                overflow: 'auto',
+              }}
+            >
+              {sheetInfos.map((info) => {
+                const importable = info.result.ok && info.count > 0;
+                return (
+                  <label
+                    key={info.name}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 9,
+                      padding: '5px 4px',
+                      fontSize: 12.5,
+                      opacity: importable ? 1 : 0.55,
+                      cursor: importable ? 'pointer' : 'not-allowed',
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedSheets.includes(info.name)}
+                      disabled={!importable}
+                      onChange={() => toggleSheet(info.name)}
+                    />
+                    <span style={{ fontWeight: 600 }}>{info.name}</span>
+                    <span style={{ color: 'var(--text-muted)', fontSize: 11.5 }}>
+                      {importable
+                        ? `${info.count} row${info.count === 1 ? '' : 's'}`
+                        : info.result.ok
+                          ? 'no rows'
+                          : `can’t import — ${info.result.error}`}
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         {preview && (
           <>
             <div
@@ -2546,6 +2703,11 @@ function ImportOfficeExpensesModal({
               }}
             >
               <strong>{rowCount}</strong> row{rowCount === 1 ? '' : 's'} ready to import
+              {multiSheet && preview.sheets.length > 0 && (
+                <span style={{ color: 'var(--text-muted)' }}>
+                  · from {preview.sheets.length} sheet{preview.sheets.length === 1 ? '' : 's'}
+                </span>
+              )}
               {preview.skipped > 0 && (
                 <span style={{ color: 'var(--text-muted)' }}>
                   · {preview.skipped} skipped
