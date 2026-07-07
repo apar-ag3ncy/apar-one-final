@@ -1,8 +1,10 @@
 'use server';
 
-import { and, asc, desc, eq, isNull, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, isNotNull, isNull, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 
+import { logActivity } from '@/lib/activity';
+import { logAudit } from '@/lib/audit';
 import { db } from '@/lib/db/client';
 import {
   bankAccounts,
@@ -48,6 +50,12 @@ function dayBeforeIso(iso: string): string {
   const d = new Date(`${iso}T00:00:00Z`);
   d.setUTCDate(d.getUTCDate() - 1);
   return d.toISOString().slice(0, 10);
+}
+
+/** "₹35,000" from a paise bigint — for human-readable activity summaries. */
+function inr(paise: bigint | null): string {
+  if (paise == null) return 'in-kind';
+  return `₹${(Number(paise) / 100).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
 }
 
 const BonusKindEnum = z.enum(['bonus', 'perk_cash', 'perk_inkind', 'gift', 'award']);
@@ -144,6 +152,109 @@ export async function listEmployeeBonuses(employeeId: string): Promise<readonly 
     description: r.description,
     taxable: r.taxable,
   }));
+}
+
+/**
+ * Delete a bonus / perk into the Trash. Bonuses don't post to the ledger yet;
+ * if one ever carries a transaction link it is reversed first.
+ */
+export async function deleteBonusOrPerk(input: { id: string }): Promise<void> {
+  const ctx = await getActorContext();
+  requireCapability(ctx, 'record_bonus_or_perk');
+  const parsed = z.object({ id: z.string().uuid() }).parse(input);
+
+  const [row] = await db
+    .select()
+    .from(bonusesAndPerks)
+    .where(and(eq(bonusesAndPerks.id, parsed.id), isNull(bonusesAndPerks.deletedAt)))
+    .limit(1);
+  if (!row) throw new AppError('not_found', 'Bonus not found.');
+
+  if (row.transactionId) {
+    requireCapability(ctx, 'reverse_transaction');
+    await reverseTransaction(ctx, {
+      transactionId: row.transactionId,
+      reason: `Bonus deleted — ${row.description}`.slice(0, 200),
+    });
+  }
+  await db
+    .update(bonusesAndPerks)
+    // Null the link if we reversed it — a restored bonus must not point at a
+    // reversed transaction as if it were still in force.
+    .set({ deletedAt: new Date(), transactionId: null, updatedBy: ctx.userId })
+    .where(eq(bonusesAndPerks.id, row.id));
+
+  await logAudit({
+    actorId: ctx.userId,
+    entityType: 'bonus',
+    entityId: row.id,
+    action: 'delete',
+    changes: { soft_delete: true, kind: row.kind, description: row.description },
+  });
+  await logActivity({
+    entityType: 'employee',
+    entityId: row.employeeId,
+    actorId: ctx.userId,
+    kind: 'bonus.deleted',
+    summary: `${row.kind === 'bonus' ? 'Bonus' : 'Perk'} "${row.description}" (${inr(row.amountPaise)}) moved to Trash`,
+  });
+}
+
+/** Restore a trashed bonus / perk (capture row only — bonuses don't post yet). */
+export async function restoreBonusOrPerk(input: { id: string }): Promise<void> {
+  const ctx = await getActorContext();
+  requireCapability(ctx, 'record_bonus_or_perk');
+  const parsed = z.object({ id: z.string().uuid() }).parse(input);
+
+  const [row] = await db
+    .select()
+    .from(bonusesAndPerks)
+    .where(and(eq(bonusesAndPerks.id, parsed.id), isNotNull(bonusesAndPerks.deletedAt)))
+    .limit(1);
+  if (!row) throw new AppError('not_found', 'Bonus not found in the Trash.');
+
+  await db
+    .update(bonusesAndPerks)
+    .set({ deletedAt: null, updatedBy: ctx.userId })
+    .where(eq(bonusesAndPerks.id, row.id));
+
+  await logAudit({
+    actorId: ctx.userId,
+    entityType: 'bonus',
+    entityId: row.id,
+    action: 'update',
+    changes: { restore: true },
+  });
+  await logActivity({
+    entityType: 'employee',
+    entityId: row.employeeId,
+    actorId: ctx.userId,
+    kind: 'bonus.restored',
+    summary: `${row.kind === 'bonus' ? 'Bonus' : 'Perk'} "${row.description}" (${inr(row.amountPaise)}) restored from Trash`,
+  });
+}
+
+/** Hard-delete a trashed bonus / perk. */
+export async function permanentlyDeleteBonusOrPerk(input: { id: string }): Promise<void> {
+  const ctx = await getActorContext();
+  requireCapability(ctx, 'record_bonus_or_perk');
+  const parsed = z.object({ id: z.string().uuid() }).parse(input);
+
+  const [row] = await db
+    .select({ id: bonusesAndPerks.id, description: bonusesAndPerks.description })
+    .from(bonusesAndPerks)
+    .where(and(eq(bonusesAndPerks.id, parsed.id), isNotNull(bonusesAndPerks.deletedAt)))
+    .limit(1);
+  if (!row) throw new AppError('not_found', 'Bonus not found in the Trash.');
+
+  await db.delete(bonusesAndPerks).where(eq(bonusesAndPerks.id, row.id));
+  await logAudit({
+    actorId: ctx.userId,
+    entityType: 'bonus',
+    entityId: row.id,
+    action: 'delete',
+    changes: { permanent: true, description: row.description },
+  });
 }
 
 /* -------------------------------------------------------------------------- */
@@ -455,6 +566,26 @@ export async function createSalaryStructure(
   requireCapability(ctx, 'manage_salary_structures');
   const parsed = CreateSalaryStructureSchema.parse(input);
 
+  // A second version starting the SAME day would overlap (the close below
+  // only clips versions that began earlier) — refuse up front.
+  const [sameFrom] = await db
+    .select({ id: salaryStructures.id })
+    .from(salaryStructures)
+    .where(
+      and(
+        eq(salaryStructures.employeeId, parsed.employeeId),
+        isNull(salaryStructures.deletedAt),
+        sql`${salaryStructures.effectiveFrom} = ${parsed.effectiveFrom}::date`,
+      ),
+    )
+    .limit(1);
+  if (sameFrom) {
+    throw new AppError(
+      'validation',
+      `A salary update already starts on ${parsed.effectiveFrom} — delete it first or pick another date.`,
+    );
+  }
+
   const newId = await db.transaction(async (tx) => {
     // Close prior structures that STARTED BEFORE this one and still cover its
     // start (open, or ending on/after it), setting their effective_to to the
@@ -530,6 +661,179 @@ export async function createSalaryStructure(
   });
 
   return { id: newId };
+}
+
+/**
+ * Delete a salary update (structure version) into the Trash. If the version
+ * immediately before it was clipped to end the day before this one started,
+ * that prior version is re-extended to cover the gap — deleting a wrong
+ * update puts the previous salary back in force.
+ */
+export async function deleteSalaryStructure(input: { id: string }): Promise<void> {
+  const ctx = await getActorContext();
+  requireCapability(ctx, 'manage_salary_structures');
+  const parsed = z.object({ id: z.string().uuid() }).parse(input);
+
+  const [row] = await db
+    .select()
+    .from(salaryStructures)
+    .where(and(eq(salaryStructures.id, parsed.id), isNull(salaryStructures.deletedAt)))
+    .limit(1);
+  if (!row) throw new AppError('not_found', 'Salary update not found.');
+
+  await db.transaction(async (tx) => {
+    // Heal the chain: the version createSalaryStructure clipped to the day
+    // before this one (if any) takes over this version's span again.
+    await tx
+      .update(salaryStructures)
+      .set({ effectiveTo: row.effectiveTo, updatedBy: ctx.userId })
+      .where(
+        and(
+          eq(salaryStructures.employeeId, row.employeeId),
+          isNull(salaryStructures.deletedAt),
+          sql`${salaryStructures.effectiveTo} = (${row.effectiveFrom}::date - INTERVAL '1 day')::date`,
+        ),
+      );
+    await tx
+      .update(salaryStructures)
+      .set({ deletedAt: new Date(), updatedBy: ctx.userId })
+      .where(eq(salaryStructures.id, row.id));
+  });
+
+  await logAudit({
+    actorId: ctx.userId,
+    entityType: 'salary_structure',
+    entityId: row.id,
+    action: 'delete',
+    changes: { soft_delete: true, effectiveFrom: row.effectiveFrom, ctcMonthlyPaise: String(row.ctcMonthlyPaise) },
+  });
+  await logActivity({
+    entityType: 'employee',
+    entityId: row.employeeId,
+    actorId: ctx.userId,
+    kind: 'salary_structure.deleted',
+    summary: `Salary update effective ${row.effectiveFrom} (CTC ${inr(row.ctcMonthlyPaise)}) moved to Trash`,
+  });
+}
+
+/**
+ * Restore a trashed salary update. Re-applies the same overlap rules as
+ * createSalaryStructure: earlier versions covering its start get clipped to
+ * the day before, and the restored version is bounded by the next later one.
+ */
+export async function restoreSalaryStructure(input: { id: string }): Promise<void> {
+  const ctx = await getActorContext();
+  requireCapability(ctx, 'manage_salary_structures');
+  const parsed = z.object({ id: z.string().uuid() }).parse(input);
+
+  const [row] = await db
+    .select()
+    .from(salaryStructures)
+    .where(and(eq(salaryStructures.id, parsed.id), isNotNull(salaryStructures.deletedAt)))
+    .limit(1);
+  if (!row) throw new AppError('not_found', 'Salary update not found in the Trash.');
+
+  // An active version with the SAME start date would overlap the restored one
+  // (the clip below only closes versions that began earlier) — refuse instead
+  // of leaving payroll with two structures in force for the same span.
+  const [sameFrom] = await db
+    .select({ id: salaryStructures.id })
+    .from(salaryStructures)
+    .where(
+      and(
+        eq(salaryStructures.employeeId, row.employeeId),
+        isNull(salaryStructures.deletedAt),
+        sql`${salaryStructures.effectiveFrom} = ${row.effectiveFrom}::date`,
+      ),
+    )
+    .limit(1);
+  if (sameFrom) {
+    throw new AppError(
+      'validation',
+      `A salary update effective ${row.effectiveFrom} already exists — delete it first to restore this one.`,
+    );
+  }
+
+  await db.transaction(async (tx) => {
+    // Clip earlier active versions that cover this one's start (same guard as
+    // createSalaryStructure — only versions that began earlier get closed).
+    await tx
+      .update(salaryStructures)
+      .set({
+        effectiveTo: sql`(${row.effectiveFrom}::date - INTERVAL '1 day')::date`,
+        updatedBy: ctx.userId,
+      })
+      .where(
+        and(
+          eq(salaryStructures.employeeId, row.employeeId),
+          isNull(salaryStructures.deletedAt),
+          sql`${salaryStructures.effectiveFrom} < ${row.effectiveFrom}::date`,
+          or(
+            isNull(salaryStructures.effectiveTo),
+            sql`${salaryStructures.effectiveTo} >= ${row.effectiveFrom}::date`,
+          ),
+        ),
+      );
+    // Bound the restored version against the next later active version.
+    const [laterStruct] = await tx
+      .select({ effectiveFrom: salaryStructures.effectiveFrom })
+      .from(salaryStructures)
+      .where(
+        and(
+          eq(salaryStructures.employeeId, row.employeeId),
+          isNull(salaryStructures.deletedAt),
+          sql`${salaryStructures.effectiveFrom} > ${row.effectiveFrom}::date`,
+        ),
+      )
+      .orderBy(asc(salaryStructures.effectiveFrom))
+      .limit(1);
+    await tx
+      .update(salaryStructures)
+      .set({
+        deletedAt: null,
+        effectiveTo: laterStruct ? dayBeforeIso(laterStruct.effectiveFrom) : null,
+        updatedBy: ctx.userId,
+      })
+      .where(eq(salaryStructures.id, row.id));
+  });
+
+  await logAudit({
+    actorId: ctx.userId,
+    entityType: 'salary_structure',
+    entityId: row.id,
+    action: 'update',
+    changes: { restore: true },
+  });
+  await logActivity({
+    entityType: 'employee',
+    entityId: row.employeeId,
+    actorId: ctx.userId,
+    kind: 'salary_structure.restored',
+    summary: `Salary update effective ${row.effectiveFrom} (CTC ${inr(row.ctcMonthlyPaise)}) restored from Trash`,
+  });
+}
+
+/** Hard-delete a trashed salary update (versioning was already healed on delete). */
+export async function permanentlyDeleteSalaryStructure(input: { id: string }): Promise<void> {
+  const ctx = await getActorContext();
+  requireCapability(ctx, 'manage_salary_structures');
+  const parsed = z.object({ id: z.string().uuid() }).parse(input);
+
+  const [row] = await db
+    .select({ id: salaryStructures.id, effectiveFrom: salaryStructures.effectiveFrom })
+    .from(salaryStructures)
+    .where(and(eq(salaryStructures.id, parsed.id), isNotNull(salaryStructures.deletedAt)))
+    .limit(1);
+  if (!row) throw new AppError('not_found', 'Salary update not found in the Trash.');
+
+  await db.delete(salaryStructures).where(eq(salaryStructures.id, row.id));
+  await logAudit({
+    actorId: ctx.userId,
+    entityType: 'salary_structure',
+    entityId: row.id,
+    action: 'delete',
+    changes: { permanent: true, effectiveFrom: row.effectiveFrom },
+  });
 }
 
 /* -------------------------------------------------------------------------- */
@@ -668,7 +972,13 @@ export async function deleteSalaryPayment(id: string): Promise<void> {
   const ctx = await getActorContext();
   requireCapability(ctx, 'manage_salary_structures');
   const [row] = await db
-    .select({ id: salaryPayments.id, transactionId: salaryPayments.transactionId })
+    .select({
+      id: salaryPayments.id,
+      employeeId: salaryPayments.employeeId,
+      paidOn: salaryPayments.paidOn,
+      amountPaise: salaryPayments.amountPaise,
+      transactionId: salaryPayments.transactionId,
+    })
     .from(salaryPayments)
     .where(and(eq(salaryPayments.id, id), isNull(salaryPayments.deletedAt)))
     .limit(1);
@@ -684,6 +994,115 @@ export async function deleteSalaryPayment(id: string): Promise<void> {
     .update(salaryPayments)
     .set({ deletedAt: new Date(), updatedBy: ctx.userId })
     .where(eq(salaryPayments.id, id));
+
+  await logAudit({
+    actorId: ctx.userId,
+    entityType: 'salary_payment',
+    entityId: row.id,
+    action: 'delete',
+    changes: { soft_delete: true, reversed: !!row.transactionId, amountPaise: String(row.amountPaise), paidOn: row.paidOn },
+  });
+  // Activity tab entry (30-day retention) — the user-visible deletion log.
+  await logActivity({
+    entityType: 'employee',
+    entityId: row.employeeId,
+    actorId: ctx.userId,
+    kind: 'salary_payment.deleted',
+    summary: `Salary payment of ${inr(row.amountPaise)} (paid ${row.paidOn}) moved to Trash`,
+  });
+}
+
+/**
+ * Bring a trashed salary payment back: clear the soft delete and RE-POST the
+ * disbursement (the delete reversed the original transaction, so restore posts
+ * a fresh one and relinks it). The office balance and per-employee book both
+ * pick the amount back up.
+ */
+export async function restoreSalaryPayment(input: { id: string }): Promise<void> {
+  const ctx = await getActorContext();
+  requireCapability(ctx, 'manage_salary_structures');
+  requireCapability(ctx, 'post_transaction');
+  const parsed = z.object({ id: z.string().uuid() }).parse(input);
+
+  const [row] = await db
+    .select()
+    .from(salaryPayments)
+    .where(and(eq(salaryPayments.id, parsed.id), isNotNull(salaryPayments.deletedAt)))
+    .limit(1);
+  if (!row) throw new AppError('not_found', 'Salary payment not found in the Trash.');
+
+  const mode = row.paymentMethod === 'bank' ? ('bank' as const) : ('cash' as const);
+  // The bank account FK is ON DELETE SET NULL — restoring a bank payment whose
+  // account is gone would silently fall back to crediting office cash. Refuse
+  // with a clear message instead.
+  if (mode === 'bank' && !row.bankAccountId) {
+    throw new AppError(
+      'validation',
+      'This payment was made from a bank account that no longer exists. Record it afresh instead of restoring.',
+    );
+  }
+  const externalRef = `SAL-${row.paidOn}-${row.employeeId.slice(0, 8)}-${Date.now()}`;
+  const { transactionId } = await createDraftTransaction(ctx, {
+    kind: 'salary_disbursement',
+    input: {
+      employeeId: row.employeeId,
+      amountPaise: row.amountPaise,
+      mode,
+      bankAccountId: mode === 'bank' ? row.bankAccountId : null,
+      txnDate: row.paidOn,
+      externalRef,
+      notes: row.notes,
+    },
+  });
+  await postTransaction(ctx, { transactionId });
+
+  await db
+    .update(salaryPayments)
+    .set({ deletedAt: null, transactionId, updatedBy: ctx.userId })
+    .where(eq(salaryPayments.id, row.id));
+
+  await logAudit({
+    actorId: ctx.userId,
+    entityType: 'salary_payment',
+    entityId: row.id,
+    action: 'update',
+    changes: { restore: true, repostedTransactionId: transactionId },
+  });
+  await logActivity({
+    entityType: 'employee',
+    entityId: row.employeeId,
+    actorId: ctx.userId,
+    kind: 'salary_payment.restored',
+    summary: `Salary payment of ${inr(row.amountPaise)} (paid ${row.paidOn}) restored from Trash`,
+  });
+}
+
+/** Hard-delete a trashed salary payment (its ledger effect was already reversed on delete). */
+export async function permanentlyDeleteSalaryPayment(input: { id: string }): Promise<void> {
+  const ctx = await getActorContext();
+  requireCapability(ctx, 'manage_salary_structures');
+  const parsed = z.object({ id: z.string().uuid() }).parse(input);
+
+  const [row] = await db
+    .select({
+      id: salaryPayments.id,
+      employeeId: salaryPayments.employeeId,
+      paidOn: salaryPayments.paidOn,
+      amountPaise: salaryPayments.amountPaise,
+    })
+    .from(salaryPayments)
+    .where(and(eq(salaryPayments.id, parsed.id), isNotNull(salaryPayments.deletedAt)))
+    .limit(1);
+  if (!row) throw new AppError('not_found', 'Salary payment not found in the Trash.');
+
+  await db.delete(salaryPayments).where(eq(salaryPayments.id, row.id));
+  await logAudit({
+    actorId: ctx.userId,
+    entityType: 'salary_payment',
+    entityId: row.id,
+    action: 'delete',
+    changes: { permanent: true, amountPaise: String(row.amountPaise), paidOn: row.paidOn },
+  });
 }
 
 export type SalaryPaymentsSummary = {

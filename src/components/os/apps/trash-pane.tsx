@@ -31,6 +31,9 @@ const KIND_LABEL: Record<TrashKind, string> = {
   project: 'Project',
   office_expense: 'Office expense',
   office_expense_category: 'Expense category',
+  salary_payment: 'Salary payment',
+  salary_structure: 'Salary update',
+  bonus: 'Bonus / perk',
   document: 'Document',
 };
 
@@ -42,6 +45,9 @@ const SECTION_ORDER: readonly TrashKind[] = [
   'project',
   'office_expense',
   'office_expense_category',
+  'salary_payment',
+  'salary_structure',
+  'bonus',
   'document',
 ];
 const SECTION_LABEL: Record<TrashKind, string> = {
@@ -51,6 +57,9 @@ const SECTION_LABEL: Record<TrashKind, string> = {
   project: 'Projects',
   office_expense: 'Office — expenses',
   office_expense_category: 'Office — expense categories',
+  salary_payment: 'Payroll — salary payments',
+  salary_structure: 'Payroll — salary updates',
+  bonus: 'Payroll — bonuses & perks',
   document: 'Documents',
 };
 

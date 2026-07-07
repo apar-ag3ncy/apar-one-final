@@ -22,7 +22,10 @@ import {
   deleteOfficeExpense,
   getOfficeExpenseSummary,
   importOfficeExpenses,
+  deleteOfficeExpenseCategory,
+  getOfficeExpenseCategoryUsage,
   listOfficeExpenseCategories,
+  reassignOfficeExpenseCategoryEntries,
   listOfficeExpenses,
   removeOfficeExpenseInvoice,
   updateOfficeExpense,
@@ -181,6 +184,7 @@ export function OfficeApp({
   const [editing, setEditing] = useState<OfficeExpenseRow | null>(null);
   const [confirmDel, setConfirmDel] = useState<OfficeExpenseRow | null>(null);
   const [showOpening, setShowOpening] = useState(false);
+  const [showManageCategories, setShowManageCategories] = useState(false);
   const [busy, setBusy] = useState(false);
   // Expenses captured before ledger auto-posting (or import-failed) that can
   // still be back-posted to the GL. Drives the "Post N to ledger" button.
@@ -650,19 +654,31 @@ export function OfficeApp({
             />
           );
         })}
-        {summary?.customByCategory.map((c) => {
+        {customCategories.map((c) => {
           const key = `${CUSTOM_PREFIX}${c.id}`;
+          const agg = summary?.customByCategory.find((b) => b.id === c.id);
           return (
             <CategoryChip
               key={key}
               active={activeCategory === key}
               onClick={() => setActiveCategory(key)}
-              color={c.color ?? 'var(--text-dim)'}
+              color={c.color ?? agg?.color ?? 'var(--text-dim)'}
               label={c.name}
-              count={c.count}
+              count={agg?.count ?? 0}
             />
           );
         })}
+        {canEdit && customCategories.length > 0 ? (
+          <button
+            type="button"
+            className="btn"
+            style={{ padding: '3px 10px', fontSize: 11.5 }}
+            title="Move entries between categories and delete empty ones"
+            onClick={() => setShowManageCategories(true)}
+          >
+            <Icon name="settings" size={12} /> Manage
+          </button>
+        ) : null}
         <div style={{ flex: 1 }} />
         <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Status:</span>
         <select
@@ -944,6 +960,14 @@ export function OfficeApp({
       )}
       {showOpening && (
         <OpeningBalancesModal onClose={() => setShowOpening(false)} onPosted={() => reload()} />
+      )}
+      {showManageCategories && (
+        <ManageCategoriesModal
+          categories={customCategories}
+          canDelete={canDelete}
+          onClose={() => setShowManageCategories(false)}
+          onChanged={() => reload()}
+        />
       )}
       {confirmDel && (
         <ConfirmDialog
@@ -2635,6 +2659,202 @@ function ImportOfficeExpensesModal({
 /* -------------------------------------------------------------------------- */
 /* Modal + small bits (kept local — the OS Modal in apps.tsx is not exported) */
 /* -------------------------------------------------------------------------- */
+
+/**
+ * Manage custom categories: every category shows its all-time entry count;
+ * a category with entries offers a BULK "move all entries to …" action
+ * (custom or built-in target; posted entries are reversed + reposted when the
+ * GL account changes), and only an empty category can be deleted — deleted
+ * categories sit in the Trash for 30 days and can be restored.
+ */
+function ManageCategoriesModal({
+  categories,
+  canDelete,
+  onClose,
+  onChanged,
+}: {
+  categories: readonly OfficeExpenseCategoryRow[];
+  canDelete: boolean;
+  onClose: () => void;
+  onChanged: () => void;
+}) {
+  const [usage, setUsage] = useState<Record<string, number> | null>(null);
+  const [targets, setTargets] = useState<Record<string, string>>({});
+  const [busyId, setBusyId] = useState<string | null>(null);
+
+  async function refreshUsage() {
+    try {
+      const entries = await Promise.all(
+        categories.map(async (c) => {
+          const u = await getOfficeExpenseCategoryUsage({ id: c.id });
+          return [c.id, u.activeCount] as const;
+        }),
+      );
+      setUsage(Object.fromEntries(entries));
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not load category usage');
+    }
+  }
+
+  useEffect(() => {
+    queueMicrotask(() => void refreshUsage());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [categories]);
+
+  async function moveEntries(fromId: string) {
+    const target = targets[fromId];
+    if (!target) {
+      toast.error('Pick the category to move the entries to.');
+      return;
+    }
+    setBusyId(fromId);
+    try {
+      const args = target.startsWith(CUSTOM_PREFIX)
+        ? { fromCategoryId: fromId, toCustomCategoryId: target.slice(CUSTOM_PREFIX.length) }
+        : { fromCategoryId: fromId, toCategory: target };
+      const res = await reassignOfficeExpenseCategoryEntries(args);
+      if (res.failed > 0) {
+        toast.error(`Moved ${res.moved}, but ${res.failed} failed — retry to finish the move.`);
+      } else {
+        toast.success(
+          res.reposted > 0
+            ? `Moved ${res.moved} entries · ${res.reposted} re-posted to the ledger`
+            : `Moved ${res.moved} ${res.moved === 1 ? 'entry' : 'entries'}`,
+        );
+      }
+      await refreshUsage();
+      onChanged();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not move the entries');
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function removeCategory(id: string, name: string) {
+    setBusyId(id);
+    try {
+      await deleteOfficeExpenseCategory({ id });
+      toast.success(`"${name}" moved to Trash — restorable for 30 days.`);
+      onChanged();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not delete the category');
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  return (
+    <Modal title="Manage categories" onClose={onClose} width={640}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <p style={{ margin: 0, fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+          A category can only be deleted once it has no entries. If it still has entries, move
+          them all to another category first — posted entries are re-posted to the right ledger
+          account automatically.
+        </p>
+        {usage === null ? (
+          <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: 13 }}>Loading usage…</p>
+        ) : categories.length === 0 ? (
+          <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: 13 }}>
+            No custom categories yet.
+          </p>
+        ) : (
+          categories.map((c) => {
+            const count = usage[c.id] ?? 0;
+            const empty = count === 0;
+            const busy = busyId === c.id;
+            return (
+              <div
+                key={c.id}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 10,
+                  padding: '10px 12px',
+                  border: '1px solid var(--border)',
+                  borderRadius: 8,
+                  flexWrap: 'wrap',
+                }}
+              >
+                <span
+                  style={{
+                    display: 'inline-block',
+                    width: 10,
+                    height: 10,
+                    borderRadius: 999,
+                    background: c.color ?? 'var(--text-dim)',
+                    flexShrink: 0,
+                  }}
+                />
+                <span style={{ fontWeight: 600, fontSize: 13 }}>{c.name}</span>
+                <span style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>
+                  {count} {count === 1 ? 'entry' : 'entries'}
+                </span>
+                <div style={{ flex: 1 }} />
+                {!empty ? (
+                  <>
+                    <select
+                      value={targets[c.id] ?? ''}
+                      onChange={(e) => setTargets((t) => ({ ...t, [c.id]: e.target.value }))}
+                      disabled={busy}
+                      style={{
+                        background: 'var(--content-2)',
+                        border: '1px solid var(--border)',
+                        borderRadius: 6,
+                        padding: '4px 8px',
+                        fontSize: 12,
+                        color: 'var(--text)',
+                        maxWidth: 200,
+                      }}
+                    >
+                      <option value="">Move entries to…</option>
+                      {categories
+                        .filter((o) => o.id !== c.id)
+                        .map((o) => (
+                          <option key={o.id} value={`${CUSTOM_PREFIX}${o.id}`}>
+                            {o.name}
+                          </option>
+                        ))}
+                      {CATEGORY_DEFS.filter((d) => d.id !== 'reimbursement').map((d) => (
+                        <option key={d.id} value={d.id}>
+                          {d.label}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      className="btn"
+                      disabled={busy || !targets[c.id]}
+                      onClick={() => void moveEntries(c.id)}
+                    >
+                      {busy ? 'Moving…' : `Move ${count}`}
+                    </button>
+                  </>
+                ) : null}
+                {canDelete ? (
+                  <button
+                    type="button"
+                    className="btn"
+                    style={{ color: empty ? 'var(--apar-red)' : undefined }}
+                    disabled={!empty || busy}
+                    title={
+                      empty
+                        ? 'Delete this category (recoverable from Trash for 30 days)'
+                        : 'Move its entries to another category first'
+                    }
+                    onClick={() => void removeCategory(c.id, c.name)}
+                  >
+                    <Icon name="trash" size={12} /> Delete
+                  </button>
+                ) : null}
+              </div>
+            );
+          })
+        )}
+      </div>
+    </Modal>
+  );
+}
 
 function Modal({
   title,
