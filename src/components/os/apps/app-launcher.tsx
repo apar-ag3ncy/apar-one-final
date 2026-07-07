@@ -13,6 +13,8 @@ export type LauncherOption = {
   app: AppId;
   /** Sub-route (window entityId) to open the member app with, if any. */
   entityId?: string;
+  /** Window title to open with, when it should differ from the app's name. */
+  title?: string;
   name: string;
   desc: string;
   icon: IconName;
