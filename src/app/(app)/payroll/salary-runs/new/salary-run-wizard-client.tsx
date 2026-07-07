@@ -79,7 +79,7 @@ export function SalaryRunWizardClient({
     setProrating(true);
     try {
       const preview = await previewSalaryFromAttendance(month);
-      setPeriodMeta({ workingDays: preview.workingDays, holidayCount: preview.holidayCount });
+      setPeriodMeta({ workingDays: preview.daysInMonth, holidayCount: preview.holidayCount });
       // Merge by employee: update each roster row that the (active-only) preview
       // covers with its prorated earnings + attendance context, and leave any
       // other row (and any manual edits) untouched. Never drop rows.
@@ -93,7 +93,7 @@ export function SalaryRunWizardClient({
             earningsPaise: p.proratedGrossPaise,
             netPaise: p.proratedGrossPaise - line.deductionsPaise,
             monthlyGrossPaise: p.monthlyGrossPaise,
-            workingDays: p.workingDays,
+            workingDays: p.daysInMonth,
             lopDays: p.lopDays,
             payableDays: p.payableDays,
             hasStructure: p.hasStructure,
@@ -101,7 +101,7 @@ export function SalaryRunWizardClient({
         }),
       });
       toast.success(
-        `Prorated ${preview.lines.length} employees for ${month} — ${preview.workingDays} working days` +
+        `Prorated ${preview.lines.length} employees for ${month} — ${preview.daysInMonth} days in the month` +
           (preview.holidayCount
             ? `, ${preview.holidayCount} holiday${preview.holidayCount === 1 ? '' : 's'}.`
             : '.'),
@@ -186,7 +186,7 @@ export function SalaryRunWizardClient({
             </div>
             {periodMeta ? (
               <p className="text-muted-foreground text-xs">
-                {periodMeta.workingDays} working days
+                {periodMeta.workingDays} days in the month
                 {periodMeta.holidayCount
                   ? ` · ${periodMeta.holidayCount} company holiday${periodMeta.holidayCount === 1 ? '' : 's'}`
                   : ''}{' '}

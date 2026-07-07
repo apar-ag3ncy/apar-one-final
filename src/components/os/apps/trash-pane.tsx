@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
 
+import { RotateCcwIcon } from 'lucide-react';
+
 import { Icon } from '../icons';
 import {
   listTrash,
@@ -252,7 +254,7 @@ export function TrashPane() {
                             title="Restore this item"
                             onClick={() => void restore(item)}
                           >
-                            <Icon name="restore" size={12} />
+                            <RotateCcwIcon size={12} aria-hidden />
                             Restore
                           </button>
                           <button

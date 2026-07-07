@@ -19,11 +19,12 @@ import { getActorContext } from '@/lib/server/actor';
  * salary-run wizard can pre-fill earnings that an operator then confirms or
  * overrides (capture-not-compute).
  *
- * Working days = calendar days in the month, minus Sundays, minus company
- * holidays (Settings → Holidays). Loss-of-pay = days marked `absent` only
- * (every leave kind, WFH, half-day, weekly-off and holiday are treated as
- * paid). Payable days = working days − LOP. Prorated gross =
- * monthlyGross × payableDays / workingDays (floored to the paise).
+ * Per-day rule: the day rate is monthlyGross ÷ calendar days in the month.
+ * Every day is PAID — present, work-from-home, leave, company holiday,
+ * weekly off, unmarked — except days explicitly marked `absent`, which are
+ * the only loss-of-pay days. Payable days = days in month − absent days.
+ * Prorated gross = monthlyGross × payableDays / daysInMonth (floored to the
+ * paise).
  *
  * Read-only: computes and returns; it never writes a salary run or the ledger.
  */
@@ -37,7 +38,8 @@ export type SalaryAttendanceLine = {
   monthlyGrossPaise: bigint;
   /** True when the employee has an active salary structure for the month. */
   hasStructure: boolean;
-  workingDays: number;
+  /** Calendar days in the month — the per-day rate divisor. */
+  daysInMonth: number;
   /** Loss-of-pay days = days marked 'absent'. */
   lopDays: number;
   payableDays: number;
@@ -48,8 +50,8 @@ export type SalaryAttendancePreview = {
   month: string;
   fromDate: string;
   toDate: string;
-  /** Company-wide working days for the month (same for every employee). */
-  workingDays: number;
+  /** Calendar days in the month — the per-day rate divisor for everyone. */
+  daysInMonth: number;
   holidayCount: number;
   lines: readonly SalaryAttendanceLine[];
 };
@@ -61,18 +63,6 @@ function monthBounds(month: string): { year: number; monthIdx: number; from: str
   return { year: y, monthIdx: m - 1, from: `${month}-01`, to: `${month}-${pad(lastDay)}`, lastDay };
 }
 
-/** Working days = every day that isn't a Sunday and isn't a company holiday. */
-function computeWorkingDays(month: string, lastDay: number, monthIdx: number, year: number, holidays: ReadonlySet<string>): number {
-  const pad = (n: number) => String(n).padStart(2, '0');
-  let count = 0;
-  for (let d = 1; d <= lastDay; d += 1) {
-    const dow = new Date(Date.UTC(year, monthIdx, d)).getUTCDay();
-    if (dow === 0) continue; // Sunday = weekly off
-    if (holidays.has(`${month}-${pad(d)}`)) continue; // company holiday
-    count += 1;
-  }
-  return count;
-}
 
 function sumAllowances(raw: unknown): bigint {
   if (!Array.isArray(raw)) return 0n;
@@ -118,7 +108,9 @@ export type EmployeeSalaryAttendancePreview = {
   employeeId: string;
   month: string;
   monthlyGrossPaise: bigint;
-  workingDays: number;
+  /** Calendar days in the month — the per-day rate divisor. */
+  daysInMonth: number;
+  /** Days explicitly marked absent — the only days that cut pay. */
   lopDays: number;
   payableDays: number;
   proratedGrossPaise: bigint;
@@ -163,8 +155,13 @@ export async function previewSalaryForEmployee(input: {
   } catch (e) {
     if (!isUndefinedTableError(e)) throw e;
   }
-  const holidaySet = new Set(holidayRows.map((h) => h.date));
-  const workingDays = computeWorkingDays(month, lastDay, monthIdx, year, holidaySet);
+  void holidayRows; // paid regardless — see the per-day rule below
+  void monthIdx;
+  void year;
+  // Per-day rule: salary ÷ days in the month. Every day counts as PAID —
+  // present, work-from-home, leave, company holiday, weekly off — except a
+  // day explicitly marked ABSENT. Only absences cut pay.
+  const daysInMonth = lastDay;
 
   // 2) Salary structure overlapping the month for this employee — pick the
   //    latest-starting one (active as of month end), same rule as the run.
@@ -192,8 +189,9 @@ export async function previewSalaryForEmployee(input: {
   const hasStructure = picked !== undefined;
   const monthlyGrossPaise = picked ? monthlyBaseForStructure(picked) : 0n;
 
-  // 3) Absent (LOP) days — only an 'absent' on an actual working day docks pay
-  //    (Sundays and company holidays aren't working days, so they never count).
+  // 3) Absent (LOP) days — every day marked 'absent' cuts one day's pay.
+  //    All other days (present, WFH, leave, holiday, weekly off, unmarked)
+  //    are paid.
   const absentRows = await db
     .select({ date: attendanceRecords.date })
     .from(attendanceRecords)
@@ -206,23 +204,17 @@ export async function previewSalaryForEmployee(input: {
         lte(attendanceRecords.date, to),
       ),
     );
-  let lopDays = 0;
-  for (const r of absentRows) {
-    const [ry, rm, rd] = r.date.split('-').map(Number);
-    const dow = new Date(Date.UTC(ry ?? year, (rm ?? 1) - 1, rd ?? 1)).getUTCDay();
-    if (dow === 0 || holidaySet.has(r.date)) continue; // not a working day → not LOP
-    lopDays += 1;
-  }
+  const lopDays = new Set(absentRows.map((r) => r.date)).size;
 
-  const payableDays = Math.max(0, workingDays - lopDays);
+  const payableDays = Math.max(0, daysInMonth - lopDays);
   const proratedGrossPaise =
-    workingDays > 0 ? (monthlyGrossPaise * BigInt(payableDays)) / BigInt(workingDays) : 0n;
+    daysInMonth > 0 ? (monthlyGrossPaise * BigInt(payableDays)) / BigInt(daysInMonth) : 0n;
 
   return {
     employeeId,
     month,
     monthlyGrossPaise,
-    workingDays,
+    daysInMonth,
     lopDays,
     payableDays,
     proratedGrossPaise,
@@ -262,7 +254,11 @@ export async function previewSalaryFromAttendance(month: string): Promise<Salary
     if (!isUndefinedTableError(e)) throw e;
   }
   const holidaySet = new Set(holidayRows.map((h) => h.date));
-  const workingDays = computeWorkingDays(month, lastDay, monthIdx, year, holidaySet);
+  void monthIdx;
+  void year;
+  // Per-day rule: salary ÷ days in the month; only 'absent' days cut pay
+  // (present, WFH, leave, holiday, weekly off are all paid).
+  const daysInMonth = lastDay;
 
   // 2) Active employees.
   const emps = await db
@@ -302,10 +298,8 @@ export async function previewSalaryFromAttendance(month: string): Promise<Salary
     grossByEmployee.set(s.employeeId, monthlyBaseForStructure(s));
   }
 
-  // 4) Absent (LOP) days per employee in the month. Only an 'absent' marked on
-  //    an actual working day docks pay — an absent override on a Sunday or a
-  //    company holiday is not a working day, so it must not reduce payable days
-  //    (else payableDays = workingDays − lop would subtract a non-working day).
+  // 4) Absent (LOP) days per employee — every 'absent' cuts one day's pay;
+  //    everything else (present, WFH, leave, holiday, weekly off) is paid.
   const absentRows = await db
     .select({ employeeId: attendanceRecords.employeeId, date: attendanceRecords.date })
     .from(attendanceRecords)
@@ -319,9 +313,6 @@ export async function previewSalaryFromAttendance(month: string): Promise<Salary
     );
   const lopByEmployee = new Map<string, number>();
   for (const r of absentRows) {
-    const [ry, rm, rd] = r.date.split('-').map(Number);
-    const dow = new Date(Date.UTC(ry ?? year, (rm ?? 1) - 1, rd ?? 1)).getUTCDay();
-    if (dow === 0 || holidaySet.has(r.date)) continue; // not a working day → not LOP
     lopByEmployee.set(r.employeeId, (lopByEmployee.get(r.employeeId) ?? 0) + 1);
   }
 
@@ -329,17 +320,15 @@ export async function previewSalaryFromAttendance(month: string): Promise<Salary
     const monthlyGrossPaise = grossByEmployee.get(e.id) ?? 0n;
     const hasStructure = grossByEmployee.has(e.id);
     const lopDays = lopByEmployee.get(e.id) ?? 0;
-    const payableDays = Math.max(0, workingDays - lopDays);
-    // 0 payable days → 0 pay. (workingDays === 0 is unreachable for a real
-    // month, but the degenerate case must floor to 0, not the full gross.)
+    const payableDays = Math.max(0, daysInMonth - lopDays);
     const proratedGrossPaise =
-      workingDays > 0 ? (monthlyGrossPaise * BigInt(payableDays)) / BigInt(workingDays) : 0n;
+      daysInMonth > 0 ? (monthlyGrossPaise * BigInt(payableDays)) / BigInt(daysInMonth) : 0n;
     return {
       employeeId: e.id,
       fullName: e.fullName,
       monthlyGrossPaise,
       hasStructure,
-      workingDays,
+      daysInMonth,
       lopDays,
       payableDays,
       proratedGrossPaise,
@@ -350,7 +339,7 @@ export async function previewSalaryFromAttendance(month: string): Promise<Salary
     month,
     fromDate: from,
     toDate: to,
-    workingDays,
+    daysInMonth,
     holidayCount: holidaySet.size,
     lines,
   };
