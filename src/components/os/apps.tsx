@@ -2485,7 +2485,12 @@ function EmployeeGroup({
       ) : (
         <div
           className="card-grid"
-          style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))' }}
+          // Equal rows (1fr) + height:100% cards → every card matches the
+          // tallest one, so the footer line sits at the same depth everywhere.
+          style={{
+            gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))',
+            gridAutoRows: '1fr',
+          }}
         >
           {children}
         </div>
