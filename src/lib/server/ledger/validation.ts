@@ -230,9 +230,13 @@ async function runOne(
           FROM tds_reference_sections s
           LEFT JOIN vw_tds_vendor_fy_cumulative v
             ON v.vendor_id = ${template.paidToVendorId}
-            AND v.section = s.code
+            AND v.section = s.section_code
             AND v.fiscal_year = ${fy}
-          WHERE s.code = ${meta.tds_section}
+          WHERE s.section_code = ${meta.tds_section}
+            AND s.deleted_at IS NULL
+            AND s.effective_from_date <= ${template.txnDate}::date
+            AND (s.effective_to_date IS NULL OR ${template.txnDate}::date < s.effective_to_date)
+          ORDER BY s.effective_from_date DESC
           LIMIT 1
         `);
         const cumStr = Array.isArray(cumRow) ? cumRow[0]?.cumulative_base_paise : '0';
