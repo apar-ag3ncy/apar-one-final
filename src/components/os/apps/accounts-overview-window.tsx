@@ -135,6 +135,11 @@ export function AccountsOverviewWindow() {
 
   const tbNow = useReportData(() => getTrialBalance({ asOfDate: today }), [today]);
   const tbOpen = useReportData(() => getTrialBalance({ asOfDate: openingAsOf }), [openingAsOf]);
+  // Balance at the END of the month before the previous one — lets the habit
+  // cards isolate the PREVIOUS month's movement (the period actually being
+  // deposited/filed this month).
+  const prevPrevEnd = priorMonthEndIso(prevMonthStart);
+  const tbPrev = useReportData(() => getTrialBalance({ asOfDate: prevPrevEnd }), [prevPrevEnd]);
   const banks = useReportData(
     () => getCombinedBankBook({ from: fy.fromDate, to: today }),
     [fy.fromDate, today],
@@ -146,6 +151,13 @@ export function AccountsOverviewWindow() {
 
   const now = tbNow.data ?? null;
   const open = tbOpen.data ?? null;
+  const prev = tbPrev.data ?? null;
+
+  // The habits strip is entirely previous-month scoped — the 7th deposits
+  // last month's TDS, the 11th/20th file last month's GST, month-end checks
+  // last month's client deductions.
+  const tdsPayablePrevMonth = crBal(open, '2130') - crBal(prev, '2130');
+  const tdsReceivablePrevMonth = drBal(open, '1260') - drBal(prev, '1260');
 
   // Month movement = closing balance − opening balance, per sign convention.
   const incomeMonth = crBal(now, '4') - crBal(open, '4');
@@ -218,16 +230,17 @@ export function AccountsOverviewWindow() {
           <HabitCard
             due={`by ${formatDue(nextDueDate(today, 7))}`}
             title="Deposit TDS"
-            detail="TDS cut from vendors goes to the government. Click to see each deduction."
-            amount={tdsPayable}
-            amountLabel="awaiting deposit"
-            urgent={tdsPayable > 0n}
+            detail={`TDS cut from vendors in ${prevMonthLabel} goes to the government — deposits always cover the previous month. Click for each deduction.`}
+            amount={tdsPayablePrevMonth}
+            amountLabel={`deducted in ${prevMonthLabel}`}
+            urgent={tdsPayablePrevMonth > 0n}
             onClick={() =>
               openStatement({
                 codes: ['2130'],
                 positive: 'credit',
-                title: 'TDS Payable — every deduction awaiting deposit',
-                to: today,
+                title: `TDS Payable — deductions in ${prevMonthLabel}`,
+                from: prevMonthStart,
+                to: prevMonthEnd,
               })
             }
           />
@@ -259,15 +272,16 @@ export function AccountsOverviewWindow() {
           <HabitCard
             due={formatDue(monthEndIso(today))}
             title="Month-end check"
-            detail="Did every client deposit the TDS they cut from us? Click for each deduction, then match 26AS/AIS."
-            amount={tdsReceivable}
-            amountLabel="TDS parked with govt (FY)"
+            detail={`Did every client deposit the TDS they cut from us in ${prevMonthLabel}? Click for each deduction, then match 26AS/AIS.`}
+            amount={tdsReceivablePrevMonth}
+            amountLabel={`clients deducted in ${prevMonthLabel}`}
             onClick={() =>
               openStatement({
                 codes: ['1260'],
                 positive: 'debit',
-                title: 'TDS Receivable — what clients deducted, invoice by invoice',
-                to: today,
+                title: `TDS Receivable — client deductions in ${prevMonthLabel}`,
+                from: prevMonthStart,
+                to: prevMonthEnd,
               })
             }
           />
