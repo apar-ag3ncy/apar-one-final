@@ -85,6 +85,16 @@ export function can(user: User, appId: AppId, action: keyof AppPermission): bool
       can(user, id, action),
     );
   }
+  // 'office' doubles as a launcher shell (Expenses / Projects / Team /
+  // Attendance live inside it). Opening the launcher only needs view on any
+  // member; the Expenses tracker itself still gates on the office row, which
+  // call sites read directly (`user.permissions.office`).
+  if (appId === 'office' && action === 'view') {
+    return (
+      (user.permissions.office?.view ?? false) ||
+      (['projects', 'employees', 'attendance'] as const).some((id) => can(user, id, 'view'))
+    );
+  }
   // Trash is the recovery/disposal surface — mirrors the old Settings ▸ Trash
   // gate (settings edit). Server actions additionally restrict permanent
   // deletes to admins/partners.

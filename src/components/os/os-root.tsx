@@ -655,7 +655,8 @@ function Desktop({ signOut }: { signOut: () => void }) {
             w.entityId &&
             w.app !== 'ledger' &&
             w.app !== 'reports' &&
-            !(w.app === 'employees' && w.entityId === 'directory')
+            !(w.app === 'employees' && w.entityId === 'directory') &&
+            !(w.app === 'office' && w.entityId === 'expenses')
           )
             return renderDetail(w);
           switch (w.app) {
@@ -689,54 +690,19 @@ function Desktop({ signOut }: { signOut: () => void }) {
                   />
                 </div>
               );
-            case 'employees': {
+            case 'employees':
               // UUID entityIds are handled earlier by renderDetail() →
-              // <EmployeeWindow>. 'directory' (set by the launcher) renders
-              // the team grid; a plain open shows the launcher so the user
-              // picks between the directory and Attendance.
-              if (w.entityId === 'directory') {
-                return (
-                  <div className="main">
-                    <EmployeesApp
-                      canEdit={can(user, 'employees', 'edit')}
-                      canDelete={can(user, 'employees', 'delete')}
-                    />
-                  </div>
-                );
-              }
-              const employeeOptions = [
-                can(user, 'employees', 'view')
-                  ? {
-                      app: 'employees' as const,
-                      entityId: 'directory',
-                      name: 'Team',
-                      desc: 'The employee directory — profiles, compensation, documents, projects.',
-                      icon: 'users' as const,
-                      accent: '#9B3826',
-                    }
-                  : null,
-                can(user, 'attendance', 'view')
-                  ? {
-                      app: 'attendance' as const,
-                      name: 'Attendance',
-                      desc: 'The day-by-day attendance matrix, leaves and holidays.',
-                      icon: 'check' as const,
-                      accent: '#2E8F5A',
-                    }
-                  : null,
-              ].filter((o) => o !== null);
+              // <EmployeeWindow>. Both a plain open and the Office launcher's
+              // 'directory' sentinel land on the team grid — the old Team /
+              // Attendance picker moved into the Office launcher.
               return (
-                <AppLauncher
-                  heading="Employees"
-                  sub="Pick where you're headed."
-                  options={employeeOptions}
-                  onPick={(o) => {
-                    openApp(o.app, { entityId: o.entityId, position: 'center' });
-                    osActions.closeWindow(w.id);
-                  }}
-                />
+                <div className="main">
+                  <EmployeesApp
+                    canEdit={can(user, 'employees', 'edit')}
+                    canDelete={can(user, 'employees', 'delete')}
+                  />
+                </div>
               );
-            }
             case 'accounts': {
               const accountOptions = [
                 can(user, 'clients', 'view')
@@ -804,15 +770,74 @@ function Desktop({ signOut }: { signOut: () => void }) {
                   </div>
                 </div>
               );
-            case 'office':
+            case 'office': {
+              // The Office dock icon is a launcher: day-to-day expenses,
+              // projects, the team directory and attendance all live inside.
+              // 'expenses' (set by the launcher) opens the expense tracker.
+              if (w.entityId === 'expenses') {
+                return (
+                  <div className="main">
+                    <OfficeApp
+                      canEdit={can(user, 'office', 'edit')}
+                      canDelete={can(user, 'office', 'delete')}
+                    />
+                  </div>
+                );
+              }
+              const canViewExpenses =
+                user.role === 'super_admin' || (user.permissions.office?.view ?? false);
+              const officeOptions = [
+                canViewExpenses
+                  ? {
+                      app: 'office' as const,
+                      entityId: 'expenses',
+                      name: 'Expenses',
+                      desc: 'Day-to-day office spend — pantry, rent, utilities, assets.',
+                      icon: 'zap' as const,
+                      accent: '#C46A28',
+                    }
+                  : null,
+                can(user, 'projects', 'view')
+                  ? {
+                      app: 'projects' as const,
+                      name: 'Projects',
+                      desc: 'Every engagement — kanban, teams, tasks, budgets.',
+                      icon: 'folder' as const,
+                      accent: '#7A4E2D',
+                    }
+                  : null,
+                can(user, 'employees', 'view')
+                  ? {
+                      app: 'employees' as const,
+                      entityId: 'directory',
+                      name: 'Team',
+                      desc: 'The employee directory — profiles, compensation, documents.',
+                      icon: 'users' as const,
+                      accent: '#9B3826',
+                    }
+                  : null,
+                can(user, 'attendance', 'view')
+                  ? {
+                      app: 'attendance' as const,
+                      name: 'Attendance',
+                      desc: 'The day-by-day attendance matrix, leaves and holidays.',
+                      icon: 'check' as const,
+                      accent: '#2E8F5A',
+                    }
+                  : null,
+              ].filter((o) => o !== null);
               return (
-                <div className="main">
-                  <OfficeApp
-                    canEdit={can(user, 'office', 'edit')}
-                    canDelete={can(user, 'office', 'delete')}
-                  />
-                </div>
+                <AppLauncher
+                  heading="Office"
+                  sub="Pick where you're headed."
+                  options={officeOptions}
+                  onPick={(o) => {
+                    openApp(o.app, { entityId: o.entityId, position: 'center' });
+                    osActions.closeWindow(w.id);
+                  }}
+                />
               );
+            }
             case 'ledger': {
               // Sub-routes on the 'ledger' app. The hub (no entityId)
               // lists every ledger we render; the others are focused

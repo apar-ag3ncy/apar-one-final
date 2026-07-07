@@ -326,7 +326,7 @@ function Header({
           letterSpacing: '0.06em',
         }}
       >
-        {employee.status}
+        {employee.status === 'separated' ? 'inactive' : employee.status.replace('_', ' ')}
       </span>
       {onEdit ? (
         <button className="btn" type="button" onClick={onEdit} title="Edit profile">

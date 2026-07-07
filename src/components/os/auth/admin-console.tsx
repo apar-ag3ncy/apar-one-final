@@ -4,7 +4,6 @@ import { useMemo, useState } from 'react';
 import { Icon } from '../icons';
 import { initials } from '../format';
 import { APPS } from '../data';
-import { TrashPane } from '../apps/trash-pane';
 import { PERMISSIONED_APPS, type AppPermission, type Permissions, type User } from './types';
 import { useAuth } from './store';
 
@@ -108,36 +107,8 @@ export function AdminConsole() {
           />
         )}
 
-        <h4 style={{ marginTop: 18 }}>System</h4>
-        <div
-          className={`side-item admin-user ${selectedId === TRASH_SECTION ? 'active' : ''}`}
-          onClick={() => setSelectedId(TRASH_SECTION)}
-        >
-          <span
-            className="avatar"
-            style={{ width: 22, height: 22, fontSize: 9, background: 'var(--apar-red-deep)' }}
-            aria-hidden
-          >
-            <Icon name="trash" size={11} />
-          </span>
-          <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0, flex: 1 }}>
-            <span style={{ fontWeight: 600 }}>Trash</span>
-            <span style={{ fontSize: 10, opacity: 0.75 }}>Restore or dispose permanently</span>
-          </span>
-        </div>
       </div>
 
-      {selectedId === TRASH_SECTION ? (
-        <div className="main">
-          <div className="main-header">
-            <h2>Trash</h2>
-            <span className="sub">archived &amp; deleted items across the OS</span>
-          </div>
-          <div style={{ flex: 1, overflow: 'auto' }}>
-            <TrashPane />
-          </div>
-        </div>
-      ) : (
       <div className="main">
         <div className="main-header">
           <h2>Admin</h2>
@@ -206,13 +177,9 @@ export function AdminConsole() {
           )}
         </div>
       </div>
-      )}
     </>
   );
 }
-
-/** Sidebar selection sentinel for the Trash section (not a user id). */
-const TRASH_SECTION = '__trash__';
 
 /* -------------------------------------------------------------------------- */
 /* Operator identity card — editable                                          */

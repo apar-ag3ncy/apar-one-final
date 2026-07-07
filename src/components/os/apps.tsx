@@ -7,6 +7,7 @@ import { CompanySettingsPane } from './apps/company-settings-pane';
 import { BillingSettingsPane } from './apps/billing-settings-pane';
 import { VaultPane } from './apps/vault-pane';
 import { TrashPane } from './apps/trash-pane';
+import { AdminConsole } from './auth/admin-console';
 import { ImportEmployeesDialog } from '@/components/employees/import-employees-dialog';
 import { InvoiceFormatEditor } from '@/components/settings/invoice-format-editor';
 import { exportRows, type ExportFormat } from '@/lib/client/export-rows';
@@ -1783,7 +1784,7 @@ const EMP_STATUS_META: Record<EmpStatusUi, { label: string; fg: string; bg: stri
   active: { label: 'Active', fg: '#2e8f5a', bg: 'rgba(46,143,90,0.12)' },
   on_leave: { label: 'On leave', fg: '#d08a1e', bg: 'rgba(208,138,30,0.14)' },
   notice: { label: 'Notice', fg: '#c46a28', bg: 'rgba(196,106,40,0.14)' },
-  separated: { label: 'Separated', fg: 'var(--text-muted)', bg: 'var(--content-2)' },
+  separated: { label: 'Inactive', fg: 'var(--text-muted)', bg: 'var(--content-2)' },
   prospective: { label: 'Prospective', fg: 'var(--text-muted)', bg: 'var(--content-2)' },
 };
 
@@ -1860,11 +1861,12 @@ export function EmployeesApp({
   }
 
   // Active/Inactive quick toggle. Reuses the profile editor's save path
-  // (updateEmployee({ id, status })). Active → deactivate to 'on_leave';
-  // anything else → reactivate to 'active'. Optimistic reload after.
+  // (updateEmployee({ id, status })). Deactivating marks the employee
+  // 'separated' — shown as "Inactive": someone who has left the company.
+  // ("On leave" stays a manual status for someone still employed.)
   async function toggleStatus(e: DirRow) {
     const activating = e.status !== 'active';
-    const nextStatus: EmpStatus = activating ? 'active' : 'on_leave';
+    const nextStatus: EmpStatus = activating ? 'active' : 'separated';
     setTogglingId(e.id);
     try {
       const res = await updateEmployee({ id: e.id, status: nextStatus });
@@ -1992,11 +1994,14 @@ export function EmployeesApp({
           flexDirection: 'column',
           alignItems: 'stretch',
           gap: 0,
+          // Every card fills its grid row so the footer lines up across the
+          // grid no matter how much detail each profile carries.
+          height: '100%',
           opacity: e.status === 'separated' ? 0.7 : 1,
         }}
         title={`Open ${e.fullName}'s profile`}
       >
-        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, flex: 1 }}>
           <div
             className="avatar"
             style={{
@@ -2117,14 +2122,16 @@ export function EmployeesApp({
             </div>
           </div>
         </div>
+        <div style={{ height: 10 }} />
         {(canEdit || canDelete) && (
           <div
             className="emp-card-actions"
             onClick={(ev) => ev.stopPropagation()}
             style={{
-              // Persistent footer row (override the hover-reveal opacity).
+              // Persistent footer row (override the hover-reveal opacity),
+              // pinned to the card's bottom edge whatever sits above it.
               opacity: 1,
-              marginTop: 10,
+              marginTop: 'auto',
               paddingTop: 8,
               borderTop: '1px solid var(--border)',
               alignItems: 'center',
@@ -2478,7 +2485,12 @@ function EmployeeGroup({
       ) : (
         <div
           className="card-grid"
-          style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))' }}
+          // Equal rows (1fr) + height:100% cards → every card matches the
+          // tallest one, so the footer line sits at the same depth everywhere.
+          style={{
+            gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))',
+            gridAutoRows: '1fr',
+          }}
         >
           {children}
         </div>
@@ -2506,7 +2518,7 @@ const EMP_STATUS_OPTIONS: { value: EmpStatus; label: string }[] = [
   { value: 'active', label: 'Active' },
   { value: 'on_leave', label: 'On leave' },
   { value: 'notice', label: 'Notice' },
-  { value: 'separated', label: 'Separated' },
+  { value: 'separated', label: 'Inactive (left the company)' },
 ];
 
 type EditorForm = {
@@ -3347,6 +3359,7 @@ type SettingsSection = {
     | 'Team'
     | 'Notifications'
     | 'Security'
+    | 'Users & Roles'
     | 'Trash';
   icon: IconName;
 };
@@ -3394,6 +3407,7 @@ export function SettingsApp({
     'Team',
     'Notifications',
     'Security',
+    'Users & Roles',
     'Trash',
   ];
   const requestedSection: SettingsSection['name'] = SECTION_NAMES.some((n) => n === initialSection)
@@ -3401,7 +3415,8 @@ export function SettingsApp({
     : 'General';
   const [section, setSection] = useState<SettingsSection['name']>(
     // Never land a view-only user directly on an admin-tier pane via deep-link.
-    !canEditSettings && ADMIN_SETTINGS_SECTIONS.has(requestedSection)
+    (!canEditSettings && ADMIN_SETTINGS_SECTIONS.has(requestedSection)) ||
+      (requestedSection === 'Users & Roles' && currentUserRole !== 'super_admin')
       ? 'General'
       : requestedSection,
   );
@@ -3418,12 +3433,14 @@ export function SettingsApp({
     { name: 'Team', icon: 'users' },
     { name: 'Notifications', icon: 'bell' },
     { name: 'Security', icon: 'shield' },
+    { name: 'Users & Roles', icon: 'users' },
     { name: 'Trash', icon: 'trash' },
   ];
   // Hide the admin-tier panes from the sidebar for users without settings edit.
-  const sections = canEditSettings
-    ? allSections
-    : allSections.filter((s) => !ADMIN_SETTINGS_SECTIONS.has(s.name));
+  // Users & Roles is the old Admin Console — super admin only.
+  const sections = (
+    canEditSettings ? allSections : allSections.filter((s) => !ADMIN_SETTINGS_SECTIONS.has(s.name))
+  ).filter((s) => s.name !== 'Users & Roles' || currentUserRole === 'super_admin');
   return (
     <>
       <div className="sidebar">
@@ -3619,6 +3636,10 @@ export function SettingsApp({
           />
         ) : section === 'Trash' ? (
           <TrashPane />
+        ) : section === 'Users & Roles' ? (
+          <div style={{ flex: 1, display: 'flex', minHeight: 0, overflow: 'hidden' }}>
+            <AdminConsole />
+          </div>
         ) : (
           <SecurityPanel onSignOut={onSignOut} />
         )}
