@@ -22,6 +22,7 @@ export type AppId =
   | 'projects'
   | 'employees'
   | 'attendance'
+  | 'accounts'
   | 'ledger'
   | 'reports'
   | 'office'

@@ -77,5 +77,13 @@ export function fullPermissions(): Permissions {
 export function can(user: User, appId: AppId, action: keyof AppPermission): boolean {
   if (user.role === 'super_admin') return true;
   if (appId === 'admin_console') return false; // hard rule: only super admin sees Admin Console
+  // 'accounts' is a launcher shell (Clients / Vendors / Ledgers / Reports
+  // live inside it) — it has no permission row of its own; it is usable
+  // whenever any member app is. Real access checks stay per member app.
+  if (appId === 'accounts') {
+    return (['clients', 'vendors', 'ledger', 'reports'] as const).some((id) =>
+      can(user, id, action),
+    );
+  }
   return user.permissions[appId]?.[action] ?? false;
 }
