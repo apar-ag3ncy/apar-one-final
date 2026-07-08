@@ -457,8 +457,13 @@ function RecordReceiptDialog({
   const [clientBanks, setClientBanks] = useState<readonly BankAccountRow[]>([]);
   const [invoices, setInvoices] = useState<readonly OpenInvoiceRow[]>([]);
   const [mode, setMode] = useState<'bank' | 'cash'>('bank');
-  // NEFT / RTGS / IMPS / UPI — how the transfer arrived (bank mode only).
-  const [transferMethod, setTransferMethod] = useState<'neft' | 'rtgs' | 'imps' | 'upi' | ''>('');
+  // NEFT / RTGS / IMPS / UPI / cheque — how the money arrived (bank mode only).
+  const [transferMethod, setTransferMethod] = useState<
+    'neft' | 'rtgs' | 'imps' | 'upi' | 'cheque' | ''
+  >('');
+  // Cheque capture (0064) — surfaced only while transferMethod === 'cheque'.
+  const [chequeNumber, setChequeNumber] = useState('');
+  const [chequeDate, setChequeDate] = useState('');
   const [bankAccountId, setBankAccountId] = useState('');
   const [counterpartyBankAccountId, setCounterpartyBankAccountId] = useState('');
   const [paymentDate, setPaymentDate] = useState(todayISO());
@@ -479,6 +484,8 @@ function RecordReceiptDialog({
       if (cancelled) return;
       setMode('bank');
       setTransferMethod('');
+      setChequeNumber('');
+      setChequeDate('');
       setBankAccountId('');
       setCounterpartyBankAccountId('');
       setPaymentDate(todayISO());
@@ -564,12 +571,20 @@ function RecordReceiptDialog({
       return;
     }
 
+    if (mode === 'bank' && transferMethod === 'cheque' && !chequeNumber.trim()) {
+      toast.error('Enter the cheque number.');
+      return;
+    }
+
     setSubmitting(true);
     try {
       const result = await recordClientReceipt({
         clientId,
         mode,
         transferMethod: mode === 'bank' && transferMethod ? transferMethod : null,
+        chequeNumber:
+          mode === 'bank' && transferMethod === 'cheque' ? chequeNumber.trim() || null : null,
+        chequeDate: mode === 'bank' && transferMethod === 'cheque' ? chequeDate || null : null,
         bankAccountId: mode === 'bank' ? bankAccountId : null,
         counterpartyBankAccountId:
           mode === 'bank' && counterpartyBankAccountId ? counterpartyBankAccountId : null,
@@ -657,7 +672,7 @@ function RecordReceiptDialog({
             <div className="os-field">
               <span className="os-field-label">Transfer method</span>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                {(['neft', 'rtgs', 'imps', 'upi'] as const).map((t) => (
+                {(['neft', 'rtgs', 'imps', 'upi', 'cheque'] as const).map((t) => (
                   <button
                     key={t}
                     type="button"
@@ -678,6 +693,31 @@ function RecordReceiptDialog({
                     {t}
                   </button>
                 ))}
+              </div>
+            </div>
+          ) : null}
+
+          {mode === 'bank' && transferMethod === 'cheque' ? (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+              <div className="os-field">
+                <span className="os-field-label">Cheque number</span>
+                <input
+                  value={chequeNumber}
+                  onChange={(e) => setChequeNumber(e.target.value)}
+                  disabled={submitting}
+                  placeholder="e.g. 123456"
+                  style={osInputStyle}
+                />
+              </div>
+              <div className="os-field">
+                <span className="os-field-label">Cheque date (optional)</span>
+                <input
+                  type="date"
+                  value={chequeDate}
+                  onChange={(e) => setChequeDate(e.target.value)}
+                  disabled={submitting}
+                  style={osInputStyle}
+                />
               </div>
             </div>
           ) : null}
@@ -1160,8 +1200,8 @@ function AddToBalanceDialog({
         >
           <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0 }}>
             Records money received on account as an advance — it isn&apos;t applied to any invoice
-            yet. Posts to the client&apos;s advance balance and generates a receipt voucher; apply it
-            to invoices later.
+            yet. Posts to the client&apos;s advance balance and generates a receipt voucher; apply
+            it to invoices later.
           </p>
 
           <div className="os-field">
@@ -1240,7 +1280,12 @@ function AddToBalanceDialog({
             borderTop: '1px solid var(--border, #e5e7eb)',
           }}
         >
-          <Button variant="outline" size="sm" onClick={() => onOpenChange(false)} disabled={submitting}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => onOpenChange(false)}
+            disabled={submitting}
+          >
             Cancel
           </Button>
           <Button size="sm" onClick={submit} disabled={submitting}>

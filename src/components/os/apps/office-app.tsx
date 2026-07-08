@@ -94,11 +94,55 @@ const CATEGORY_INDEX: Record<OfficeExpenseCategory, (typeof CATEGORY_DEFS)[numbe
   return m;
 })();
 
+/**
+ * Grouped view — the built-in categories rolled up into five spending
+ * buckets. 'other' rows WITH a custom category belong to their own custom
+ * card, so MISC's 'other' component excludes them (both in the filter and
+ * in the summary arithmetic — see bucketAggs).
+ */
+const BUCKET_DEFS: ReadonlyArray<{
+  id: string;
+  label: string;
+  color: string;
+  categories: readonly OfficeExpenseCategory[];
+}> = [
+  {
+    id: 'supplies',
+    label: 'Supplies',
+    color: '#5B6677',
+    categories: ['stationary', 'toiletries', 'tea_coffee'],
+  },
+  { id: 'utilities', label: 'Utilities', color: '#D08A1E', categories: ['utilities'] },
+  {
+    id: 'maintenance',
+    label: 'Maintenance',
+    color: '#2D8A8A',
+    categories: ['cleaning', 'repairs'],
+  },
+  { id: 'bills', label: 'Bills', color: '#7A2D4E', categories: ['rent'] },
+  {
+    id: 'misc',
+    label: 'MISC',
+    color: '#5E7344',
+    categories: ['leisure', 'travel', 'reimbursement', 'other'],
+  },
+];
+
+const BUCKET_INDEX: Record<string, (typeof BUCKET_DEFS)[number]> = (() => {
+  const m: Record<string, (typeof BUCKET_DEFS)[number]> = {};
+  for (const b of BUCKET_DEFS) m[b.id] = b;
+  return m;
+})();
+
+/** Prefix used to encode a bucket selection in `activeCategory`. */
+const BUCKET_PREFIX = 'bucket:';
+
 const PAYMENT_LABEL: Record<OfficeExpensePaymentMethod, string> = {
   cash: 'Cash',
   bank: 'Bank',
   card: 'Card',
   upi: 'UPI',
+  cheque: 'Cheque',
   employee_paid: 'Employee paid',
 };
 
@@ -241,14 +285,20 @@ export function OfficeApp({
   const [rows, setRows] = useState<readonly OfficeExpenseRow[] | null>(null);
   const [summary, setSummary] = useState<OfficeExpenseSummary | null>(null);
   const [salary, setSalary] = useState<SalaryPaymentsSummary | null>(null);
+  // FY-scoped salaries total for the grouped Salaries card (the unscoped
+  // `salary` above stays as the all-time KPI figure).
+  const [salaryFy, setSalaryFy] = useState<SalaryPaymentsSummary | null>(null);
   const [employees, setEmployees] = useState<readonly EmployeeOption[]>([]);
   const [vendorOptions, setVendorOptions] = useState<readonly VendorOption[]>([]);
   const [customCategories, setCustomCategories] = useState<readonly OfficeExpenseCategoryRow[]>([]);
   const [search, setSearch] = useState('');
-  // `activeCategory` is 'all', a built-in category id, or `custom:<id>`.
+  // `activeCategory` is 'all', a built-in category id, `custom:<id>`, or
+  // `bucket:<id>` (grouped view).
   const [activeCategory, setActiveCategory] = useState<OfficeExpenseCategory | 'all' | string>(
     'all',
   );
+  // Category strip view — grouped buckets (default) or every chip.
+  const [catView, setCatView] = useState<'grouped' | 'all'>('grouped');
   const [statusFilter, setStatusFilter] = useState<OfficeExpenseStatus | 'all'>('all');
   // Date filter — a preset period or a custom from/to range.
   const [datePreset, setDatePreset] = useState<DatePreset>('all');
@@ -284,16 +334,18 @@ export function OfficeApp({
 
   async function reload() {
     try {
-      const [list, sum, sal, cats, unposted] = await Promise.all([
+      const [list, sum, sal, salFy, cats, unposted] = await Promise.all([
         listOfficeExpenses({}),
         getOfficeExpenseSummary(),
         getSalaryPaymentsSummary(),
+        getSalaryPaymentsSummary({ from: fyStartIso() }),
         listOfficeExpenseCategories(),
         countUnpostedOfficeExpenses(),
       ]);
       setRows(list);
       setSummary(sum);
       setSalary(sal);
+      setSalaryFy(salFy);
       setCustomCategories(cats);
       setUnpostedCount(unposted);
     } catch (e) {
@@ -336,14 +388,16 @@ export function OfficeApp({
       listOfficeExpenses({}),
       getOfficeExpenseSummary(),
       getSalaryPaymentsSummary(),
+      getSalaryPaymentsSummary({ from: fyStartIso() }),
       listOfficeExpenseCategories(),
       countUnpostedOfficeExpenses(),
     ])
-      .then(([list, sum, sal, cats, unposted]) => {
+      .then(([list, sum, sal, salFy, cats, unposted]) => {
         if (cancelled) return;
         setRows(list);
         setSummary(sum);
         setSalary(sal);
+        setSalaryFy(salFy);
         setUnpostedCount(unposted);
         setCustomCategories(cats);
       })
@@ -419,6 +473,12 @@ export function OfficeApp({
       if (activeCategory !== 'all') {
         if (activeCategory.startsWith(CUSTOM_PREFIX)) {
           if (r.customCategoryId !== activeCategory.slice(CUSTOM_PREFIX.length)) return false;
+        } else if (activeCategory.startsWith(BUCKET_PREFIX)) {
+          const bucket = BUCKET_INDEX[activeCategory.slice(BUCKET_PREFIX.length)];
+          if (!bucket || !bucket.categories.includes(r.category)) return false;
+          // 'other' rows tagged with a custom category belong to their own
+          // custom card, not the MISC bucket.
+          if (r.category === 'other' && r.customCategoryId) return false;
         } else if (r.category !== activeCategory) {
           return false;
         }
@@ -455,6 +515,41 @@ export function OfficeApp({
       a.totalPaise > b.totalPaise ? -1 : a.totalPaise < b.totalPaise ? 1 : 0,
     )[0]!;
   }, [summary]);
+
+  // Per-bucket FY totals/counts from the summary. MISC's 'other' component
+  // excludes custom-categorised rows — they get their own cards — so subtract
+  // the customByCategory aggregates from the raw 'other' figures.
+  const bucketAggs = useMemo(() => {
+    const m = new Map<string, { totalPaise: bigint; count: number }>();
+    if (!summary) return m;
+    let customTotal = 0n;
+    let customCount = 0;
+    for (const c of summary.customByCategory) {
+      customTotal += c.totalPaise;
+      customCount += c.count;
+    }
+    for (const b of BUCKET_DEFS) {
+      let totalPaise = 0n;
+      let count = 0;
+      for (const cat of b.categories) {
+        const agg = summary.byCategory.find((x) => x.category === cat);
+        if (!agg) continue;
+        if (cat === 'other') {
+          totalPaise += agg.totalPaise - customTotal;
+          count += agg.count - customCount;
+        } else {
+          totalPaise += agg.totalPaise;
+          count += agg.count;
+        }
+      }
+      m.set(b.id, { totalPaise, count });
+    }
+    return m;
+  }, [summary]);
+
+  // Headline of the combined grouped card = Σ of the five buckets.
+  let combinedBucketTotalPaise = 0n;
+  for (const v of bucketAggs.values()) combinedBucketTotalPaise += v.totalPaise;
 
   // Sums over the rows currently in view — feeds the subheader, the export
   // TOTAL row, and the table's footer total line.
@@ -606,7 +701,9 @@ export function OfficeApp({
       <div className="main-header">
         <h2>Office</h2>
         <span className="sub">
-          {rows ? `${rows.length} entries · ${formatINR(filteredTotals.total)} in view` : 'Loading…'}
+          {rows
+            ? `${rows.length} entries · ${formatINR(filteredTotals.total)} in view`
+            : 'Loading…'}
         </span>
         <div className="grow" />
         <div className="search-input">
@@ -617,10 +714,7 @@ export function OfficeApp({
             onChange={(e) => setSearch(e.target.value)}
           />
         </div>
-        <OsExportButtons
-          onExport={handleExport}
-          disabled={!rows || filtered.length === 0}
-        />
+        <OsExportButtons onExport={handleExport} disabled={!rows || filtered.length === 0} />
         {canEdit && unpostedCount > 0 && (
           <button
             className="btn"
@@ -639,7 +733,11 @@ export function OfficeApp({
           type="button"
           disabled={!canEdit || busy}
           onClick={() => setShowImport(true)}
-          title={canEdit ? 'Import office expenses from an Excel / CSV sheet' : 'You need edit permission to import expenses.'}
+          title={
+            canEdit
+              ? 'Import office expenses from an Excel / CSV sheet'
+              : 'You need edit permission to import expenses.'
+          }
         >
           <Icon name="inbox" size={13} />
           Import
@@ -730,61 +828,98 @@ export function OfficeApp({
         />
       </div>
 
-      {/* Category chips */}
+      {/* Category strip — grouped buckets (default) or every chip */}
       <div
         style={{
           display: 'flex',
           gap: 6,
           padding: '10px 20px',
-          borderBottom: '1px solid var(--border)',
+          borderBottom: catView === 'grouped' ? 'none' : '1px solid var(--border)',
           flexWrap: 'wrap',
           alignItems: 'center',
         }}
       >
-        <CategoryChip
-          active={activeCategory === 'all'}
-          onClick={() => setActiveCategory('all')}
-          color="var(--text-dim)"
-          label="All"
-          count={rows?.length ?? 0}
-        />
-        {CATEGORY_DEFS.map((c) => {
-          const agg = summary?.byCategory.find((b) => b.category === c.id);
-          return (
+        <div
+          style={{
+            display: 'inline-flex',
+            border: '1px solid var(--border)',
+            borderRadius: 7,
+            overflow: 'hidden',
+          }}
+        >
+          {(['grouped', 'all'] as const).map((v) => (
+            <button
+              key={v}
+              type="button"
+              onClick={() => {
+                if (catView === v) return;
+                setCatView(v);
+                // A bucket filter has no chip in 'all' and vice-versa —
+                // reset so no invisible filter lingers across the switch.
+                setActiveCategory('all');
+              }}
+              style={{
+                padding: '4px 10px',
+                fontSize: 11.5,
+                border: 'none',
+                cursor: 'pointer',
+                background: catView === v ? 'var(--content-2)' : 'transparent',
+                color: catView === v ? 'var(--text)' : 'var(--text-muted)',
+                fontWeight: catView === v ? 600 : 400,
+              }}
+            >
+              {v === 'grouped' ? 'Grouped' : 'Everything'}
+            </button>
+          ))}
+        </div>
+        {catView === 'all' ? (
+          <>
             <CategoryChip
-              key={c.id}
-              active={activeCategory === c.id}
-              onClick={() => setActiveCategory(c.id)}
-              color={c.color}
-              label={c.label}
-              count={agg?.count ?? 0}
+              active={activeCategory === 'all'}
+              onClick={() => setActiveCategory('all')}
+              color="var(--text-dim)"
+              label="All"
+              count={rows?.length ?? 0}
             />
-          );
-        })}
-        {customCategories.map((c) => {
-          const key = `${CUSTOM_PREFIX}${c.id}`;
-          const agg = summary?.customByCategory.find((b) => b.id === c.id);
-          return (
-            <CategoryChip
-              key={key}
-              active={activeCategory === key}
-              onClick={() => setActiveCategory(key)}
-              color={c.color ?? agg?.color ?? 'var(--text-dim)'}
-              label={c.name}
-              count={agg?.count ?? 0}
-            />
-          );
-        })}
-        {canEdit && customCategories.length > 0 ? (
-          <button
-            type="button"
-            className="btn"
-            style={{ padding: '3px 10px', fontSize: 11.5 }}
-            title="Move entries between categories and delete empty ones"
-            onClick={() => setShowManageCategories(true)}
-          >
-            <Icon name="settings" size={12} /> Manage
-          </button>
+            {CATEGORY_DEFS.map((c) => {
+              const agg = summary?.byCategory.find((b) => b.category === c.id);
+              return (
+                <CategoryChip
+                  key={c.id}
+                  active={activeCategory === c.id}
+                  onClick={() => setActiveCategory(c.id)}
+                  color={c.color}
+                  label={c.label}
+                  count={agg?.count ?? 0}
+                />
+              );
+            })}
+            {customCategories.map((c) => {
+              const key = `${CUSTOM_PREFIX}${c.id}`;
+              const agg = summary?.customByCategory.find((b) => b.id === c.id);
+              return (
+                <CategoryChip
+                  key={key}
+                  active={activeCategory === key}
+                  onClick={() => setActiveCategory(key)}
+                  color={c.color ?? agg?.color ?? 'var(--text-dim)'}
+                  label={c.name}
+                  count={agg?.count ?? 0}
+                />
+              );
+            })}
+            {canEdit && customCategories.length > 0 ? (
+              <button
+                type="button"
+                className="btn"
+                style={{ padding: '3px 10px', fontSize: 11.5 }}
+                title="Move entries between categories and delete empty ones"
+                onClick={() => setShowManageCategories(true)}
+              >
+                <Icon name="settings" size={12} /> Manage
+              </button>
+            ) : null}
+          </>
         ) : null}
         <div style={{ flex: 1 }} />
         <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Dates:</span>
@@ -832,6 +967,229 @@ export function OfficeApp({
           ))}
         </select>
       </div>
+
+      {/* Grouped bucket cards — the default category strip */}
+      {catView === 'grouped' ? (
+        <div
+          style={{
+            display: 'flex',
+            gap: 12,
+            padding: '0 20px 12px',
+            borderBottom: '1px solid var(--border)',
+            flexWrap: 'wrap',
+            alignItems: 'stretch',
+          }}
+        >
+          {/* One combined card for the five built-in buckets */}
+          <div
+            style={{
+              background: 'var(--content-2)',
+              border: '1px solid var(--border)',
+              borderRadius: 10,
+              padding: 12,
+              flex: '2 1 340px',
+              minWidth: 300,
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+              <div
+                style={{
+                  fontSize: 11,
+                  color: 'var(--text-muted)',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.06em',
+                  fontWeight: 600,
+                }}
+              >
+                Supplies | Utilities | Maintenance | MISC | Bills
+              </div>
+              <div style={{ flex: 1 }} />
+              <div
+                className="font-display"
+                style={{ fontSize: 16, fontVariantNumeric: 'tabular-nums' }}
+              >
+                {formatINR(combinedBucketTotalPaise)}
+              </div>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 2, marginTop: 8 }}>
+              {BUCKET_DEFS.map((b) => {
+                const agg = bucketAggs.get(b.id);
+                const key = `${BUCKET_PREFIX}${b.id}`;
+                const active = activeCategory === key;
+                return (
+                  <button
+                    key={b.id}
+                    type="button"
+                    onClick={() => setActiveCategory(active ? 'all' : key)}
+                    title={`Show only ${b.label} expenses`}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 8,
+                      padding: '4px 8px',
+                      borderRadius: 7,
+                      border: `1px solid ${active ? b.color : 'transparent'}`,
+                      background: active
+                        ? `color-mix(in oklab, ${b.color} 18%, transparent)`
+                        : 'transparent',
+                      color: 'var(--text)',
+                      fontSize: 12,
+                      cursor: 'pointer',
+                      textAlign: 'left',
+                    }}
+                  >
+                    <span
+                      style={{
+                        width: 8,
+                        height: 8,
+                        borderRadius: '50%',
+                        background: b.color,
+                        flexShrink: 0,
+                      }}
+                    />
+                    {b.label}
+                    <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>
+                      {agg?.count ?? 0}
+                    </span>
+                    <span style={{ flex: 1 }} />
+                    <span style={{ fontVariantNumeric: 'tabular-nums' }}>
+                      {formatINR(agg?.totalPaise ?? 0n)}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* One card per custom category (seeded Softwares/Assets included) */}
+          {customCategories.map((c) => {
+            const key = `${CUSTOM_PREFIX}${c.id}`;
+            const active = activeCategory === key;
+            const agg = summary?.customByCategory.find((b) => b.id === c.id);
+            const color = c.color ?? agg?.color ?? 'var(--text-dim)';
+            return (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setActiveCategory(active ? 'all' : key)}
+                title={`Show only ${c.name} expenses`}
+                style={{
+                  background: active
+                    ? `color-mix(in oklab, ${color} 12%, var(--content-2))`
+                    : 'var(--content-2)',
+                  border: `1px solid ${active ? color : 'var(--border)'}`,
+                  borderRadius: 10,
+                  padding: 12,
+                  flex: '1 1 150px',
+                  minWidth: 140,
+                  maxWidth: 220,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 4,
+                  textAlign: 'left',
+                  cursor: 'pointer',
+                  color: 'var(--text)',
+                }}
+              >
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    fontSize: 12,
+                    fontWeight: 600,
+                  }}
+                >
+                  <span
+                    style={{
+                      width: 8,
+                      height: 8,
+                      borderRadius: '50%',
+                      background: color,
+                      flexShrink: 0,
+                    }}
+                  />
+                  <span
+                    style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                  >
+                    {c.name}
+                  </span>
+                </div>
+                <div
+                  className="font-display"
+                  style={{ fontSize: 16, fontVariantNumeric: 'tabular-nums' }}
+                >
+                  {formatINR(agg?.totalPaise ?? 0n)}
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                  {agg?.count ?? 0} entr{(agg?.count ?? 0) === 1 ? 'y' : 'ies'}
+                </div>
+              </button>
+            );
+          })}
+
+          {/* Salaries — display-only card; opens the per-employee salary book */}
+          <button
+            type="button"
+            onClick={() =>
+              osActions.openWindow({
+                app: 'ledger',
+                entityId: 'salary-book',
+                title: 'Salary book',
+                position: 'beside-focused',
+              })
+            }
+            title="Open the per-employee salary book"
+            style={{
+              background: 'var(--content-2)',
+              border: '1px solid var(--border)',
+              borderRadius: 10,
+              padding: 12,
+              flex: '1 1 150px',
+              minWidth: 140,
+              maxWidth: 220,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 4,
+              textAlign: 'left',
+              cursor: 'pointer',
+              color: 'var(--text)',
+            }}
+          >
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                fontSize: 12,
+                fontWeight: 600,
+              }}
+            >
+              <span
+                style={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: '50%',
+                  background: '#B5391E',
+                  flexShrink: 0,
+                }}
+              />
+              Salaries
+            </div>
+            <div
+              className="font-display"
+              style={{ fontSize: 16, fontVariantNumeric: 'tabular-nums' }}
+            >
+              {salaryFy ? formatINR(salaryFy.totalPaise) : '—'}
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+              {salaryFy
+                ? `${salaryFy.count} payment${salaryFy.count === 1 ? '' : 's'} this FY · salary book →`
+                : 'This FY · salary book →'}
+            </div>
+          </button>
+        </div>
+      ) : null}
 
       {/* Expense table */}
       <div style={{ flex: 1, overflow: 'auto', padding: '0 16px 16px' }}>
@@ -1321,6 +1679,9 @@ type ExpenseFormValues = {
   amountPaise: bigint;
   gstPaise: bigint;
   paymentMethod: OfficeExpensePaymentMethod;
+  /** Cheque capture (0064) — set when paymentMethod='cheque'. */
+  chequeNumber: string | null;
+  chequeDate: string | null;
   status: OfficeExpenseStatus;
   referenceNumber: string | null;
   notes: string | null;
@@ -1392,6 +1753,9 @@ function ExpenseFormModal({
   const [paymentMethod, setPaymentMethod] = useState<OfficeExpensePaymentMethod>(
     initial?.paymentMethod ?? 'bank',
   );
+  // Cheque capture (0064) — surfaced only while paymentMethod === 'cheque'.
+  const [chequeNumber, setChequeNumber] = useState(initial?.chequeNumber ?? '');
+  const [chequeDate, setChequeDate] = useState(initial?.chequeDate ?? '');
   const [status, setStatus] = useState<OfficeExpenseStatus>(initial?.status ?? 'approved');
   const [referenceNumber, setReferenceNumber] = useState(initial?.referenceNumber ?? '');
   const [notes, setNotes] = useState(initial?.notes ?? '');
@@ -1463,9 +1827,7 @@ function ExpenseFormModal({
 
   // Whether the current selection is a custom (user-defined) category.
   const isCustomCategory = categorySelection.startsWith(CUSTOM_PREFIX);
-  const customCategoryId = isCustomCategory
-    ? categorySelection.slice(CUSTOM_PREFIX.length)
-    : null;
+  const customCategoryId = isCustomCategory ? categorySelection.slice(CUSTOM_PREFIX.length) : null;
   // Built-in "Other" with no custom category → needs a free-text Particulars.
   const needsParticulars = category === 'other' && !isCustomCategory;
 
@@ -1508,6 +1870,10 @@ function ExpenseFormModal({
       setErr('Pick the employee who paid out of pocket.');
       return;
     }
+    if (paymentMethod === 'cheque' && !chequeNumber.trim()) {
+      setErr('Enter the cheque number.');
+      return;
+    }
 
     let vendorId: string | null = null;
     let vendorNameOut: string | null = null;
@@ -1536,6 +1902,8 @@ function ExpenseFormModal({
       amountPaise,
       gstPaise,
       paymentMethod,
+      chequeNumber: paymentMethod === 'cheque' ? chequeNumber.trim() || null : null,
+      chequeDate: paymentMethod === 'cheque' ? chequeDate || null : null,
       status,
       referenceNumber: referenceNumber.trim() || null,
       notes: notes.trim() || null,
@@ -1560,9 +1928,7 @@ function ExpenseFormModal({
         </Field>
         <Field
           label="Category"
-          hint={
-            isCustomCategory ? 'Custom category — posts to the ledger as "Other".' : undefined
-          }
+          hint={isCustomCategory ? 'Custom category — posts to the ledger as "Other".' : undefined}
         >
           <select value={categorySelection} onChange={(e) => changeCategory(e.target.value)}>
             {CATEGORY_DEFS.map((c) => (
@@ -1620,10 +1986,7 @@ function ExpenseFormModal({
                     height: 20,
                     borderRadius: '50%',
                     background: sw,
-                    border:
-                      newCatColor === sw
-                        ? '2px solid var(--text)'
-                        : '2px solid transparent',
+                    border: newCatColor === sw ? '2px solid var(--text)' : '2px solid transparent',
                     cursor: 'pointer',
                     padding: 0,
                   }}
@@ -1775,6 +2138,25 @@ function ExpenseFormModal({
             ))}
           </select>
         </Field>
+        {paymentMethod === 'cheque' ? (
+          <>
+            <Field label="Cheque number">
+              <input
+                value={chequeNumber}
+                onChange={(e) => setChequeNumber(e.target.value)}
+                placeholder="e.g. 123456"
+                className="font-mono"
+              />
+            </Field>
+            <Field label="Cheque date" hint="Optional — as written on the cheque.">
+              <input
+                type="date"
+                value={chequeDate}
+                onChange={(e) => setChequeDate(e.target.value)}
+              />
+            </Field>
+          </>
+        ) : null}
         <Field label="Status">
           <select value={status} onChange={(e) => setStatus(e.target.value as OfficeExpenseStatus)}>
             {(Object.keys(STATUS_LABEL) as OfficeExpenseStatus[]).map((s) => (
@@ -1818,12 +2200,11 @@ function ExpenseFormModal({
               }}
             >
               <Icon name="filetext" size={13} />
-              <span style={{ color: 'var(--text)' }}>
-                {existingDoc.name ?? 'Attached invoice'}
-              </span>
+              <span style={{ color: 'var(--text)' }}>{existingDoc.name ?? 'Attached invoice'}</span>
               <button
                 type="button"
-                className="btn"                onClick={async () => {
+                className="btn"
+                onClick={async () => {
                   try {
                     const { url } = await getDocumentSignedUrl(existingDoc.id);
                     window.open(url, '_blank');
@@ -1837,7 +2218,8 @@ function ExpenseFormModal({
               </button>
               <button
                 type="button"
-                className="btn row-delete"                disabled={removingDoc || !initial}
+                className="btn row-delete"
+                disabled={removingDoc || !initial}
                 onClick={async () => {
                   if (!initial) return;
                   setRemovingDoc(true);
@@ -2057,8 +2439,9 @@ function OpeningBalancesModal({
             }}
           >
             Partners / admins only. Seeds the ledger&apos;s starting position — cash (1110), bank
-            balances (1120), company assets (1510) and partner capital (3100). The residual auto-plugs
-            to <strong>Opening Balance Equity (3900)</strong> so the entry always balances.
+            balances (1120), company assets (1510) and partner capital (3100). The residual
+            auto-plugs to <strong>Opening Balance Equity (3900)</strong> so the entry always
+            balances.
           </div>
 
           <Field label="As-of date" hint="Usually the financial-year start (1 Apr).">
@@ -2192,9 +2575,7 @@ function OpeningBalancesModal({
               </button>
             </div>
             {partners.length === 0 ? (
-              <p style={{ fontSize: 12, color: 'var(--text-dim)' }}>
-                No partner users found.
-              </p>
+              <p style={{ fontSize: 12, color: 'var(--text-dim)' }}>No partner users found.</p>
             ) : (
               partnerLines.map((l) => (
                 <div
@@ -2255,17 +2636,19 @@ function OpeningBalancesModal({
             }}
           >
             <span style={{ color: 'var(--text-muted)' }}>Total assets (cash + banks + assets)</span>
-            <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>
+            <span
+              style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}
+            >
               {formatINR(totalAssets)}
             </span>
             <span style={{ color: 'var(--text-muted)' }}>Partner funds (3100)</span>
-            <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>
+            <span
+              style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}
+            >
               {formatINR(partnerPaise)}
             </span>
             <span style={{ color: 'var(--text-muted)', gridColumn: '1 / -1', height: 1 }} />
-            <span style={{ color: 'var(--text)' }}>
-              Auto-plug → Opening Balance Equity (3900)
-            </span>
+            <span style={{ color: 'var(--text)' }}>Auto-plug → Opening Balance Equity (3900)</span>
             <span
               style={{
                 textAlign: 'right',
@@ -2275,11 +2658,7 @@ function OpeningBalancesModal({
             >
               {formatINR(plug < 0n ? -plug : plug)}{' '}
               <span style={{ color: 'var(--text-dim)', fontWeight: 400, fontSize: 11 }}>
-                {plug === 0n
-                  ? '(balanced)'
-                  : plug > 0n
-                    ? 'credit (equity)'
-                    : 'debit (contra)'}
+                {plug === 0n ? '(balanced)' : plug > 0n ? 'credit (equity)' : 'debit (contra)'}
               </span>
             </span>
             <span
@@ -2406,7 +2785,8 @@ function parseImportPaymentMode(raw: string): OfficeExpensePaymentMethod {
   const v = raw.trim().toLowerCase();
   if (!v) return 'cash';
   if (/(cash|hand)/.test(v)) return 'cash';
-  if (/(bank|neft|rtgs|imps|cheque|check|transfer|net ?banking)/.test(v)) return 'bank';
+  if (/(cheque|check)/.test(v)) return 'cheque';
+  if (/(bank|neft|rtgs|imps|transfer|net ?banking)/.test(v)) return 'bank';
   if (/(card|debit|credit|visa|master|rupay)/.test(v)) return 'card';
   if (/(upi|gpay|g pay|google pay|phonepe|paytm|bhim|qr)/.test(v)) return 'upi';
   if (/(employee|reimburse|self|out of pocket|personal)/.test(v)) return 'employee_paid';
@@ -2756,12 +3136,12 @@ function ImportOfficeExpensesModal({
             lineHeight: 1.5,
           }}
         >
-          Upload an Excel (.xlsx, .xls) or CSV sheet. Columns are matched by name
-          — a header row is required. Amounts are read from <strong>Total</strong>{' '}
-          (falling back to <strong>Sub Total</strong>); each row is captured as-is.
-          If the workbook has more than one sheet, choose which ones to import —
-          they&apos;re all brought in together. Every imported expense is filed
-          under <strong>Others</strong> — recategorise them from the list afterwards.
+          Upload an Excel (.xlsx, .xls) or CSV sheet. Columns are matched by name — a header row is
+          required. Amounts are read from <strong>Total</strong> (falling back to{' '}
+          <strong>Sub Total</strong>); each row is captured as-is. If the workbook has more than one
+          sheet, choose which ones to import — they&apos;re all brought in together. Every imported
+          expense is filed under <strong>Others</strong> — recategorise them from the list
+          afterwards.
         </div>
 
         <div style={{ gridColumn: '1 / -1', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -2900,9 +3280,7 @@ function ImportOfficeExpensesModal({
                 </span>
               )}
               {preview.skipped > 0 && (
-                <span style={{ color: 'var(--text-muted)' }}>
-                  · {preview.skipped} skipped
-                </span>
+                <span style={{ color: 'var(--text-muted)' }}>· {preview.skipped} skipped</span>
               )}
               {preview.warnings.length > 0 && (
                 <span style={{ color: 'var(--amber)' }}>
@@ -2959,17 +3337,16 @@ function ImportOfficeExpensesModal({
                       </td>
                       <td>{r.description}</td>
                       <td style={{ color: 'var(--text-muted)' }}>Others</td>
-                      <td
-                        className="font-mono"
-                        style={{ fontSize: 11, color: 'var(--text-dim)' }}
-                      >
+                      <td className="font-mono" style={{ fontSize: 11, color: 'var(--text-dim)' }}>
                         {r.referenceNumber ?? '—'}
                       </td>
                       <td style={{ color: 'var(--text-muted)' }}>
                         {r.paymentMethod ? PAYMENT_LABEL[r.paymentMethod] : '—'}
                       </td>
                       <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
-                        {formatINR(typeof r.amountPaise === 'bigint' ? r.amountPaise : BigInt(r.amountPaise))}
+                        {formatINR(
+                          typeof r.amountPaise === 'bigint' ? r.amountPaise : BigInt(r.amountPaise),
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -3001,7 +3378,9 @@ function ImportOfficeExpensesModal({
             disabled={!preview || rowCount === 0 || committing || parsing}
           >
             <Icon name="check" size={13} />
-            {committing ? 'Importing…' : `Import ${rowCount || ''} expense${rowCount === 1 ? '' : 's'}`}
+            {committing
+              ? 'Importing…'
+              : `Import ${rowCount || ''} expense${rowCount === 1 ? '' : 's'}`}
           </button>
         </div>
       </div>
@@ -3101,9 +3480,9 @@ function ManageCategoriesModal({
     <Modal title="Manage categories" onClose={onClose} width={640}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         <p style={{ margin: 0, fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.5 }}>
-          A category can only be deleted once it has no entries. If it still has entries, move
-          them all to another category first — posted entries are re-posted to the right ledger
-          account automatically.
+          A category can only be deleted once it has no entries. If it still has entries, move them
+          all to another category first — posted entries are re-posted to the right ledger account
+          automatically.
         </p>
         {usage === null ? (
           <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: 13 }}>Loading usage…</p>

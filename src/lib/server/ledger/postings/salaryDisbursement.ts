@@ -26,9 +26,13 @@ import type { PostingTemplateResult } from '../types';
 export const SalaryDisbursementInputSchema = z.object({
   employeeId: z.string().uuid(),
   amountPaise: z.bigint().positive(),
-  /** 'bank' → Cr 1120 (needs bankAccountId); 'cash' → Cr 1110. */
-  mode: z.enum(['bank', 'cash']).default('cash'),
+  /** 'bank'/'cheque' → Cr 1120 (needs bankAccountId); 'cash' → Cr 1110.
+   *  A cheque still moves through the bank — same leg, extra capture. */
+  mode: z.enum(['bank', 'cash', 'cheque']).default('cash'),
   bankAccountId: z.string().uuid().nullish(),
+  /** Cheque capture (0064) — set when mode='cheque'. */
+  chequeNumber: z.string().nullish(),
+  chequeDate: z.string().nullish(),
   txnDate: z.string(),
   externalRef: z.string().min(1),
   notes: z.string().nullish(),
@@ -38,7 +42,7 @@ export type SalaryDisbursementInput = z.input<typeof SalaryDisbursementInputSche
 
 export function salaryDisbursement(input: SalaryDisbursementInput): PostingTemplateResult {
   const parsed = SalaryDisbursementInputSchema.parse(input);
-  const payFromBank = parsed.mode === 'bank' && !!parsed.bankAccountId;
+  const payFromBank = parsed.mode !== 'cash' && !!parsed.bankAccountId;
   return {
     externalRef: parsed.externalRef,
     description: 'Salary paid',
@@ -59,7 +63,11 @@ export function salaryDisbursement(input: SalaryDisbursementInput): PostingTempl
         ...(payFromBank
           ? { subledger: { entityType: 'office' as const, entityId: parsed.bankAccountId! } }
           : {}),
-        metadata: { mode: payFromBank ? 'bank' : 'cash' },
+        metadata: {
+          mode: payFromBank ? parsed.mode : 'cash',
+          cheque_number: parsed.chequeNumber ?? null,
+          cheque_date: parsed.chequeDate ?? null,
+        },
       },
     ],
   };

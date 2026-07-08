@@ -463,7 +463,11 @@ export function CompensationSection({ employeeId, employeeName }: CompensationSe
                         {p.notes ?? <span style={{ color: 'var(--text-muted)' }}>—</span>}
                       </span>
                       <span style={{ display: 'block', fontSize: 11, color: 'var(--text-muted)' }}>
-                        {p.paymentMethod === 'bank' ? (p.bankLabel ?? 'Bank transfer') : 'Cash'}
+                        {p.paymentMethod === 'bank'
+                          ? (p.bankLabel ?? 'Bank transfer')
+                          : p.paymentMethod === 'cheque'
+                            ? `Cheque${p.chequeNumber ? ` #${p.chequeNumber}` : ''}${p.bankLabel ? ` · ${p.bankLabel}` : ''}`
+                            : 'Cash'}
                       </span>
                     </span>
                     <span style={{ textAlign: 'right' }}>
@@ -583,8 +587,12 @@ function SalaryPaymentForm({
   // The attendance-prorated salary the employee is DUE for the prior month —
   // snapshotted onto the payment row alongside the amount actually paid.
   const [expectedPaise, setExpectedPaise] = useState<Paise | null>(null);
-  // How the salary is being paid out: bank transfer (pick the agency bank) or cash.
-  const [mode, setMode] = useState<'bank' | 'cash'>('bank');
+  // How the salary is being paid out: bank transfer / cheque (pick the agency
+  // bank — a cheque still moves through it) or cash.
+  const [mode, setMode] = useState<'bank' | 'cash' | 'cheque'>('bank');
+  // Cheque capture (0064) — surfaced only while mode === 'cheque'.
+  const [chequeNumber, setChequeNumber] = useState('');
+  const [chequeDate, setChequeDate] = useState('');
   const [bankAccountId, setBankAccountId] = useState('');
   const [ourBanks, setOurBanks] = useState<readonly AgencyBankAccountRow[]>([]);
 
@@ -625,9 +633,7 @@ function SalaryPaymentForm({
       .catch(() => {
         // Fall back silently to the CTC prefill already seeded above.
         if (!cancelled) {
-          setAutoHint(
-            `(couldn't load ${priorMonthLabel} attendance — showing current CTC)`,
-          );
+          setAutoHint(`(couldn't load ${priorMonthLabel} attendance — showing current CTC)`);
         }
       })
       .finally(() => {
@@ -650,8 +656,12 @@ function SalaryPaymentForm({
       toast.error('Enter the amount paid.');
       return;
     }
-    if (mode === 'bank' && !bankAccountId) {
+    if (mode !== 'cash' && !bankAccountId) {
       toast.error('Pick the bank account the salary was paid from.');
+      return;
+    }
+    if (mode === 'cheque' && !chequeNumber.trim()) {
+      toast.error('Enter the cheque number.');
       return;
     }
     setBusy(true);
@@ -662,7 +672,9 @@ function SalaryPaymentForm({
         amountPaise: rupeesToPaise(amount),
         expectedAmountPaise: expectedPaise,
         mode,
-        bankAccountId: mode === 'bank' ? bankAccountId : null,
+        bankAccountId: mode !== 'cash' ? bankAccountId : null,
+        chequeNumber: mode === 'cheque' ? chequeNumber.trim() || null : null,
+        chequeDate: mode === 'cheque' ? chequeDate || null : null,
         notes: notes.trim() || null,
       });
       toast.success('Salary payment recorded.');
@@ -740,7 +752,7 @@ function SalaryPaymentForm({
           Paid via
         </span>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-          {(['bank', 'cash'] as const).map((m) => (
+          {(['bank', 'cheque', 'cash'] as const).map((m) => (
             <button
               key={m}
               type="button"
@@ -752,10 +764,10 @@ function SalaryPaymentForm({
                 background: mode === m ? 'rgba(230,58,31,0.08)' : 'transparent',
               }}
             >
-              {m === 'bank' ? 'Bank transfer' : 'Cash'}
+              {m === 'bank' ? 'Bank transfer' : m === 'cheque' ? 'Cheque' : 'Cash'}
             </button>
           ))}
-          {mode === 'bank' ? (
+          {mode !== 'cash' ? (
             <select
               value={bankAccountId}
               onChange={(e) => setBankAccountId(e.target.value)}
@@ -774,6 +786,36 @@ function SalaryPaymentForm({
             </select>
           ) : null}
         </div>
+        {mode === 'cheque' ? (
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
+              gap: 8,
+              marginTop: 6,
+            }}
+          >
+            <Field label="Cheque number">
+              <input
+                type="text"
+                value={chequeNumber}
+                onChange={(e) => setChequeNumber(e.target.value)}
+                disabled={busy}
+                placeholder="e.g. 123456"
+                style={inputStyle}
+              />
+            </Field>
+            <Field label="Cheque date (optional)">
+              <input
+                type="date"
+                value={chequeDate}
+                onChange={(e) => setChequeDate(e.target.value)}
+                disabled={busy}
+                style={inputStyle}
+              />
+            </Field>
+          </div>
+        ) : null}
       </div>
       <Field label="Note (optional)">
         <input
