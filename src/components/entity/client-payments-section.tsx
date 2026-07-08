@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/shared/empty-state';
+import { DateField } from '@/components/shared/date-field';
 import { StatusBadge } from '@/components/shared/status-badge';
 import { formatINR } from '@/components/shared/format-inr';
 import { paiseToRupees, rupeesToPaise } from '@/lib/money';
@@ -711,12 +712,10 @@ function RecordReceiptDialog({
               </div>
               <div className="os-field">
                 <span className="os-field-label">Cheque date (optional)</span>
-                <input
-                  type="date"
+                <DateField
                   value={chequeDate}
-                  onChange={(e) => setChequeDate(e.target.value)}
+                  onChange={(next) => setChequeDate(next)}
                   disabled={submitting}
-                  style={osInputStyle}
                 />
               </div>
             </div>
@@ -775,13 +774,12 @@ function RecordReceiptDialog({
               <label htmlFor="rcpt-date" className="os-field-label">
                 Date
               </label>
-              <input
+              <DateField
                 id="rcpt-date"
-                type="date"
                 value={paymentDate}
-                onChange={(e) => setPaymentDate(e.target.value)}
+                onChange={(next) => setPaymentDate(next)}
                 disabled={submitting}
-                style={osInputStyle}
+                clearable={false}
               />
             </div>
             <div className="os-field">
@@ -1231,13 +1229,12 @@ function AddToBalanceDialog({
               <label htmlFor="bal-date" className="os-field-label">
                 Received on
               </label>
-              <input
+              <DateField
                 id="bal-date"
-                type="date"
-                style={osInputStyle}
                 value={receiptDate}
-                onChange={(e) => setReceiptDate(e.target.value)}
+                onChange={(next) => setReceiptDate(next)}
                 disabled={submitting}
+                clearable={false}
               />
             </div>
             <div className="os-field">

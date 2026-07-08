@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/shared/empty-state';
+import { DateField } from '@/components/shared/date-field';
 import { StatusBadge } from '@/components/shared/status-badge';
 import { formatINR } from '@/components/shared/format-inr';
 import { rupeesToPaise } from '@/lib/money';
@@ -579,12 +580,10 @@ function RecordVendorPaymentDialog({
               </div>
               <div className="os-field">
                 <span className="os-field-label">Cheque date (optional)</span>
-                <input
-                  type="date"
+                <DateField
                   value={chequeDate}
-                  onChange={(e) => setChequeDate(e.target.value)}
+                  onChange={(next) => setChequeDate(next)}
                   disabled={submitting}
-                  style={osInputStyle}
                 />
               </div>
             </div>
@@ -643,13 +642,12 @@ function RecordVendorPaymentDialog({
               <label htmlFor="vp-date" className="os-field-label">
                 Date
               </label>
-              <input
+              <DateField
                 id="vp-date"
-                type="date"
                 value={paymentDate}
-                onChange={(e) => setPaymentDate(e.target.value)}
+                onChange={(next) => setPaymentDate(next)}
                 disabled={submitting}
-                style={osInputStyle}
+                clearable={false}
               />
             </div>
             <div className="os-field">

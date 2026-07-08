@@ -35,6 +35,7 @@ import {
 import { formatINR, paiseToRupees, rupeesToPaise, type Paise } from '@/lib/money';
 import { useCurrentUser } from '@/lib/client/use-current-user';
 import { useEntityMutation } from '@/components/os/auth/entity-mutation-gate';
+import { DateField } from '@/components/shared/date-field';
 
 export type CompensationSectionProps = {
   employeeId: string;
@@ -706,12 +707,11 @@ function SalaryPaymentForm({
         }}
       >
         <Field label="Date paid">
-          <input
-            type="date"
+          <DateField
             value={paidOn}
-            onChange={(e) => setPaidOn(e.target.value)}
+            onChange={(next) => setPaidOn(next)}
             disabled={busy}
-            style={inputStyle}
+            clearable={false}
           />
         </Field>
         <Field label={`Salary due (${priorMonthLabel})`}>
@@ -806,12 +806,10 @@ function SalaryPaymentForm({
               />
             </Field>
             <Field label="Cheque date (optional)">
-              <input
-                type="date"
+              <DateField
                 value={chequeDate}
-                onChange={(e) => setChequeDate(e.target.value)}
+                onChange={(next) => setChequeDate(next)}
                 disabled={busy}
-                style={inputStyle}
               />
             </Field>
           </div>
@@ -1026,12 +1024,11 @@ function NewSalaryForm({
         }}
       >
         <Field label="Effective from">
-          <input
-            type="date"
+          <DateField
             value={effectiveFrom}
-            onChange={(e) => setEffectiveFrom(e.target.value)}
+            onChange={(next) => setEffectiveFrom(next)}
             disabled={busy}
-            style={inputStyle}
+            clearable={false}
           />
         </Field>
         <Field label="Monthly CTC (₹)">
@@ -1206,12 +1203,11 @@ function RecordBonusForm({
           </select>
         </Field>
         <Field label="Date">
-          <input
-            type="date"
+          <DateField
             value={bonusDate}
-            onChange={(e) => setBonusDate(e.target.value)}
+            onChange={(next) => setBonusDate(next)}
             disabled={busy}
-            style={inputStyle}
+            clearable={false}
           />
         </Field>
         <Field label={requiresAmount ? 'Amount (₹)' : 'Amount (in-kind)'}>

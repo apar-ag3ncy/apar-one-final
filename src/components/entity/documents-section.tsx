@@ -34,6 +34,7 @@ import {
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/shared/empty-state';
+import { DateField } from '@/components/shared/date-field';
 import { StatusBadge } from '@/components/shared/status-badge';
 import { DocumentViewer } from '@/components/entity/document-viewer';
 import {
@@ -414,7 +415,11 @@ export function DocumentsSection({
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setConfirming(null)} disabled={busyId !== null}>
+            <Button
+              variant="outline"
+              onClick={() => setConfirming(null)}
+              disabled={busyId !== null}
+            >
               Cancel
             </Button>
             <Button
@@ -829,21 +834,19 @@ function UploadDialog({
                   <div className="grid grid-cols-2 gap-3">
                     <div className="grid gap-1.5">
                       <Label htmlFor="inv-doc-date">Invoice date</Label>
-                      <Input
+                      <DateField
                         id="inv-doc-date"
-                        type="date"
                         value={invDate}
-                        onChange={(e) => setInvDate(e.target.value)}
+                        onChange={(next) => setInvDate(next)}
                         disabled={uploading}
                       />
                     </div>
                     <div className="grid gap-1.5">
                       <Label htmlFor="inv-doc-due">Due date (optional)</Label>
-                      <Input
+                      <DateField
                         id="inv-doc-due"
-                        type="date"
                         value={invDueDate}
-                        onChange={(e) => setInvDueDate(e.target.value)}
+                        onChange={(next) => setInvDueDate(next)}
                         disabled={uploading}
                       />
                     </div>
@@ -954,21 +957,19 @@ function UploadDialog({
           <div className="grid grid-cols-2 gap-3">
             <div className="grid gap-1.5">
               <Label htmlFor="doc-signed-at">Signed on</Label>
-              <Input
+              <DateField
                 id="doc-signed-at"
-                type="date"
                 value={signedAt}
-                onChange={(e) => setSignedAt(e.target.value)}
+                onChange={(next) => setSignedAt(next)}
                 disabled={uploading}
               />
             </div>
             <div className="grid gap-1.5">
               <Label htmlFor="doc-expires-at">Expires on</Label>
-              <Input
+              <DateField
                 id="doc-expires-at"
-                type="date"
                 value={expiresAt}
-                onChange={(e) => setExpiresAt(e.target.value)}
+                onChange={(next) => setExpiresAt(next)}
                 disabled={uploading}
               />
             </div>

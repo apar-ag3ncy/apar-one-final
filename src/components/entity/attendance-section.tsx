@@ -14,6 +14,7 @@ import {
 } from '@/lib/server/entities/attendance';
 import { defaultStatusForDate } from '@/lib/attendance-defaults';
 import { applyLeave, listEmployeeLeaves, type LeaveRow } from '@/lib/server/entities/payroll';
+import { DateField } from '@/components/shared/date-field';
 
 /**
  * OS-themed Attendance + Leaves section for the employee profile.
@@ -452,21 +453,19 @@ function ApplyLeaveCard({ employeeId, onApplied }: { employeeId: string; onAppli
           </select>
         </Field>
         <Field label="From">
-          <input
-            type="date"
+          <DateField
             value={fromDate}
-            onChange={(e) => setFromDate(e.target.value)}
+            onChange={(next) => setFromDate(next)}
             disabled={busy}
-            style={inputStyle}
+            clearable={false}
           />
         </Field>
         <Field label="To">
-          <input
-            type="date"
+          <DateField
             value={toDate}
-            onChange={(e) => setToDate(e.target.value)}
+            onChange={(next) => setToDate(next)}
             disabled={busy}
-            style={inputStyle}
+            clearable={false}
           />
         </Field>
         <Field label="Days">

@@ -63,6 +63,7 @@ import { Icon } from '../icons';
 import { osActions } from '@/lib/os/store';
 import { exportRows, paiseToRupees, type ExportFormat } from '@/lib/client/export-rows';
 import { OsExportButtons } from './report-window-kit';
+import { DateField } from '@/components/shared/date-field';
 
 type EmployeeOption = { id: string; name: string };
 type VendorOption = { id: string; name: string; category: string | null };
@@ -936,20 +937,20 @@ export function OfficeApp({
         </select>
         {datePreset === 'custom' && (
           <>
-            <input
-              type="date"
-              aria-label="From date"
+            <DateField
               value={customFrom}
-              onChange={(e) => setCustomFrom(e.target.value)}
-              style={selectFilterStyle}
+              onChange={(next) => setCustomFrom(next)}
+              placeholder="From date"
+              clearable={false}
+              className="w-[150px]"
             />
             <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>→</span>
-            <input
-              type="date"
-              aria-label="To date"
+            <DateField
               value={customTo}
-              onChange={(e) => setCustomTo(e.target.value)}
-              style={selectFilterStyle}
+              onChange={(next) => setCustomTo(next)}
+              placeholder="To date"
+              clearable={false}
+              className="w-[150px]"
             />
           </>
         )}
@@ -1919,11 +1920,10 @@ function ExpenseFormModal({
     >
       <form onSubmit={submit} className="os-form">
         <Field label="Date">
-          <input
-            type="date"
+          <DateField
             value={expenseDate}
-            onChange={(e) => setExpenseDate(e.target.value)}
-            required
+            onChange={(next) => setExpenseDate(next)}
+            clearable={false}
           />
         </Field>
         <Field
@@ -2149,11 +2149,7 @@ function ExpenseFormModal({
               />
             </Field>
             <Field label="Cheque date" hint="Optional — as written on the cheque.">
-              <input
-                type="date"
-                value={chequeDate}
-                onChange={(e) => setChequeDate(e.target.value)}
-              />
+              <DateField value={chequeDate} onChange={(next) => setChequeDate(next)} />
             </Field>
           </>
         ) : null}
@@ -2445,12 +2441,7 @@ function OpeningBalancesModal({
           </div>
 
           <Field label="As-of date" hint="Usually the financial-year start (1 Apr).">
-            <input
-              type="date"
-              value={asOfDate}
-              onChange={(e) => setAsOfDate(e.target.value)}
-              required
-            />
+            <DateField value={asOfDate} onChange={(next) => setAsOfDate(next)} clearable={false} />
           </Field>
           <div />
 
