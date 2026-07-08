@@ -68,6 +68,9 @@ export async function listProjectOptions(): Promise<readonly EntityOption[]> {
  * Active (non-archived) projects for a single client — backs the project
  * picker on the invoice composer and the "expenses on behalf" form, where the
  * choices must be scoped to the client the document is for.
+ *
+ * Sub-projects (0061) are listed under their parent and labelled
+ * "Parent › Sub" so a per-line picker reads unambiguously.
  */
 export async function listProjectOptionsForClient(
   clientId: string,
@@ -79,6 +82,7 @@ export async function listProjectOptionsForClient(
       id: projects.id,
       name: projects.name,
       code: projects.code,
+      parentProjectId: projects.parentProjectId,
     })
     .from(projects)
     .where(
@@ -89,5 +93,22 @@ export async function listProjectOptionsForClient(
       ),
     )
     .orderBy(asc(projects.name));
-  return rows.map((r) => ({ id: r.id, label: r.name, sub: r.code }));
+
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  const parents = rows.filter((r) => !r.parentProjectId);
+  const childrenOf = (pid: string) => rows.filter((r) => r.parentProjectId === pid);
+  const out: EntityOption[] = [];
+  for (const p of parents) {
+    out.push({ id: p.id, label: p.name, sub: p.code });
+    for (const c of childrenOf(p.id)) {
+      out.push({ id: c.id, label: `${p.name} › ${c.name}`, sub: c.code });
+    }
+  }
+  // Orphaned subs (parent archived/deleted) still need to be pickable.
+  for (const r of rows) {
+    if (r.parentProjectId && !byId.has(r.parentProjectId)) {
+      out.push({ id: r.id, label: `› ${r.name}`, sub: r.code });
+    }
+  }
+  return out;
 }

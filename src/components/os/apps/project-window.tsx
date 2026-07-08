@@ -52,6 +52,20 @@ import {
   listSubProjects,
   type ProjectListRow,
 } from '@/lib/server/entities/projects';
+import {
+  linkInvoiceToProject,
+  listInvoicesForProject,
+  listUnattributedInvoicesForClient,
+  type ProjectInvoiceRow,
+} from '@/lib/server/billing/invoice-project-links';
+import { getAmountsReceivedByProject } from '@/lib/server/billing/project-receipts';
+import { getClientBillingReadiness } from '@/lib/server/billing/invoices';
+import { listInvoiceThemes, type InvoiceThemeSummary } from '@/lib/server/billing/invoice-themes';
+import {
+  listCompanyBankAccountOptions,
+  type CompanyBankAccountOption,
+} from '@/lib/server/settings/company';
+import { InvoiceComposerDialog } from '@/components/entity/billing/invoice-composer';
 import { colToDbStatus, dbStatusToCol } from '@/lib/project-status';
 import { toast } from 'sonner';
 import { osActions } from '@/lib/os/store';
@@ -70,6 +84,7 @@ type ProjectTab =
   | 'overview'
   | 'team'
   | 'tasks'
+  | 'invoices'
   | 'transactions'
   | 'documents'
   | 'activity'
@@ -79,6 +94,7 @@ const TAB_LABELS: Record<ProjectTab, string> = {
   overview: 'Overview',
   team: 'Team',
   tasks: 'Deliverables',
+  invoices: 'Invoices',
   transactions: 'Transactions',
   documents: 'Documents',
   activity: 'Activity',
@@ -102,7 +118,14 @@ type Feed = {
 type State =
   | { kind: 'loading' }
   | { kind: 'error'; message: string }
-  | { kind: 'ready'; project: Project; feed: Feed; subs: readonly ProjectListRow[] };
+  | {
+      kind: 'ready';
+      project: Project;
+      feed: Feed;
+      subs: readonly ProjectListRow[];
+      /** "Received till now" — parent + sub-projects, allocation-apportioned. */
+      receivedPaise: bigint;
+    };
 
 export function ProjectWindow({ projectId, onClose }: ProjectWindowProps) {
   const [state, setState] = useState<State>({ kind: 'loading' });
@@ -125,8 +148,13 @@ export function ProjectWindow({ projectId, onClose }: ProjectWindowProps) {
         }
         const subs =
           project.subProjectCount > 0 ? await listSubProjects(projectId).catch(() => []) : [];
+        const received = await getAmountsReceivedByProject([
+          projectId,
+          ...subs.map((s) => s.id),
+        ]).catch(() => []);
         if (cancelled) return;
-        setState({ kind: 'ready', project, feed, subs });
+        const receivedPaise = received.reduce((acc, r) => acc + r.receivedPaise, 0n);
+        setState({ kind: 'ready', project, feed, subs, receivedPaise });
       })
       .catch((e: unknown) => {
         if (cancelled) return;
@@ -147,11 +175,12 @@ export function ProjectWindow({ projectId, onClose }: ProjectWindowProps) {
     return <div style={{ padding: 24, color: 'var(--text-error, #c33)' }}>{state.message}</div>;
   }
 
-  const { project, feed, subs } = state;
+  const { project, feed, subs, receivedPaise } = state;
   const tabs: readonly ProjectTab[] = [
     'overview',
     'team',
     'tasks',
+    'invoices',
     'transactions',
     'documents',
     'activity',
@@ -182,12 +211,20 @@ export function ProjectWindow({ projectId, onClose }: ProjectWindowProps) {
             project={project}
             feed={feed}
             subs={subs}
+            receivedPaise={receivedPaise}
             canEdit={canEdit}
             onSubsChanged={() => setReloadKey((k) => k + 1)}
           />
         ) : null}
         {tab === 'team' ? <TeamBody projectId={project.id} canEdit={canEdit} /> : null}
         {tab === 'tasks' ? <TasksBody projectId={project.id} canEdit={canEdit} /> : null}
+        {tab === 'invoices' ? (
+          <InvoicesBody
+            project={project}
+            canEdit={canEdit}
+            onChanged={() => setReloadKey((k) => k + 1)}
+          />
+        ) : null}
         {tab === 'transactions' ? <TransactionsBody project={project} feed={feed} /> : null}
         {tab === 'documents' ? (
           <DocumentsSection
@@ -341,12 +378,14 @@ function OverviewBody({
   project,
   feed,
   subs,
+  receivedPaise,
   canEdit,
   onSubsChanged,
 }: {
   project: Project;
   feed: Feed;
   subs: readonly ProjectListRow[];
+  receivedPaise: bigint;
   canEdit: boolean;
   onSubsChanged: () => void;
 }) {
@@ -366,6 +405,7 @@ function OverviewBody({
           gap: 10,
         }}
       >
+        <Kpi label="Received till now" value={formatINRPaise(receivedPaise)} tone="success" />
         <Kpi label="Income" value={formatINRPaise(feed.incomePaise)} tone="success" />
         <Kpi label="Spend" value={formatINRPaise(feed.spendPaise)} />
         <Kpi label="Net" value={formatINRPaise(net)} tone={net >= 0n ? 'success' : 'danger'} />
@@ -572,6 +612,378 @@ function TransactionsBody({ project, feed }: { project: Project; feed: Feed }) {
         onNavigate={navigateBesideFocused}
       />
     </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Invoices                                                                    */
+/* -------------------------------------------------------------------------- */
+
+const INVOICE_STATE_LABEL: Record<ProjectInvoiceRow['state'], string> = {
+  draft: 'Draft',
+  sent: 'Sent',
+  partially_paid: 'Partially paid',
+  paid: 'Paid',
+  void: 'Deleted',
+};
+
+const INVOICE_STATE_COLOR: Record<ProjectInvoiceRow['state'], string> = {
+  draft: 'var(--text-muted)',
+  sent: '#5b8def',
+  partially_paid: '#d08a1e',
+  paid: '#2e8f5a',
+  void: '#c46a28',
+};
+
+/**
+ * Invoices linked to this project (header or per-line, sub-projects rolled
+ * up). "New invoice" opens the shared composer pre-scoped to the project's
+ * client with this project as the default; "Link existing…" attaches one of
+ * the client's unattributed invoices via linkInvoiceToProject.
+ */
+function InvoicesBody({
+  project,
+  canEdit,
+  onChanged,
+}: {
+  project: Project;
+  canEdit: boolean;
+  onChanged: () => void;
+}) {
+  const [rows, setRows] = useState<readonly ProjectInvoiceRow[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [reload, setReload] = useState(0);
+
+  // Composer plumbing (themes / bank accounts / client readiness) — same
+  // loads client-invoices-section does, scoped to this project's client.
+  const [composerOpen, setComposerOpen] = useState(false);
+  const [themes, setThemes] = useState<InvoiceThemeSummary[]>([]);
+  const [bankAccounts, setBankAccounts] = useState<CompanyBankAccountOption[]>([]);
+  const [clientStateCode, setClientStateCode] = useState<string | null>(null);
+  const [billingReady, setBillingReady] = useState<boolean | null>(null);
+  const [missing, setMissing] = useState<string[]>([]);
+
+  const [linkOpen, setLinkOpen] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    listInvoicesForProject(project.id)
+      .then((r) => {
+        if (!cancelled) setRows(r);
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) setError(e instanceof Error ? e.message : 'Could not load invoices');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [project.id, reload]);
+
+  useEffect(() => {
+    if (!canEdit) return;
+    let cancelled = false;
+    Promise.all([
+      listInvoiceThemes().catch(() => []),
+      listCompanyBankAccountOptions().catch(() => []),
+      getClientBillingReadiness(project.clientId).catch(() => null),
+    ]).then(([ths, banks, rdy]) => {
+      if (cancelled) return;
+      setThemes(ths);
+      setBankAccounts(banks);
+      setClientStateCode(rdy?.stateCode ?? null);
+      setBillingReady(rdy?.ready ?? null);
+      setMissing(rdy?.missing ?? []);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [canEdit, project.clientId]);
+
+  function refresh() {
+    setReload((k) => k + 1);
+    onChanged();
+  }
+
+  if (error) {
+    return <div style={{ fontSize: 13, color: 'var(--text-error, #c33)' }}>{error}</div>;
+  }
+  if (rows === null) {
+    return <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0 }}>Loading invoices…</p>;
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      {canEdit ? (
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <button
+            className="btn primary"
+            type="button"
+            onClick={() => {
+              if (billingReady === false) {
+                toast.error(
+                  `Add this client's ${missing.join(', ')} before generating an invoice.`,
+                );
+                return;
+              }
+              setComposerOpen(true);
+            }}
+          >
+            <Icon name="plus" size={13} />
+            New invoice
+          </button>
+          <button className="btn" type="button" onClick={() => setLinkOpen(true)}>
+            Link existing…
+          </button>
+          <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+            New invoices default to this project; each line can point at a sub-project.
+          </span>
+        </div>
+      ) : null}
+
+      {rows.length === 0 ? (
+        <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0 }}>
+          No invoice or proforma linked yet — this project is <strong>Unlinked</strong>. Attach a
+          proforma early; convert it to a tax invoice when the engagement firms up.
+        </p>
+      ) : (
+        <ul
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 6,
+            listStyle: 'none',
+            padding: 0,
+            margin: 0,
+          }}
+        >
+          {rows.map((inv) => (
+            <li
+              key={inv.id}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                padding: '8px 10px',
+                borderRadius: 8,
+                border: '1px solid var(--border)',
+                fontSize: 13,
+              }}
+            >
+              <span style={{ fontFamily: 'var(--os-font)', fontVariantNumeric: 'tabular-nums' }}>
+                {inv.documentNumber}
+              </span>
+              {inv.documentType === 'proforma' ? (
+                <span
+                  style={{
+                    fontSize: 10,
+                    fontWeight: 600,
+                    padding: '1px 7px',
+                    borderRadius: 999,
+                    border: '1px solid var(--border)',
+                    color: 'var(--text-muted)',
+                  }}
+                >
+                  Proforma
+                </span>
+              ) : null}
+              {inv.coveredUnderRetainer ? (
+                <span
+                  style={{
+                    fontSize: 10,
+                    fontWeight: 600,
+                    padding: '1px 7px',
+                    borderRadius: 999,
+                    border: '1px solid var(--border)',
+                    color: 'var(--text-muted)',
+                  }}
+                >
+                  Retainer
+                </span>
+              ) : null}
+              {inv.linkedVia !== 'header' ? (
+                <span
+                  title="Linked through line-item project tags"
+                  style={{ fontSize: 10.5, color: 'var(--text-muted)' }}
+                >
+                  via line items
+                </span>
+              ) : null}
+              <span style={{ flex: 1, minWidth: 0 }} />
+              <span style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>
+                {inv.convertedFromNumber ? `from ${inv.convertedFromNumber} · ` : ''}
+                {inv.convertedToNumber ? `→ ${inv.convertedToNumber} · ` : ''}
+                {inv.documentDate}
+              </span>
+              <span
+                style={{
+                  fontSize: 10.5,
+                  fontWeight: 600,
+                  color: INVOICE_STATE_COLOR[inv.state],
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.05em',
+                }}
+              >
+                {INVOICE_STATE_LABEL[inv.state]}
+              </span>
+              <span style={{ fontVariantNumeric: 'tabular-nums' }}>
+                {formatINRPaise(inv.capturedTotalPaise)}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {canEdit ? (
+        <InvoiceComposerDialog
+          open={composerOpen}
+          onOpenChange={setComposerOpen}
+          clientId={project.clientId}
+          clientName={project.clientName}
+          clientStateCode={clientStateCode}
+          themes={themes}
+          defaultThemeId={themes.find((t) => t.isDefault)?.id ?? null}
+          bankAccounts={bankAccounts}
+          defaultProjectId={project.id}
+          onFinalized={refresh}
+        />
+      ) : null}
+
+      {linkOpen ? (
+        <LinkInvoiceDialog
+          clientId={project.clientId}
+          projectId={project.id}
+          projectName={project.name}
+          onClose={() => setLinkOpen(false)}
+          onLinked={() => {
+            setLinkOpen(false);
+            refresh();
+          }}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+/** Pick one of the client's unattributed invoices and link it to the project. */
+function LinkInvoiceDialog({
+  clientId,
+  projectId,
+  projectName,
+  onClose,
+  onLinked,
+}: {
+  clientId: string;
+  projectId: string;
+  projectName: string;
+  onClose: () => void;
+  onLinked: () => void;
+}) {
+  const [candidates, setCandidates] = useState<ReadonlyArray<{
+    id: string;
+    documentNumber: string;
+    documentType: 'invoice' | 'proforma';
+    documentDate: string;
+    state: string;
+    capturedTotalPaise: bigint;
+  }> | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    listUnattributedInvoicesForClient(clientId)
+      .then((rows) => {
+        if (!cancelled) setCandidates(rows);
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) setError(e instanceof Error ? e.message : 'Could not load invoices');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [clientId]);
+
+  async function link(invoiceId: string) {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await linkInvoiceToProject(invoiceId, projectId);
+      toast.success('Invoice linked to the project.');
+      onLinked();
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Could not link the invoice');
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal title={`Link an invoice to ${projectName}`} onClose={onClose} width={480}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: 18 }}>
+        <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0 }}>
+          Showing this client&apos;s invoices with no project attribution (header or lines). Linking
+          sets the invoice&apos;s default project — line-level tags can refine it later.
+        </p>
+        {error ? (
+          <div style={{ fontSize: 12, color: 'var(--text-error, #c33)' }}>{error}</div>
+        ) : null}
+        {candidates === null ? (
+          <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0 }}>Loading…</p>
+        ) : candidates.length === 0 ? (
+          <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0 }}>
+            Every invoice for this client is already attributed to a project.
+          </p>
+        ) : (
+          <ul
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 4,
+              listStyle: 'none',
+              padding: 0,
+              margin: 0,
+              maxHeight: 300,
+              overflowY: 'auto',
+            }}
+          >
+            {candidates.map((c) => (
+              <li
+                key={c.id}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 10,
+                  padding: '7px 10px',
+                  borderRadius: 8,
+                  border: '1px solid var(--border)',
+                  fontSize: 13,
+                }}
+              >
+                <span style={{ fontFamily: 'var(--os-font)', fontVariantNumeric: 'tabular-nums' }}>
+                  {c.documentNumber}
+                </span>
+                {c.documentType === 'proforma' ? (
+                  <span style={{ fontSize: 10.5, color: 'var(--text-muted)' }}>Proforma</span>
+                ) : null}
+                <span style={{ flex: 1 }} />
+                <span style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>{c.documentDate}</span>
+                <span style={{ fontVariantNumeric: 'tabular-nums' }}>
+                  {formatINRPaise(c.capturedTotalPaise)}
+                </span>
+                <button
+                  className="btn primary"
+                  type="button"
+                  onClick={() => void link(c.id)}
+                  disabled={busy}
+                >
+                  Link
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </Modal>
   );
 }
 

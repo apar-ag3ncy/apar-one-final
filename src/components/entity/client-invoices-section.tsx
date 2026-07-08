@@ -282,92 +282,112 @@ export function ClientInvoicesSection({ clientId, clientName }: ClientInvoicesSe
             />
           ) : (
             <ul className="divide-y">
-              {rows.map((inv) => (
-                <li
-                  key={inv.id}
-                  className="hover:bg-muted/30 flex items-center justify-between gap-3 px-4 py-3"
-                >
-                  <div className="flex min-w-0 items-start gap-3">
-                    <FileTextIcon
-                      className="text-muted-foreground mt-0.5 size-4 shrink-0"
-                      aria-hidden
-                    />
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-2 text-sm font-medium">
-                        <span className="truncate">{inv.documentNumber}</span>
-                        <StatusBadge
-                          tone={STATE_TONE[inv.state]}
-                          label={STATE_LABEL[inv.state]}
-                          dot={false}
-                        />
-                        {inv.documentType === 'proforma' ? (
-                          <StatusBadge tone="neutral" label="Proforma" dot={false} />
-                        ) : null}
-                      </div>
-                      <div className="text-muted-foreground mt-0.5 text-xs">
-                        {formatINR(inv.capturedTotalPaise)}
-                        {' · '}
-                        {inv.documentDate}
-                        {inv.dueDate ? ` · due ${inv.dueDate}` : ''}
+              {rows.map((inv) => {
+                // Conversion trail (0062): a converted tax invoice carries its
+                // source proforma's id; the proforma finds its successor by
+                // the reverse lookup. Both usually sit in this same list.
+                const convertedFrom = inv.convertedFromInvoiceId
+                  ? (rows.find((r) => r.id === inv.convertedFromInvoiceId) ?? null)
+                  : null;
+                const convertedTo =
+                  inv.documentType === 'proforma'
+                    ? (rows.find((r) => r.convertedFromInvoiceId === inv.id) ?? null)
+                    : null;
+                return (
+                  <li
+                    key={inv.id}
+                    className="hover:bg-muted/30 flex items-center justify-between gap-3 px-4 py-3"
+                  >
+                    <div className="flex min-w-0 items-start gap-3">
+                      <FileTextIcon
+                        className="text-muted-foreground mt-0.5 size-4 shrink-0"
+                        aria-hidden
+                      />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2 text-sm font-medium">
+                          <span className="truncate">{inv.documentNumber}</span>
+                          <StatusBadge
+                            tone={STATE_TONE[inv.state]}
+                            label={STATE_LABEL[inv.state]}
+                            dot={false}
+                          />
+                          {inv.documentType === 'proforma' ? (
+                            <StatusBadge tone="neutral" label="Proforma" dot={false} />
+                          ) : null}
+                          {inv.coveredUnderRetainer ? (
+                            <StatusBadge tone="neutral" label="Retainer" dot={false} />
+                          ) : null}
+                        </div>
+                        <div className="text-muted-foreground mt-0.5 text-xs">
+                          {formatINR(inv.capturedTotalPaise)}
+                          {' · '}
+                          {inv.documentDate}
+                          {inv.dueDate ? ` · due ${inv.dueDate}` : ''}
+                          {convertedFrom ? ` · from proforma ${convertedFrom.documentNumber}` : ''}
+                          {inv.convertedFromInvoiceId && !convertedFrom
+                            ? ' · converted from a proforma'
+                            : ''}
+                          {convertedTo ? ` · → converted to ${convertedTo.documentNumber}` : ''}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                  <div className="flex shrink-0 items-center gap-1">
-                    {inv.state === 'draft' && canCompose ? (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => openEdit(inv.id)}
-                        aria-label="Edit / preview draft"
-                      >
-                        <PencilIcon className="size-4" aria-hidden />
-                      </Button>
-                    ) : null}
-                    {inv.sourceDocumentId ? (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => void downloadSent(inv)}
-                        aria-label="Download invoice PDF"
-                      >
-                        <DownloadIcon className="size-4" aria-hidden />
-                      </Button>
-                    ) : null}
-                    {inv.documentType === 'proforma' && canCompose ? (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => void handleConvertProforma(inv)}
-                        disabled={convertingId === inv.id}
-                        title="Convert to a tax invoice (creates a new invoice; keeps this proforma)"
-                        aria-label="Convert proforma to tax invoice"
-                      >
-                        <FileCheck2Icon className="size-4" aria-hidden />
-                      </Button>
-                    ) : null}
-                    {canDelete && inv.state !== 'void' ? (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => setDeleteTarget(inv)}
-                        disabled={inv.state === 'paid' || !withinGstr1Window(inv.documentDate)}
-                        title={
-                          inv.state === 'paid'
-                            ? 'Paid invoices can’t be deleted — issue a credit note.'
-                            : !withinGstr1Window(inv.documentDate)
-                              ? `GSTR-1 window closed on ${gstr1DeadlineLabel(inv.documentDate)} — issue a credit note instead.`
-                              : inv.state === 'draft'
-                                ? 'Delete draft invoice'
-                                : `Delete — allowed until ${gstr1DeadlineLabel(inv.documentDate)} (GSTR-1 filing)`
-                        }
-                        aria-label="Delete invoice"
-                      >
-                        <Trash2Icon className="text-destructive size-4" aria-hidden />
-                      </Button>
-                    ) : null}
-                  </div>
-                </li>
-              ))}
+                    <div className="flex shrink-0 items-center gap-1">
+                      {inv.state === 'draft' && canCompose ? (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => openEdit(inv.id)}
+                          aria-label="Edit / preview draft"
+                        >
+                          <PencilIcon className="size-4" aria-hidden />
+                        </Button>
+                      ) : null}
+                      {inv.sourceDocumentId ? (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => void downloadSent(inv)}
+                          aria-label="Download invoice PDF"
+                        >
+                          <DownloadIcon className="size-4" aria-hidden />
+                        </Button>
+                      ) : null}
+                      {inv.documentType === 'proforma' && canCompose ? (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => void handleConvertProforma(inv)}
+                          disabled={convertingId === inv.id}
+                          title="Convert to a tax invoice (creates a new invoice; keeps this proforma)"
+                          aria-label="Convert proforma to tax invoice"
+                        >
+                          <FileCheck2Icon className="size-4" aria-hidden />
+                        </Button>
+                      ) : null}
+                      {canDelete && inv.state !== 'void' ? (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => setDeleteTarget(inv)}
+                          disabled={inv.state === 'paid' || !withinGstr1Window(inv.documentDate)}
+                          title={
+                            inv.state === 'paid'
+                              ? 'Paid invoices can’t be deleted — issue a credit note.'
+                              : !withinGstr1Window(inv.documentDate)
+                                ? `GSTR-1 window closed on ${gstr1DeadlineLabel(inv.documentDate)} — issue a credit note instead.`
+                                : inv.state === 'draft'
+                                  ? 'Delete draft invoice'
+                                  : `Delete — allowed until ${gstr1DeadlineLabel(inv.documentDate)} (GSTR-1 filing)`
+                          }
+                          aria-label="Delete invoice"
+                        >
+                          <Trash2Icon className="text-destructive size-4" aria-hidden />
+                        </Button>
+                      ) : null}
+                    </div>
+                  </li>
+                );
+              })}
             </ul>
           )}
         </CardContent>
