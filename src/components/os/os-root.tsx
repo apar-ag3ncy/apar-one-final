@@ -26,14 +26,7 @@ import { APPS } from './data';
 import { Dock } from './dock';
 import { MenuBar } from './menubar';
 import { Window } from './window';
-import {
-  ClientsApp,
-  EmployeesApp,
-  ProjectsApp,
-  ReportsApp,
-  SettingsApp,
-  VendorsApp,
-} from './apps';
+import { ClientsApp, EmployeesApp, ProjectsApp, ReportsApp, SettingsApp, VendorsApp } from './apps';
 // Phase 4 windows live as separate files so apps.tsx stops growing.
 import { LedgerWindow } from './apps/ledger-window';
 import { TransactionDetailWindow } from './apps/transaction-detail-window';
@@ -71,6 +64,7 @@ import { TdsBookWindow } from './apps/tds-book-window';
 import { SalaryBookWindow } from './apps/salary-book-window';
 import { ClientLedgerWindow } from './apps/client-ledger-window';
 import { VendorLedgerWindow } from './apps/vendor-ledger-window';
+import { UniversalLedgerWindow } from './apps/universal-ledger-window';
 import { OfficeApp } from './apps/office-app';
 import type { AppDef, AppId, Client, CmdAction, DockBounds, Vendor } from './types';
 
@@ -756,8 +750,8 @@ function Desktop({ signOut }: { signOut: () => void }) {
                 can(user, 'ledger', 'view')
                   ? {
                       app: 'ledger' as const,
-                      name: 'Ledgers',
-                      desc: 'Every account in one place — the office, each client, each vendor, with live balances.',
+                      name: 'Ledger',
+                      desc: 'Every transaction across the company — clients, vendors, office, salaries — in one statement.',
                       icon: 'book' as const,
                       accent: '#5B6677',
                     }
@@ -798,7 +792,7 @@ function Desktop({ signOut }: { signOut: () => void }) {
                 can(user, 'reports', 'view')
                   ? {
                       app: 'reports' as const,
-                      name: 'Reports',
+                      name: 'Library',
                       desc: 'Trial balance, P&L, balance sheet, GST & TDS, registers and the overview.',
                       icon: 'chart' as const,
                       accent: '#2E8F5A',
@@ -811,8 +805,11 @@ function Desktop({ signOut }: { signOut: () => void }) {
                   sub="View every account — office, clients, vendors — in detail."
                   options={accountOptions}
                   onPick={(o) => {
-                    openApp(o.app, { entityId: o.entityId, title: o.title, position: 'center' });
-                    osActions.closeWindow(w.id);
+                    openApp(o.app, {
+                      entityId: o.entityId,
+                      title: o.title,
+                      position: 'beside-focused',
+                    });
                   }}
                 />
               );
@@ -902,9 +899,11 @@ function Desktop({ signOut }: { signOut: () => void }) {
               );
             }
             case 'ledger': {
-              // Sub-routes on the 'ledger' app. The hub (no entityId)
-              // lists every ledger we render; the others are focused
-              // statement-of-account windows the hub opens beside.
+              // Sub-routes on the 'ledger' app. The default (no entityId) is
+              // the Universal Ledger — every transaction in one statement;
+              // 'hub' keeps the old card directory. The rest are focused
+              // statement-of-account windows opened beside.
+              //   hub                 → ledger directory (cards)
               //   office              → cash + bank book
               //   office-utilities    → 6200 spend
               //   client:<uuid>       → per-client AR ledger
@@ -933,7 +932,10 @@ function Desktop({ signOut }: { signOut: () => void }) {
                 const parsed = parseAccountStatementRoute(eid);
                 if (parsed) return <AccountStatementWindow {...parsed} />;
               }
-              return <LedgerWindow />;
+              if (eid === 'hub') {
+                return <LedgerWindow />;
+              }
+              return <UniversalLedgerWindow />;
             }
             case 'reports': {
               // Each report renders natively inside the OS (no new browser

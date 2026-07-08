@@ -10,10 +10,15 @@
 import { useEffect, useMemo, useState } from 'react';
 
 import { StatementOfAccount } from '@/components/entity/statement-of-account';
+import { formatINR } from '@/components/shared/format-inr';
 import { exportSlug } from '@/lib/client/export-rows';
 import { getClientStatement, type Statement } from '@/lib/server/ledger/statements';
 import { getClient } from '@/lib/server-stub/entity-actions';
+import { getAgingReport } from '@/lib/server-stub/ledger-actions';
+import type { AgingBucket, AgingRow } from '@/lib/server-stub/ledger-types';
 import { osActions } from '@/lib/os/store';
+
+const AGING_BUCKETS: readonly AgingBucket[] = ['0-30', '31-60', '61-90', '90+'];
 
 function currentFyDefaults(): { fromDate: string; toDate: string } {
   const today = new Date();
@@ -30,6 +35,10 @@ export function ClientLedgerWindow({ clientId }: { clientId: string }) {
   const [toDate, setToDate] = useState<string>(defaults.toDate);
   const [clientName, setClientName] = useState<string>('');
   const [statement, setStatement] = useState<Statement | null>(null);
+  // Loaded AR aging snapshot: `row` is this client's line (null = settled up).
+  // The whole thing stays null while loading or if the aging query fails —
+  // the KPI strip degrades to an em-dash instead of blocking the statement.
+  const [aging, setAging] = useState<{ row: AgingRow | null } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   // One-off client name fetch for the header.
@@ -42,6 +51,22 @@ export function ClientLedgerWindow({ clientId }: { clientId: string }) {
       .catch(() => {
         // Best-effort — header just shows the id.
       });
+    return () => {
+      cancelled = true;
+    };
+  }, [clientId]);
+
+  // Outstanding-as-of-today snapshot from the AR aging report — one batched
+  // query, filtered down to this client. Non-fatal: on failure the KPI strip
+  // just shows an em-dash.
+  useEffect(() => {
+    let cancelled = false;
+    const today = new Date().toISOString().slice(0, 10);
+    getAgingReport({ side: 'receivable', asOfDate: today })
+      .then((rows) => {
+        if (!cancelled) setAging({ row: rows.find((r) => r.entityId === clientId) ?? null });
+      })
+      .catch(() => {});
     return () => {
       cancelled = true;
     };
@@ -67,6 +92,23 @@ export function ClientLedgerWindow({ clientId }: { clientId: string }) {
       cancelled = true;
     };
   }, [clientId, fromDate, toDate]);
+
+  // Period totals derived from the loaded statement lines (display-only
+  // bigint arithmetic): what we invoiced vs what they paid in the window.
+  const periodTotals = useMemo(() => {
+    if (!statement) return null;
+    let invoicedPaise = 0n;
+    let receivedPaise = 0n;
+    for (const l of statement.lines) {
+      if (l.side === 'debit' && l.kind === 'client_invoice') invoicedPaise += l.amountPaise;
+      if (l.side === 'credit' && l.kind === 'client_payment_received') {
+        receivedPaise += l.amountPaise;
+      }
+    }
+    return { invoicedPaise, receivedPaise };
+  }, [statement]);
+
+  const agingRow = aging?.row ?? null;
 
   return (
     <div
@@ -110,6 +152,37 @@ export function ClientLedgerWindow({ clientId }: { clientId: string }) {
         </button>
       </header>
 
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
+          gap: 10,
+        }}
+      >
+        <Kpi
+          label="Invoiced (period)"
+          value={periodTotals ? formatINR(periodTotals.invoicedPaise) : '—'}
+        />
+        <Kpi
+          label="Received (period)"
+          value={periodTotals ? formatINR(periodTotals.receivedPaise) : '—'}
+        />
+        <Kpi
+          label="Outstanding today"
+          value={aging ? formatINR(aging.row?.totalPaise ?? 0n) : '—'}
+          sub="as of today"
+        />
+      </div>
+      {agingRow ? (
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          {AGING_BUCKETS.map((b) => (
+            <span key={b} className="pill" title={`Outstanding ${b} days old`}>
+              {b} · {formatINR(agingRow.byBucket[b])}
+            </span>
+          ))}
+        </div>
+      ) : null}
+
       {error ? (
         <p style={{ color: 'var(--text-error, #c33)', fontSize: 13 }}>{error}</p>
       ) : (
@@ -129,6 +202,40 @@ export function ClientLedgerWindow({ clientId }: { clientId: string }) {
           }
         />
       )}
+    </div>
+  );
+}
+
+// Inline KPI card — same styling as project-window's Kpi, kept local so this
+// window doesn't grow a dependency on the project window.
+function Kpi({ label, value, sub }: { label: string; value: string; sub?: string }) {
+  return (
+    <div
+      style={{
+        background: 'var(--content-2)',
+        border: '1px solid var(--border)',
+        borderRadius: 10,
+        padding: 12,
+      }}
+    >
+      <div
+        style={{
+          fontSize: 11,
+          color: 'var(--text-muted)',
+          textTransform: 'uppercase',
+          letterSpacing: '0.06em',
+          fontWeight: 600,
+        }}
+      >
+        {label}
+      </div>
+      <div
+        className="font-display"
+        style={{ fontSize: 22, marginTop: 2, fontVariantNumeric: 'tabular-nums' }}
+      >
+        {value}
+      </div>
+      {sub ? <div style={{ fontSize: 10.5, color: 'var(--text-dim)' }}>{sub}</div> : null}
     </div>
   );
 }

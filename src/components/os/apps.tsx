@@ -3108,7 +3108,7 @@ export function ReportsApp({
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
       <div className="main-header">
-        <h2>Reports</h2>
+        <h2>Library</h2>
         <span className="sub">Live accounting & management reports</span>
       </div>
       <div
