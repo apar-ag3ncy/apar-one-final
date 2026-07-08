@@ -3,7 +3,6 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import {
@@ -14,6 +13,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { CurrencyInput } from '@/components/shared/currency-input';
+import { DateField } from '@/components/shared/date-field';
 import { toast } from 'sonner';
 import { useRouter } from 'next/navigation';
 import { recordBonusOrPerk } from '@/lib/server/entities/payroll';
@@ -98,7 +98,7 @@ export function BonusForm({
           <CurrencyInput value={amountPaise} onValueChange={setAmountPaise} />
         </Field>
         <Field label="Granted on">
-          <Input type="date" value={grantedOn} onChange={(e) => setGrantedOn(e.target.value)} />
+          <DateField value={grantedOn} onChange={setGrantedOn} clearable={false} />
         </Field>
         <Field label="Payment timing">
           <Select

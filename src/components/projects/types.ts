@@ -19,7 +19,7 @@ export type BillingModel = 'retainer' | 'fixed_fee' | 'time_and_materials' | 'mi
 
 export type Project = {
   id: string;
-  code: string; // APR-FY26-NNN
+  code: string; // 'PRJ-0001' auto series, or a user-typed short code
   name: string;
   clientId: string;
   clientName: string;
@@ -34,6 +34,17 @@ export type Project = {
   leadName: string;
   accountManagerId: string | null;
   accountManagerName: string;
+  /** Client-side POC — one of the client's contacts (0061). */
+  clientContactId: string | null;
+  clientContactName: string | null;
+  /** Parent project id when this is a sub-project (one level deep). */
+  parentProjectId: string | null;
+  /** Live sub-projects under this project. */
+  subProjectCount: number;
+  /** Σ fee over live sub-projects — display-only, never stored. */
+  subFeeSumPaise: bigint;
+  /** Invoices linked to this project (header or line level, non-void). */
+  linkedInvoiceCount: number;
   feePaise: bigint;
   startedAt: Date;
   endsAt: Date | null;

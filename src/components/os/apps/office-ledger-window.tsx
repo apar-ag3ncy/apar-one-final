@@ -12,6 +12,7 @@
 import { useEffect, useMemo, useState } from 'react';
 
 import { StatementOfAccount } from '@/components/entity/statement-of-account';
+import { DateField as SharedDateField } from '@/components/shared/date-field';
 import { getOfficeStatement, type Statement } from '@/lib/server/ledger/statements';
 import { getSalaryBook, type SalaryBook } from '@/lib/server/entities/payroll';
 import { formatINR } from '@/lib/money';
@@ -225,19 +226,7 @@ function DateField({
       >
         {label}
       </span>
-      <input
-        type="date"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        style={{
-          background: 'var(--content-2)',
-          border: '1px solid var(--border)',
-          borderRadius: 6,
-          padding: '4px 8px',
-          fontSize: 12,
-          color: 'var(--text)',
-        }}
-      />
+      <SharedDateField value={value} onChange={onChange} clearable={false} className="w-[150px]" />
     </label>
   );
 }

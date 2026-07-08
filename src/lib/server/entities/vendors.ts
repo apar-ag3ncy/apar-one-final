@@ -1,6 +1,6 @@
 'use server';
 
-import { and, eq, inArray, isNull, ne } from 'drizzle-orm';
+import { and, eq, inArray, isNull, ne, sql } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { logActivity } from '@/lib/activity';
@@ -339,6 +339,24 @@ function zodErrorsToPathMap(err: z.ZodError): Record<string, string> {
 }
 
 /**
+ * Generate the next 'VN-NNNN' vendor code by scanning existing codes (0063).
+ * Best-effort + monotonic; `vendors_code_unique` is the real guard — same
+ * stance as nextEmployeeCode() in employees.ts.
+ */
+async function nextVendorCode(): Promise<string> {
+  const rows = await db
+    .select({ code: vendors.code })
+    .from(vendors)
+    .where(sql`${vendors.code} ~ '^VN-[0-9]+$'`);
+  let max = 0;
+  for (const r of rows) {
+    const m = /^VN-(\d+)$/.exec(r.code);
+    if (m) max = Math.max(max, Number.parseInt(m[1]!, 10));
+  }
+  return `VN-${String(max + 1).padStart(4, '0')}`;
+}
+
+/**
  * Create a vendor + its child contacts / banking / tax identifiers /
  * registered address in a single transaction. Contract gating mirrors
  * createClient (AUDIT-GAPS §1.3); the contract block is optional here
@@ -401,6 +419,7 @@ export async function createVendor(input: CreateVendorInput): Promise<CreateVend
         .insert(vendors)
         .values({
           name: v.name,
+          code: await nextVendorCode(),
           category: v.category || null,
           gstin: v.gstin || null,
           pan: v.pan || null,

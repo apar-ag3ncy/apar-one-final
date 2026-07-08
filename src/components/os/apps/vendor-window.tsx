@@ -213,6 +213,14 @@ function Header({ vendor, actions }: { vendor: Vendor; actions?: ReactNode }) {
           {vendor.name}
         </div>
         <div style={{ color: 'var(--text-muted)', fontSize: 13, marginTop: 4 }}>
+          {vendor.code ? (
+            <>
+              <span className="entity-code" style={{ fontSize: 12 }}>
+                {vendor.code}
+              </span>
+              {' · '}
+            </>
+          ) : null}
           {vendor.category}
           {vendor.city ? ` · ${vendor.city}` : ''}
         </div>

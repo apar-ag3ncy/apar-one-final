@@ -17,6 +17,7 @@ import { listClients } from '@/lib/server-stub/entity-actions';
 import { listVendors } from '@/lib/server-stub/entity-actions';
 import { listProjectOptionsForClient, type EntityOption } from '@/lib/server/entities/options';
 import { paiseToRupees, rupeesToPaise } from '@/lib/money';
+import { DateField } from '@/components/shared/date-field';
 
 type LineItem = { description: string; amountRupees: string; gstRupees: string };
 
@@ -230,8 +231,11 @@ export function VendorBillForm({
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
-    const targets: Array<{ entityType: 'vendor' | 'client' | 'project'; entityId: string; source: DocSource }> =
-      [];
+    const targets: Array<{
+      entityType: 'vendor' | 'client' | 'project';
+      entityId: string;
+      source: DocSource;
+    }> = [];
     if (attribution === 'client' && selectedProjectId) {
       targets.push({ entityType: 'project', entityId: selectedProjectId, source: 'project' });
     }
@@ -289,9 +293,7 @@ export function VendorBillForm({
           : null;
     if (!target) {
       toast.error(
-        attribution === 'client'
-          ? 'Pick the vendor and client first.'
-          : 'Pick the vendor first.',
+        attribution === 'client' ? 'Pick the vendor and client first.' : 'Pick the vendor first.',
       );
       return;
     }
@@ -360,7 +362,9 @@ export function VendorBillForm({
       return;
     }
     if (attribution === null) {
-      toast.error('Choose whether this bill is for a client, an office expense, an asset, or other.');
+      toast.error(
+        'Choose whether this bill is for a client, an office expense, an asset, or other.',
+      );
       return;
     }
     if (attribution === 'client' && !clientId) {
@@ -796,13 +800,12 @@ export function VendorBillForm({
               <label htmlFor="vb-date" className="os-field-label">
                 Bill date
               </label>
-              <input
+              <DateField
                 id="vb-date"
-                type="date"
                 value={txnDate}
-                onChange={(e) => setTxnDate(e.target.value)}
+                onChange={(next) => setTxnDate(next)}
                 disabled={submitting}
-                style={osInputStyle}
+                clearable={false}
               />
             </div>
           </div>

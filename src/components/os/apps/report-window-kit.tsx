@@ -8,6 +8,7 @@
 
 import { useEffect, useState } from 'react';
 import { exportRows, type ExportFormat } from '@/lib/client/export-rows';
+import { DateField as BrandDateField } from '@/components/shared/date-field';
 
 export { exportRows };
 export type { ExportFormat };
@@ -82,19 +83,9 @@ export function DateField({
       >
         {label}
       </span>
-      <input
-        type="date"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        style={{
-          background: 'var(--content-2)',
-          border: '1px solid var(--border)',
-          borderRadius: 6,
-          padding: '4px 8px',
-          fontSize: 12,
-          color: 'var(--text)',
-        }}
-      />
+      {/* In-app calendar (brand-orange accent) instead of the native, un-
+          stylable browser date popup (item 2). */}
+      <BrandDateField value={value} onChange={onChange} clearable={false} className="w-[150px]" />
     </label>
   );
 }

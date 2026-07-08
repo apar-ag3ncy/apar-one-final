@@ -5,6 +5,7 @@ import { CircleCheckIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { DateField } from '@/components/shared/date-field';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { ValidationFlags } from './validation-flags';
@@ -333,7 +334,7 @@ function FieldRow({
           ))}
         </select>
       ) : field.type === 'date' ? (
-        <Input type="date" value={value} onChange={(e) => onChange(e.target.value)} />
+        <DateField value={value} onChange={(next) => onChange(next)} clearable={!field.required} />
       ) : field.type === 'amount' ? (
         <Input
           type="text"

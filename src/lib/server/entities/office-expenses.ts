@@ -42,7 +42,7 @@ const CategoryEnum = z.enum([
   'other',
 ]);
 
-const PaymentMethodEnum = z.enum(['cash', 'bank', 'card', 'upi', 'employee_paid']);
+const PaymentMethodEnum = z.enum(['cash', 'bank', 'card', 'upi', 'cheque', 'employee_paid']);
 
 const StatusEnum = z.enum(['pending', 'approved', 'reimbursed', 'rejected']);
 
@@ -69,6 +69,9 @@ export type OfficeExpenseRow = {
   gstPaise: bigint;
   totalPaise: bigint;
   paymentMethod: OfficeExpensePaymentMethod;
+  /** Cheque capture (0064) — set when paymentMethod='cheque'. */
+  chequeNumber: string | null;
+  chequeDate: string | null;
   status: OfficeExpenseStatus;
   referenceNumber: string | null;
   notes: string | null;
@@ -150,6 +153,8 @@ export async function listOfficeExpenses(
       amountPaise: officeExpenses.amountPaise,
       gstPaise: officeExpenses.gstPaise,
       paymentMethod: officeExpenses.paymentMethod,
+      chequeNumber: officeExpenses.chequeNumber,
+      chequeDate: officeExpenses.chequeDate,
       status: officeExpenses.status,
       referenceNumber: officeExpenses.referenceNumber,
       notes: officeExpenses.notes,
@@ -188,6 +193,8 @@ export async function listOfficeExpenses(
       gstPaise: r.gstPaise,
       totalPaise: r.amountPaise + r.gstPaise,
       paymentMethod: r.paymentMethod as OfficeExpensePaymentMethod,
+      chequeNumber: r.chequeNumber,
+      chequeDate: r.chequeDate,
       status: r.status as OfficeExpenseStatus,
       referenceNumber: r.referenceNumber,
       notes: r.notes,
@@ -299,7 +306,11 @@ export async function getOfficeExpenseSummary(): Promise<OfficeExpenseSummary> {
         sql`${officeExpenses.expenseDate} >= ${fyStart}`,
       ),
     )
-    .groupBy(officeExpenseCategories.id, officeExpenseCategories.name, officeExpenseCategories.color)
+    .groupBy(
+      officeExpenseCategories.id,
+      officeExpenseCategories.name,
+      officeExpenseCategories.color,
+    )
     .orderBy(officeExpenseCategories.name);
 
   const trendRows = await db
@@ -453,6 +464,9 @@ const CreateSchema = z.object({
   amountPaise: bigintStringSchema,
   gstPaise: bigintStringSchema.optional(),
   paymentMethod: PaymentMethodEnum.optional(),
+  /** Cheque capture (0064) — set when paymentMethod='cheque'. */
+  chequeNumber: z.string().trim().max(40).nullable().optional(),
+  chequeDate: z.string().regex(dateRegex).nullable().optional(),
   status: StatusEnum.optional(),
   referenceNumber: z.string().max(120).nullable().optional(),
   notes: z.string().max(2000).nullable().optional(),
@@ -492,6 +506,8 @@ export async function createOfficeExpense(
       amountPaise: parsed.amountPaise,
       gstPaise: parsed.gstPaise ?? 0n,
       paymentMethod: parsed.paymentMethod ?? 'bank',
+      chequeNumber: parsed.paymentMethod === 'cheque' ? (parsed.chequeNumber ?? null) : null,
+      chequeDate: parsed.paymentMethod === 'cheque' ? (parsed.chequeDate ?? null) : null,
       status: parsed.status ?? (parsed.category === 'reimbursement' ? 'pending' : 'approved'),
       referenceNumber: parsed.referenceNumber ?? null,
       notes: parsed.notes ?? null,
@@ -561,6 +577,9 @@ const UpdateSchema = z.object({
   amountPaise: bigintStringSchema.optional(),
   gstPaise: bigintStringSchema.optional(),
   paymentMethod: PaymentMethodEnum.optional(),
+  /** Cheque capture (0064) — set when paymentMethod='cheque'. */
+  chequeNumber: z.string().trim().max(40).nullable().optional(),
+  chequeDate: z.string().regex(dateRegex).nullable().optional(),
   status: StatusEnum.optional(),
   referenceNumber: z.string().max(120).nullable().optional(),
   notes: z.string().max(2000).nullable().optional(),
@@ -599,7 +618,16 @@ export async function updateOfficeExpense(
   if (rest.employeeId !== undefined) patch.employeeId = rest.employeeId;
   if (rest.amountPaise !== undefined) patch.amountPaise = rest.amountPaise;
   if (rest.gstPaise !== undefined) patch.gstPaise = rest.gstPaise;
-  if (rest.paymentMethod !== undefined) patch.paymentMethod = rest.paymentMethod;
+  if (rest.paymentMethod !== undefined) {
+    patch.paymentMethod = rest.paymentMethod;
+    // Leaving cheque clears its capture unless the caller re-sends it.
+    if (rest.paymentMethod !== 'cheque' && rest.chequeNumber === undefined) {
+      patch.chequeNumber = null;
+      patch.chequeDate = null;
+    }
+  }
+  if (rest.chequeNumber !== undefined) patch.chequeNumber = rest.chequeNumber;
+  if (rest.chequeDate !== undefined) patch.chequeDate = rest.chequeDate;
   if (rest.status !== undefined) patch.status = rest.status;
   if (rest.referenceNumber !== undefined) patch.referenceNumber = rest.referenceNumber;
   if (rest.notes !== undefined) patch.notes = rest.notes;
@@ -633,7 +661,10 @@ export async function updateOfficeExpense(
     if (wasPosted && existing.transactionId) {
       await reverseTransaction(ctx, {
         transactionId: existing.transactionId,
-        reason: `Office expense edited — ${existing.category}: ${existing.description}`.slice(0, 200),
+        reason: `Office expense edited — ${existing.category}: ${existing.description}`.slice(
+          0,
+          200,
+        ),
       });
     }
     const nextTxnId = willPost
@@ -686,7 +717,10 @@ export async function deleteOfficeExpense(args: { id: string }): Promise<void> {
   if (existing.transactionId) {
     await reverseTransaction(ctx, {
       transactionId: existing.transactionId,
-      reason: `Office expense deleted — ${existing.category}: ${existing.description}`.slice(0, 200),
+      reason: `Office expense deleted — ${existing.category}: ${existing.description}`.slice(
+        0,
+        200,
+      ),
     });
     reversed = true;
   }
@@ -791,6 +825,8 @@ async function hydrate(row: typeof officeExpenses.$inferSelect): Promise<OfficeE
     gstPaise: row.gstPaise,
     totalPaise: row.amountPaise + row.gstPaise,
     paymentMethod: row.paymentMethod as OfficeExpensePaymentMethod,
+    chequeNumber: row.chequeNumber,
+    chequeDate: row.chequeDate,
     status: row.status as OfficeExpenseStatus,
     referenceNumber: row.referenceNumber,
     notes: row.notes,
@@ -1127,9 +1163,7 @@ export async function deleteOfficeExpenseCategory(args: { id: string }): Promise
   const [usage] = await db
     .select({ count: sql<string>`count(*)::text` })
     .from(officeExpenses)
-    .where(
-      and(eq(officeExpenses.customCategoryId, parsed.id), isNull(officeExpenses.deletedAt)),
-    );
+    .where(and(eq(officeExpenses.customCategoryId, parsed.id), isNull(officeExpenses.deletedAt)));
   const inUse = usage ? Number(usage.count) : 0;
   if (inUse > 0) {
     throw new AppError(
@@ -1141,7 +1175,9 @@ export async function deleteOfficeExpenseCategory(args: { id: string }): Promise
   const result = await db
     .update(officeExpenseCategories)
     .set({ deletedAt: new Date(), updatedBy: ctx.userId })
-    .where(and(eq(officeExpenseCategories.id, parsed.id), isNull(officeExpenseCategories.deletedAt)))
+    .where(
+      and(eq(officeExpenseCategories.id, parsed.id), isNull(officeExpenseCategories.deletedAt)),
+    )
     .returning({ id: officeExpenseCategories.id });
   if (result.length === 0) {
     throw new AppError('not_found', 'Office expense category not found.');
@@ -1565,7 +1601,9 @@ async function resolveOrCreateCustomCategory(
   const [existing] = await db
     .select({ id: officeExpenseCategories.id })
     .from(officeExpenseCategories)
-    .where(and(isNull(officeExpenseCategories.deletedAt), ilike(officeExpenseCategories.name, name)))
+    .where(
+      and(isNull(officeExpenseCategories.deletedAt), ilike(officeExpenseCategories.name, name)),
+    )
     .limit(1);
   if (existing) return existing.id;
 

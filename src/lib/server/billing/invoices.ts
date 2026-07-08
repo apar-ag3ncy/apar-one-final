@@ -39,6 +39,9 @@ const StateCodeRe = /^[0-9]{2}$/;
 const InvoiceLineInputSchema = z.object({
   lineNo: z.number().int().positive(),
   serviceItemId: z.string().uuid().nullish(),
+  /** Per-line project / sub-project attribution (0062). Null → the line falls
+   *  back to the header projectId. Lets one invoice span several projects. */
+  projectId: z.string().uuid().nullish(),
   description: z.string().trim().min(1).max(1000),
   sacCode: z
     .string()
@@ -67,7 +70,13 @@ const TaxSplitSchema = z
 
 const CreateInvoiceInputSchema = z.object({
   clientId: z.string().uuid(),
+  /** Header-level DEFAULT project for lines without their own projectId. */
   projectId: z.string().uuid().nullish(),
+  /** "Covered under a retainer" flag (0062) — pure capture, badge in lists. */
+  coveredUnderRetainer: z.boolean().default(false),
+  /** Set ONLY by proforma conversion (0062) — records the source proforma.
+   *  The composer never sends this. */
+  convertedFromInvoiceId: z.string().uuid().nullish(),
   /** Document type. 'proforma' is a labelled proforma; it otherwise behaves
    *  like a tax 'invoice' (same numbering + ledger posting on send). */
   documentType: z.enum(['invoice', 'proforma']).default('invoice'),
@@ -180,21 +189,30 @@ async function loadClientBillingReadiness(
   };
 }
 
-/** Reject a project that doesn't belong to this client (cross-client attach). */
-async function assertProjectBelongsToClient(
-  projectId: string | null | undefined,
+/**
+ * Reject any project that doesn't belong to this client (cross-client
+ * attach). Validates every distinct project id (header default + per-line
+ * attributions) in ONE query. Sub-projects pass automatically: they carry
+ * the parent's client_id.
+ */
+async function assertProjectsBelongToClient(
+  projectIds: readonly (string | null | undefined)[],
   clientId: string,
   client: DbClient = db,
 ): Promise<void> {
-  if (!projectId) return;
-  const [p] = await client
-    .select({ clientId: projects.clientId })
+  const distinct = [...new Set(projectIds.filter((p): p is string => Boolean(p)))];
+  if (distinct.length === 0) return;
+  const rows = await client
+    .select({ id: projects.id, clientId: projects.clientId })
     .from(projects)
-    .where(and(eq(projects.id, projectId), isNull(projects.deletedAt)))
-    .limit(1);
-  if (!p) throw new AppError('validation', 'The selected project no longer exists.');
-  if (p.clientId !== clientId) {
-    throw new AppError('validation', 'The selected project belongs to a different client.');
+    .where(and(inArray(projects.id, distinct), isNull(projects.deletedAt)));
+  const byId = new Map(rows.map((r) => [r.id, r.clientId]));
+  for (const pid of distinct) {
+    const owner = byId.get(pid);
+    if (!owner) throw new AppError('validation', 'A selected project no longer exists.');
+    if (owner !== clientId) {
+      throw new AppError('validation', 'A selected project belongs to a different client.');
+    }
   }
 }
 
@@ -246,8 +264,9 @@ export async function createDraftInvoice(input: CreateInvoiceInput): Promise<Cre
     );
   }
 
-  // A linked project / bill-to address must belong to THIS client.
-  await assertProjectBelongsToClient(v.projectId, v.clientId);
+  // Linked projects (header default + per-line) / bill-to address must all
+  // belong to THIS client.
+  await assertProjectsBelongToClient([v.projectId, ...v.lines.map((l) => l.projectId)], v.clientId);
   await assertBillToAddressBelongsToClient(v.billToAddressId, v.clientId);
 
   // Short-circuit on idempotency key — if we've already created an
@@ -350,6 +369,8 @@ async function insertDraftInvoice(
       financialYearStart: fyStart,
       clientId: v.clientId,
       projectId: v.projectId ?? null,
+      coveredUnderRetainer: v.coveredUnderRetainer ?? false,
+      convertedFromInvoiceId: v.convertedFromInvoiceId ?? null,
       billToAddressId: v.billToAddressId ?? null,
       state: 'draft',
       subtotalPaise: v.subtotalPaise,
@@ -378,6 +399,7 @@ async function insertDraftInvoice(
       invoiceId,
       lineNo: l.lineNo,
       serviceItemId: l.serviceItemId ?? null,
+      projectId: l.projectId ?? null,
       description: l.description,
       sacCode: l.sacCode ?? null,
       qty: l.qty,
@@ -434,6 +456,7 @@ export async function updateDraftInvoice(
     const patch: Partial<typeof invoices.$inferInsert> = { updatedBy: ctx.userId };
     if (v.clientId !== undefined) patch.clientId = v.clientId;
     if (v.projectId !== undefined) patch.projectId = v.projectId ?? null;
+    if (v.coveredUnderRetainer !== undefined) patch.coveredUnderRetainer = v.coveredUnderRetainer;
     if (v.documentType !== undefined) patch.documentType = v.documentType;
     if (v.billToAddressId !== undefined) patch.billToAddressId = v.billToAddressId ?? null;
     if (v.documentDate !== undefined) {
@@ -501,9 +524,12 @@ export async function updateDraftInvoice(
 
     // A newly-set project / bill-to address must belong to THIS client.
     const effectiveClientId = patch.clientId ?? current.clientId;
-    if (v.projectId !== undefined) {
-      await assertProjectBelongsToClient(
-        v.projectId ?? null,
+    if (v.projectId !== undefined || v.lines !== undefined) {
+      await assertProjectsBelongToClient(
+        [
+          v.projectId !== undefined ? v.projectId : null,
+          ...(v.lines ?? []).map((l) => l.projectId),
+        ],
         effectiveClientId,
         tx as unknown as DbClient,
       );
@@ -543,12 +569,15 @@ export async function updateDraftInvoice(
 
     if (v.lines !== undefined) {
       // Wholesale line replacement on draft — simpler than diff-merge for v1.
+      // Line projectId MUST round-trip through the composer payload or this
+      // replacement silently wipes per-line attributions.
       await tx.delete(invoiceLines).where(eq(invoiceLines.invoiceId, invoiceId));
       await tx.insert(invoiceLines).values(
         v.lines.map((l) => ({
           invoiceId,
           lineNo: l.lineNo,
           serviceItemId: l.serviceItemId ?? null,
+          projectId: l.projectId ?? null,
           description: l.description,
           sacCode: l.sacCode ?? null,
           qty: l.qty,

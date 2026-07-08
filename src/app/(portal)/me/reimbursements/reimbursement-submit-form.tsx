@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { CurrencyInput } from '@/components/shared/currency-input';
+import { DateField } from '@/components/shared/date-field';
 
 export function ReimbursementSubmitForm() {
   const [amount, setAmount] = useState<bigint | null>(null);
@@ -42,7 +43,7 @@ export function ReimbursementSubmitForm() {
       <div className="grid grid-cols-2 gap-2">
         <div>
           <Label className="text-muted-foreground text-xs tracking-wide uppercase">Date</Label>
-          <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+          <DateField value={date} onChange={setDate} clearable={false} />
         </div>
         <div>
           <Label className="text-muted-foreground text-xs tracking-wide uppercase">Amount</Label>

@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/shared/empty-state';
+import { DateField } from '@/components/shared/date-field';
 import { StatusBadge } from '@/components/shared/status-badge';
 import { formatINR } from '@/components/shared/format-inr';
 import { paiseToRupees, rupeesToPaise } from '@/lib/money';
@@ -457,8 +458,13 @@ function RecordReceiptDialog({
   const [clientBanks, setClientBanks] = useState<readonly BankAccountRow[]>([]);
   const [invoices, setInvoices] = useState<readonly OpenInvoiceRow[]>([]);
   const [mode, setMode] = useState<'bank' | 'cash'>('bank');
-  // NEFT / RTGS / IMPS / UPI — how the transfer arrived (bank mode only).
-  const [transferMethod, setTransferMethod] = useState<'neft' | 'rtgs' | 'imps' | 'upi' | ''>('');
+  // NEFT / RTGS / IMPS / UPI / cheque — how the money arrived (bank mode only).
+  const [transferMethod, setTransferMethod] = useState<
+    'neft' | 'rtgs' | 'imps' | 'upi' | 'cheque' | ''
+  >('');
+  // Cheque capture (0064) — surfaced only while transferMethod === 'cheque'.
+  const [chequeNumber, setChequeNumber] = useState('');
+  const [chequeDate, setChequeDate] = useState('');
   const [bankAccountId, setBankAccountId] = useState('');
   const [counterpartyBankAccountId, setCounterpartyBankAccountId] = useState('');
   const [paymentDate, setPaymentDate] = useState(todayISO());
@@ -479,6 +485,8 @@ function RecordReceiptDialog({
       if (cancelled) return;
       setMode('bank');
       setTransferMethod('');
+      setChequeNumber('');
+      setChequeDate('');
       setBankAccountId('');
       setCounterpartyBankAccountId('');
       setPaymentDate(todayISO());
@@ -564,12 +572,20 @@ function RecordReceiptDialog({
       return;
     }
 
+    if (mode === 'bank' && transferMethod === 'cheque' && !chequeNumber.trim()) {
+      toast.error('Enter the cheque number.');
+      return;
+    }
+
     setSubmitting(true);
     try {
       const result = await recordClientReceipt({
         clientId,
         mode,
         transferMethod: mode === 'bank' && transferMethod ? transferMethod : null,
+        chequeNumber:
+          mode === 'bank' && transferMethod === 'cheque' ? chequeNumber.trim() || null : null,
+        chequeDate: mode === 'bank' && transferMethod === 'cheque' ? chequeDate || null : null,
         bankAccountId: mode === 'bank' ? bankAccountId : null,
         counterpartyBankAccountId:
           mode === 'bank' && counterpartyBankAccountId ? counterpartyBankAccountId : null,
@@ -657,7 +673,7 @@ function RecordReceiptDialog({
             <div className="os-field">
               <span className="os-field-label">Transfer method</span>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                {(['neft', 'rtgs', 'imps', 'upi'] as const).map((t) => (
+                {(['neft', 'rtgs', 'imps', 'upi', 'cheque'] as const).map((t) => (
                   <button
                     key={t}
                     type="button"
@@ -678,6 +694,29 @@ function RecordReceiptDialog({
                     {t}
                   </button>
                 ))}
+              </div>
+            </div>
+          ) : null}
+
+          {mode === 'bank' && transferMethod === 'cheque' ? (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+              <div className="os-field">
+                <span className="os-field-label">Cheque number</span>
+                <input
+                  value={chequeNumber}
+                  onChange={(e) => setChequeNumber(e.target.value)}
+                  disabled={submitting}
+                  placeholder="e.g. 123456"
+                  style={osInputStyle}
+                />
+              </div>
+              <div className="os-field">
+                <span className="os-field-label">Cheque date (optional)</span>
+                <DateField
+                  value={chequeDate}
+                  onChange={(next) => setChequeDate(next)}
+                  disabled={submitting}
+                />
               </div>
             </div>
           ) : null}
@@ -735,13 +774,12 @@ function RecordReceiptDialog({
               <label htmlFor="rcpt-date" className="os-field-label">
                 Date
               </label>
-              <input
+              <DateField
                 id="rcpt-date"
-                type="date"
                 value={paymentDate}
-                onChange={(e) => setPaymentDate(e.target.value)}
+                onChange={(next) => setPaymentDate(next)}
                 disabled={submitting}
-                style={osInputStyle}
+                clearable={false}
               />
             </div>
             <div className="os-field">
@@ -1160,8 +1198,8 @@ function AddToBalanceDialog({
         >
           <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0 }}>
             Records money received on account as an advance — it isn&apos;t applied to any invoice
-            yet. Posts to the client&apos;s advance balance and generates a receipt voucher; apply it
-            to invoices later.
+            yet. Posts to the client&apos;s advance balance and generates a receipt voucher; apply
+            it to invoices later.
           </p>
 
           <div className="os-field">
@@ -1191,13 +1229,12 @@ function AddToBalanceDialog({
               <label htmlFor="bal-date" className="os-field-label">
                 Received on
               </label>
-              <input
+              <DateField
                 id="bal-date"
-                type="date"
-                style={osInputStyle}
                 value={receiptDate}
-                onChange={(e) => setReceiptDate(e.target.value)}
+                onChange={(next) => setReceiptDate(next)}
                 disabled={submitting}
+                clearable={false}
               />
             </div>
             <div className="os-field">
@@ -1240,7 +1277,12 @@ function AddToBalanceDialog({
             borderTop: '1px solid var(--border, #e5e7eb)',
           }}
         >
-          <Button variant="outline" size="sm" onClick={() => onOpenChange(false)} disabled={submitting}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => onOpenChange(false)}
+            disabled={submitting}
+          >
             Cancel
           </Button>
           <Button size="sm" onClick={submit} disabled={submitting}>

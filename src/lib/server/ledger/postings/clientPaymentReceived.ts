@@ -26,8 +26,11 @@ export const ClientPaymentReceivedInputSchema = z.object({
   clientId: z.string().uuid(),
   /** 'bank' → 1120 (needs bankAccountId); 'cash' → 1110. */
   mode: z.enum(['bank', 'cash']).default('bank'),
-  /** How the bank transfer happened — captured for the books, no posting impact. */
-  transferMethod: z.enum(['neft', 'rtgs', 'imps', 'upi']).nullish(),
+  /** How the money arrived — captured for the books, no posting impact. */
+  transferMethod: z.enum(['neft', 'rtgs', 'imps', 'upi', 'cheque']).nullish(),
+  /** Cheque capture (0064) — set when transferMethod='cheque'. */
+  chequeNumber: z.string().nullish(),
+  chequeDate: z.string().nullish(),
   bankAccountId: z.string().uuid().nullish(),
   /** The client's bank account the money came from (entity_bank_accounts.id) — noted. */
   counterpartyBankAccountId: z.string().uuid().nullish(),
@@ -73,6 +76,8 @@ export function clientPaymentReceived(input: ClientPaymentReceivedInput): Postin
       metadata: {
         mode: parsed.mode,
         transfer_method: parsed.mode === 'bank' ? (parsed.transferMethod ?? null) : null,
+        cheque_number: parsed.chequeNumber ?? null,
+        cheque_date: parsed.chequeDate ?? null,
         counterparty_bank_account_id: parsed.counterpartyBankAccountId ?? null,
         gst_paise: parsed.gstPaise.toString(),
       },

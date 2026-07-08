@@ -607,3 +607,166 @@ export async function getTdsSummary(args: {
     totalPayablePaise: mapped.reduce((a, r) => a + r.payablePaise, 0n),
   };
 }
+
+/* ── Universal Ledger ──────────────────────────────────────────────────── */
+
+/**
+ * Turn a transaction's opaque `external_ref` into a human document number.
+ * Duplicated (module-private) from statements.ts resolveDocumentNumber — that
+ * one isn't exported and 'use server' files can't export sync helpers.
+ */
+function universalDocNumber(reference: string): string | null {
+  const parts = reference.split(':');
+  const prefix = parts[0];
+  switch (prefix) {
+    case 'client_invoice': {
+      const n = parts.slice(1).join(':');
+      if (!n) return null;
+      // Full doc numbers (e.g. "INV/2026-27/0001") already read as invoices;
+      // only bare sequence numbers get an "INV " prefix for clarity.
+      return /[a-zA-Z]/.test(n) ? n : `INV ${n}`;
+    }
+    case 'vendor_bill':
+      // vendor_bill:<vendorId>:<their invoice no> — the number is everything
+      // after the vendor id (may itself contain colons).
+      return parts.length >= 3 ? parts.slice(2).join(':') : null;
+    case 'credit_note':
+    case 'receipt':
+    case 'advance':
+    case 'refund_voucher':
+      return parts.slice(1).join(':') || null;
+    default:
+      // crcpt / vpv / obe / closing / journal / advance_adjustment: the suffix
+      // is an id + timestamp, not a document number.
+      return null;
+  }
+}
+
+export type UniversalLedgerRow = {
+  txnId: string;
+  txnDate: string;
+  externalRef: string;
+  kind: string;
+  description: string | null;
+  /** Client / vendor / employee this txn relates to, or null (pure office JVs). */
+  counterpartyName: string | null;
+  /** Our bank/cash account the money moved through ("Display name (••1234)" /
+   * "Cash"), or null for txns with no cash leg (invoices, bills, JVs). */
+  bankAccountLabel: string | null;
+  /** Human document number parsed from `externalRef` (e.g. "INV 1", "1231"), or null. */
+  documentNumber: string | null;
+  /** Transaction total = Σ debit-leg postings (debits equal credits). */
+  amountPaise: bigint;
+};
+
+export type UniversalLedgerPage = {
+  rows: readonly UniversalLedgerRow[];
+  /** Count of ALL matching transactions, not just this page. */
+  totalCount: number;
+  /** Σ amountPaise across ALL matching transactions, not just this page. */
+  totalAmountPaise: bigint;
+};
+
+/**
+ * Universal Ledger — every posted transaction across the company (clients,
+ * vendors, office, salaries) as one row per TRANSACTION, newest first, with
+ * the counterparty resolved from the header attribution fields. Server-paged
+ * (limit/offset) with a second identical-WHERE aggregate for the grand total,
+ * so the footer reads over all matches while the table stays bounded.
+ */
+export async function getUniversalLedger(args: {
+  from?: string;
+  to?: string;
+  kind?: string;
+  partySearch?: string;
+  limit?: number;
+  offset?: number;
+}): Promise<UniversalLedgerPage> {
+  await getActorContext();
+  const limit = Math.min(200, Math.max(1, Math.trunc(args.limit ?? 100)));
+  const offset = Math.max(0, Math.trunc(args.offset ?? 0));
+
+  // Counterparty: header attribution first (related_entity_id — uuids are
+  // globally unique so one unconditional left-join per entity table is safe;
+  // at most one matches), then the §0.6 attribution fields.
+  const partyName = sql`COALESCE(rc.name, rv.name, re.full_name, bc.name, pv.name, ie.full_name)`;
+  const joins = sql`
+    FROM transactions t
+    JOIN postings p ON p.transaction_id = t.id
+    LEFT JOIN clients rc ON rc.id = t.related_entity_id
+    LEFT JOIN vendors rv ON rv.id = t.related_entity_id
+    LEFT JOIN employees re ON re.id = t.related_entity_id
+    LEFT JOIN clients bc ON bc.id = t.on_behalf_of_client_id
+    LEFT JOIN vendors pv ON pv.id = t.paid_to_vendor_id
+    LEFT JOIN employees ie ON ie.id = t.incurred_by_employee_id
+  `;
+
+  // Posted only, reversal pairs dropped — same exclusion the sibling reports
+  // use (status='posted' AND reverses_id IS NULL).
+  const conds = [sql`t.status = 'posted'`, sql`t.reverses_id IS NULL`];
+  if (args.from) conds.push(sql`t.txn_date >= ${args.from}::date`);
+  if (args.to) conds.push(sql`t.txn_date <= ${args.to}::date`);
+  if (args.kind) conds.push(sql`t.kind::text = ${args.kind}`);
+  const search = args.partySearch?.trim();
+  if (search) conds.push(sql`${partyName} ILIKE ${'%' + search + '%'}`);
+  const where = sql.join(conds, sql` AND `);
+
+  const rows = await db.execute<{
+    txn_id: string;
+    txn_date: string;
+    external_ref: string;
+    kind: string;
+    description: string | null;
+    counterparty_name: string | null;
+    bank_account_label: string | null;
+    amount: string;
+  }>(sql`
+    SELECT t.id::text AS txn_id, t.txn_date::text AS txn_date, t.external_ref, t.kind,
+      t.description, ${partyName} AS counterparty_name,
+      (
+        SELECT CASE
+          WHEN a2.code = '1110' THEN 'Cash'
+          WHEN a2.code = '1120' THEN ba.display_name || ' (••' || ba.account_last4 || ')'
+        END
+        FROM postings p2
+        JOIN accounts a2 ON a2.id = p2.account_id
+        LEFT JOIN bank_accounts ba ON ba.id = p2.subledger_entity_id
+        WHERE p2.transaction_id = t.id AND a2.code IN ('1110', '1120')
+        LIMIT 1
+      ) AS bank_account_label,
+      COALESCE(SUM(p.amount_paise) FILTER (WHERE p.side = 'debit'), 0)::text AS amount
+    ${joins}
+    WHERE ${where}
+    GROUP BY t.id, t.txn_date, t.external_ref, t.kind, t.description, t.created_at,
+      rc.name, rv.name, re.full_name, bc.name, pv.name, ie.full_name
+    ORDER BY t.txn_date DESC, t.created_at DESC, t.id DESC
+    LIMIT ${limit} OFFSET ${offset}
+  `);
+
+  const totals = await db.execute<{ total_count: number; total_amount: string }>(sql`
+    SELECT COUNT(*)::int AS total_count, COALESCE(SUM(sub.amount), 0)::text AS total_amount
+    FROM (
+      SELECT COALESCE(SUM(p.amount_paise) FILTER (WHERE p.side = 'debit'), 0) AS amount
+      ${joins}
+      WHERE ${where}
+      GROUP BY t.id
+    ) sub
+  `);
+  const totalsRow = (Array.isArray(totals) ? totals : [])[0];
+
+  return {
+    rows: (Array.isArray(rows) ? rows : []).map((r) => ({
+      txnId: r.txn_id,
+      txnDate: r.txn_date,
+      externalRef: r.external_ref,
+      kind: r.kind,
+      description: r.description,
+      counterpartyName: r.counterparty_name,
+      bankAccountLabel: r.bank_account_label,
+      documentNumber: universalDocNumber(r.external_ref),
+      amountPaise: BigInt(r.amount),
+    })),
+    totalCount: Number(totalsRow?.total_count ?? 0),
+    totalAmountPaise: BigInt(totalsRow?.total_amount ?? '0'),
+  };
+}

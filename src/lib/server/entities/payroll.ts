@@ -705,7 +705,11 @@ export async function deleteSalaryStructure(input: { id: string }): Promise<void
     entityType: 'salary_structure',
     entityId: row.id,
     action: 'delete',
-    changes: { soft_delete: true, effectiveFrom: row.effectiveFrom, ctcMonthlyPaise: String(row.ctcMonthlyPaise) },
+    changes: {
+      soft_delete: true,
+      effectiveFrom: row.effectiveFrom,
+      ctcMonthlyPaise: String(row.ctcMonthlyPaise),
+    },
   });
   await logActivity({
     entityType: 'employee',
@@ -846,11 +850,14 @@ export type SalaryPaymentRow = {
   amountPaise: bigint;
   /** Attendance-prorated gross the employee was DUE, snapshotted at record time. */
   expectedAmountPaise: bigint | null;
-  /** How the salary was paid out: cash (1110) or bank (1120 sub-ledger). */
-  paymentMethod: 'cash' | 'bank';
+  /** How the salary was paid out: cash (1110), bank or cheque (1120 sub-ledger). */
+  paymentMethod: 'cash' | 'bank' | 'cheque';
   bankAccountId: string | null;
   /** "HDFC Current ••1234" — resolved from bank_accounts for display. */
   bankLabel: string | null;
+  /** Cheque capture (0064) — set when paymentMethod='cheque'. */
+  chequeNumber: string | null;
+  chequeDate: string | null;
   notes: string | null;
   /** Ledger transaction this payment posted to (open it in the txn window). */
   transactionId: string | null;
@@ -863,14 +870,25 @@ const RecordSalaryPaymentSchema = z
     amountPaise: PaiseBigInt.refine((v) => v > 0n, 'amount must be greater than 0'),
     /** What the employee deserved for the period (attendance-prorated). */
     expectedAmountPaise: PaiseBigInt.nullable().optional(),
-    /** 'bank' → Cr 1120 (needs bankAccountId); 'cash' → Cr 1110. */
-    mode: z.enum(['bank', 'cash']).default('cash'),
+    /** 'bank'/'cheque' → Cr 1120 (needs bankAccountId); 'cash' → Cr 1110. */
+    mode: z.enum(['bank', 'cash', 'cheque']).default('cash'),
     bankAccountId: z.string().uuid().nullable().optional(),
+    /** Cheque capture (0064) — required when mode='cheque'. */
+    chequeNumber: z.string().trim().max(40).nullable().optional(),
+    chequeDate: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .nullable()
+      .optional(),
     notes: z.string().max(2000).nullable().optional(),
   })
-  .refine((v) => v.mode !== 'bank' || !!v.bankAccountId, {
+  .refine((v) => v.mode === 'cash' || !!v.bankAccountId, {
     message: 'Pick the bank account the salary was paid from.',
     path: ['bankAccountId'],
+  })
+  .refine((v) => v.mode !== 'cheque' || !!v.chequeNumber?.trim(), {
+    message: 'Enter the cheque number.',
+    path: ['chequeNumber'],
   });
 
 export type RecordSalaryPaymentInput = z.input<typeof RecordSalaryPaymentSchema>;
@@ -891,6 +909,18 @@ export async function recordSalaryPayment(
   requireCapability(ctx, 'post_transaction');
   const parsed = RecordSalaryPaymentSchema.parse(input);
 
+  // Cheque narration suffix — every list/statement shows it without read-path
+  // changes (mirrors recordClientReceipt/recordVendorPayment).
+  const chequeSuffix =
+    parsed.mode === 'cheque' && parsed.chequeNumber
+      ? `Cheque #${parsed.chequeNumber.trim()}${parsed.chequeDate ? ` dt ${parsed.chequeDate}` : ''}`
+      : null;
+  const notesWithCheque = chequeSuffix
+    ? parsed.notes?.trim()
+      ? `${parsed.notes.trim()} · ${chequeSuffix}`
+      : chequeSuffix
+    : (parsed.notes ?? null);
+
   const externalRef = `SAL-${parsed.paidOn}-${parsed.employeeId.slice(0, 8)}-${Date.now()}`;
   const { transactionId } = await createDraftTransaction(ctx, {
     kind: 'salary_disbursement',
@@ -898,10 +928,12 @@ export async function recordSalaryPayment(
       employeeId: parsed.employeeId,
       amountPaise: parsed.amountPaise,
       mode: parsed.mode,
-      bankAccountId: parsed.mode === 'bank' ? (parsed.bankAccountId ?? null) : null,
+      bankAccountId: parsed.mode !== 'cash' ? (parsed.bankAccountId ?? null) : null,
+      chequeNumber: parsed.mode === 'cheque' ? (parsed.chequeNumber ?? null) : null,
+      chequeDate: parsed.mode === 'cheque' ? (parsed.chequeDate ?? null) : null,
       txnDate: parsed.paidOn,
       externalRef,
-      notes: parsed.notes ?? null,
+      notes: notesWithCheque,
     },
   });
   await postTransaction(ctx, { transactionId });
@@ -914,8 +946,10 @@ export async function recordSalaryPayment(
       amountPaise: parsed.amountPaise,
       expectedAmountPaise: parsed.expectedAmountPaise ?? null,
       paymentMethod: parsed.mode,
-      bankAccountId: parsed.mode === 'bank' ? (parsed.bankAccountId ?? null) : null,
-      notes: parsed.notes ?? null,
+      bankAccountId: parsed.mode !== 'cash' ? (parsed.bankAccountId ?? null) : null,
+      chequeNumber: parsed.mode === 'cheque' ? (parsed.chequeNumber ?? null) : null,
+      chequeDate: parsed.mode === 'cheque' ? (parsed.chequeDate ?? null) : null,
+      notes: notesWithCheque,
       transactionId,
       createdBy: ctx.userId,
       updatedBy: ctx.userId,
@@ -940,6 +974,8 @@ export async function listEmployeeSalaryPayments(
       bankAccountId: salaryPayments.bankAccountId,
       bankDisplayName: bankAccounts.displayName,
       bankAccountLast4: bankAccounts.accountLast4,
+      chequeNumber: salaryPayments.chequeNumber,
+      chequeDate: salaryPayments.chequeDate,
       notes: salaryPayments.notes,
       transactionId: salaryPayments.transactionId,
     })
@@ -954,9 +990,13 @@ export async function listEmployeeSalaryPayments(
       paidOn: r.paidOn,
       amountPaise: r.amountPaise,
       expectedAmountPaise: r.expectedAmountPaise,
-      paymentMethod: r.paymentMethod === 'bank' ? 'bank' : 'cash',
+      // Don't collapse cheque to cash — 0064 widened the CHECK.
+      paymentMethod:
+        r.paymentMethod === 'bank' ? 'bank' : r.paymentMethod === 'cheque' ? 'cheque' : 'cash',
       bankAccountId: r.bankAccountId,
       bankLabel: r.bankDisplayName ? `${r.bankDisplayName} ••${r.bankAccountLast4 ?? ''}` : null,
+      chequeNumber: r.chequeNumber,
+      chequeDate: r.chequeDate,
       notes: r.notes,
       transactionId: r.transactionId,
     }),
@@ -1000,7 +1040,12 @@ export async function deleteSalaryPayment(id: string): Promise<void> {
     entityType: 'salary_payment',
     entityId: row.id,
     action: 'delete',
-    changes: { soft_delete: true, reversed: !!row.transactionId, amountPaise: String(row.amountPaise), paidOn: row.paidOn },
+    changes: {
+      soft_delete: true,
+      reversed: !!row.transactionId,
+      amountPaise: String(row.amountPaise),
+      paidOn: row.paidOn,
+    },
   });
   // Activity tab entry (30-day retention) — the user-visible deletion log.
   await logActivity({
@@ -1031,11 +1076,16 @@ export async function restoreSalaryPayment(input: { id: string }): Promise<void>
     .limit(1);
   if (!row) throw new AppError('not_found', 'Salary payment not found in the Trash.');
 
-  const mode = row.paymentMethod === 'bank' ? ('bank' as const) : ('cash' as const);
-  // The bank account FK is ON DELETE SET NULL — restoring a bank payment whose
-  // account is gone would silently fall back to crediting office cash. Refuse
-  // with a clear message instead.
-  if (mode === 'bank' && !row.bankAccountId) {
+  const mode =
+    row.paymentMethod === 'bank'
+      ? ('bank' as const)
+      : row.paymentMethod === 'cheque'
+        ? ('cheque' as const)
+        : ('cash' as const);
+  // The bank account FK is ON DELETE SET NULL — restoring a bank/cheque
+  // payment whose account is gone would silently fall back to crediting
+  // office cash. Refuse with a clear message instead.
+  if (mode !== 'cash' && !row.bankAccountId) {
     throw new AppError(
       'validation',
       'This payment was made from a bank account that no longer exists. Record it afresh instead of restoring.',
@@ -1048,7 +1098,9 @@ export async function restoreSalaryPayment(input: { id: string }): Promise<void>
       employeeId: row.employeeId,
       amountPaise: row.amountPaise,
       mode,
-      bankAccountId: mode === 'bank' ? row.bankAccountId : null,
+      bankAccountId: mode !== 'cash' ? row.bankAccountId : null,
+      chequeNumber: mode === 'cheque' ? row.chequeNumber : null,
+      chequeDate: mode === 'cheque' ? row.chequeDate : null,
       txnDate: row.paidOn,
       externalRef,
       notes: row.notes,

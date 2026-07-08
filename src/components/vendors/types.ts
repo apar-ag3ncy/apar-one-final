@@ -15,6 +15,8 @@ export type TdsSection = '194C' | '194J' | '194H' | '194I' | '194Q' | '194O' | '
 
 export type Vendor = {
   id: string;
+  /** Human-readable display id 'VN-0001' (0063). */
+  code: string;
   name: string;
   category: VendorCategory;
   status: VendorStatus;

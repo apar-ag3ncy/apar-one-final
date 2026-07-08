@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/shared/empty-state';
+import { DateField } from '@/components/shared/date-field';
 import { StatusBadge } from '@/components/shared/status-badge';
 import { formatINR } from '@/components/shared/format-inr';
 import { rupeesToPaise } from '@/lib/money';
@@ -333,8 +334,13 @@ function RecordVendorPaymentDialog({
   const [vendorBanks, setVendorBanks] = useState<readonly BankAccountRow[]>([]);
   const [bills, setBills] = useState<readonly OpenBillRow[]>([]);
   const [mode, setMode] = useState<'bank' | 'cash'>('bank');
-  // NEFT / RTGS / IMPS / UPI — how the transfer went out (bank mode only).
-  const [transferMethod, setTransferMethod] = useState<'neft' | 'rtgs' | 'imps' | 'upi' | ''>('');
+  // NEFT / RTGS / IMPS / UPI / cheque — how the money went out (bank mode only).
+  const [transferMethod, setTransferMethod] = useState<
+    'neft' | 'rtgs' | 'imps' | 'upi' | 'cheque' | ''
+  >('');
+  // Cheque capture (0064) — surfaced only while transferMethod === 'cheque'.
+  const [chequeNumber, setChequeNumber] = useState('');
+  const [chequeDate, setChequeDate] = useState('');
   const [bankAccountId, setBankAccountId] = useState('');
   const [counterpartyBankAccountId, setCounterpartyBankAccountId] = useState('');
   const [paymentDate, setPaymentDate] = useState(todayISO());
@@ -352,6 +358,8 @@ function RecordVendorPaymentDialog({
       if (cancelled) return;
       setMode('bank');
       setTransferMethod('');
+      setChequeNumber('');
+      setChequeDate('');
       setBankAccountId('');
       setCounterpartyBankAccountId('');
       setPaymentDate(todayISO());
@@ -436,12 +444,20 @@ function RecordVendorPaymentDialog({
       return;
     }
 
+    if (mode === 'bank' && transferMethod === 'cheque' && !chequeNumber.trim()) {
+      toast.error('Enter the cheque number.');
+      return;
+    }
+
     setSubmitting(true);
     try {
       const result = await recordVendorPayment({
         vendorId,
         mode,
         transferMethod: mode === 'bank' && transferMethod ? transferMethod : null,
+        chequeNumber:
+          mode === 'bank' && transferMethod === 'cheque' ? chequeNumber.trim() || null : null,
+        chequeDate: mode === 'bank' && transferMethod === 'cheque' ? chequeDate || null : null,
         bankAccountId: mode === 'bank' ? bankAccountId : null,
         counterpartyBankAccountId:
           mode === 'bank' && counterpartyBankAccountId ? counterpartyBankAccountId : null,
@@ -525,7 +541,7 @@ function RecordVendorPaymentDialog({
             <div className="os-field">
               <span className="os-field-label">Transfer method</span>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                {(['neft', 'rtgs', 'imps', 'upi'] as const).map((t) => (
+                {(['neft', 'rtgs', 'imps', 'upi', 'cheque'] as const).map((t) => (
                   <button
                     key={t}
                     type="button"
@@ -546,6 +562,29 @@ function RecordVendorPaymentDialog({
                     {t}
                   </button>
                 ))}
+              </div>
+            </div>
+          ) : null}
+
+          {mode === 'bank' && transferMethod === 'cheque' ? (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+              <div className="os-field">
+                <span className="os-field-label">Cheque number</span>
+                <input
+                  value={chequeNumber}
+                  onChange={(e) => setChequeNumber(e.target.value)}
+                  disabled={submitting}
+                  placeholder="e.g. 123456"
+                  style={osInputStyle}
+                />
+              </div>
+              <div className="os-field">
+                <span className="os-field-label">Cheque date (optional)</span>
+                <DateField
+                  value={chequeDate}
+                  onChange={(next) => setChequeDate(next)}
+                  disabled={submitting}
+                />
               </div>
             </div>
           ) : null}
@@ -603,13 +642,12 @@ function RecordVendorPaymentDialog({
               <label htmlFor="vp-date" className="os-field-label">
                 Date
               </label>
-              <input
+              <DateField
                 id="vp-date"
-                type="date"
                 value={paymentDate}
-                onChange={(e) => setPaymentDate(e.target.value)}
+                onChange={(next) => setPaymentDate(next)}
                 disabled={submitting}
-                style={osInputStyle}
+                clearable={false}
               />
             </div>
             <div className="os-field">

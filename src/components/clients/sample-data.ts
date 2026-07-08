@@ -7,6 +7,8 @@ import type { Client } from './types';
 export const SAMPLE_CLIENTS: readonly Client[] = [
   {
     id: 'cl_001',
+
+    code: 'CL-0001',
     name: 'Marigold Coffee Roasters',
     industry: 'F&B',
     status: 'active',
@@ -42,6 +44,8 @@ export const SAMPLE_CLIENTS: readonly Client[] = [
   },
   {
     id: 'cl_002',
+
+    code: 'CL-0002',
     name: 'Northwind Realty',
     industry: 'Real Estate',
     status: 'active',
@@ -69,6 +73,8 @@ export const SAMPLE_CLIENTS: readonly Client[] = [
   },
   {
     id: 'cl_003',
+
+    code: 'CL-0003',
     name: 'Solace Wellness',
     industry: 'Wellness',
     status: 'onboarding',
@@ -96,6 +102,8 @@ export const SAMPLE_CLIENTS: readonly Client[] = [
   },
   {
     id: 'cl_004',
+
+    code: 'CL-0004',
     name: 'Atlas Logistics',
     industry: 'Logistics',
     status: 'inactive',
@@ -123,6 +131,8 @@ export const SAMPLE_CLIENTS: readonly Client[] = [
   },
   {
     id: 'cl_005',
+
+    code: 'CL-0005',
     name: 'Verde Skincare',
     industry: 'D2C',
     status: 'active',
@@ -150,6 +160,8 @@ export const SAMPLE_CLIENTS: readonly Client[] = [
   },
   {
     id: 'cl_006',
+
+    code: 'CL-0006',
     name: 'Crimson Studios',
     industry: 'Media',
     status: 'archived',

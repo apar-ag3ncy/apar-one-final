@@ -16,6 +16,7 @@ import {
 import { Checkbox } from '@/components/ui/checkbox';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { CurrencyInput } from '@/components/shared/currency-input';
+import { DateField } from '@/components/shared/date-field';
 import { formatINR } from '@/components/shared/format-inr';
 import { cn } from '@/lib/utils';
 import type { FormField, FormTemplate, FormValues } from './form-template-types';
@@ -244,12 +245,11 @@ function FieldInput({
       );
     case 'date':
       return (
-        <Input
+        <DateField
           id={id}
-          type="date"
           value={typeof value === 'string' ? value.slice(0, 10) : ''}
-          onChange={(e) => onChange?.(e.target.value)}
-          required={required}
+          onChange={(next) => onChange?.(next)}
+          clearable={!required}
         />
       );
     case 'datetime':

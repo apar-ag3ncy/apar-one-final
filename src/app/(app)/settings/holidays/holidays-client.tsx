@@ -17,6 +17,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { EmptyState } from '@/components/shared/empty-state';
+import { DateField } from '@/components/shared/date-field';
 import {
   createHoliday,
   deleteHoliday,
@@ -110,11 +111,11 @@ export function HolidaysClient({ initial }: { initial: readonly HolidayRow[] }) 
               <Label htmlFor="hol-date" className="text-muted-foreground text-xs">
                 Date
               </Label>
-              <Input
+              <DateField
                 id="hol-date"
-                type="date"
                 value={date}
-                onChange={(e) => setDate(e.target.value)}
+                onChange={setDate}
+                clearable={false}
                 className="w-44"
               />
             </div>

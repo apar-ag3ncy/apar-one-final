@@ -46,8 +46,14 @@ export type ReceiptAllocationInput = z.input<typeof ReceiptAllocationSchema>;
 const RecordClientReceiptInputSchema = z.object({
   clientId: z.string().uuid(),
   mode: z.enum(['bank', 'cash']).default('bank'),
-  /** How the bank transfer arrived (NEFT/RTGS/IMPS/UPI) — captured on the posting. */
-  transferMethod: z.enum(['neft', 'rtgs', 'imps', 'upi']).nullish(),
+  /** How the money arrived (NEFT/RTGS/IMPS/UPI/cheque) — captured on the posting. */
+  transferMethod: z.enum(['neft', 'rtgs', 'imps', 'upi', 'cheque']).nullish(),
+  /** Cheque capture (0064) — required when transferMethod='cheque'. */
+  chequeNumber: z.string().trim().max(40).nullish(),
+  chequeDate: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .nullish(),
   /** Our agency bank account (bank_accounts.id) — required when mode='bank'. */
   bankAccountId: z.string().uuid().nullish(),
   /** The client's bank account the money came from (entity_bank_accounts.id) — noted. */
@@ -96,6 +102,9 @@ export async function recordClientReceipt(
   if (v.mode === 'bank' && !v.bankAccountId) {
     throw new AppError('validation', 'Pick the bank account the money was received into.');
   }
+  if (v.transferMethod === 'cheque' && !v.chequeNumber?.trim()) {
+    throw new AppError('validation', 'Enter the cheque number.');
+  }
   if (v.tdsPaise >= v.totalPaise && v.tdsPaise > 0n) {
     throw new AppError('validation', 'TDS cannot be greater than or equal to the amount.');
   }
@@ -114,7 +123,19 @@ export async function recordClientReceipt(
   const externalRef = `crcpt:${v.clientId}:${ts}`;
   const ownerId = randomUUID();
 
-  const pdfData = await assembleReceiptData(v, receiptNumber);
+  // Cheque narration suffix — every read surface (payment lists, statements,
+  // day book, voucher PDF notes) shows it with zero read-path changes.
+  const chequeSuffix =
+    v.transferMethod === 'cheque' && v.chequeNumber
+      ? `Cheque #${v.chequeNumber.trim()}${v.chequeDate ? ` dt ${v.chequeDate}` : ''}`
+      : null;
+  const notesWithCheque = chequeSuffix
+    ? v.notes?.trim()
+      ? `${v.notes.trim()} · ${chequeSuffix}`
+      : chequeSuffix
+    : (v.notes ?? null);
+
+  const pdfData = await assembleReceiptData({ ...v, notes: notesWithCheque }, receiptNumber);
   const pdfBytes = await renderPaymentReceiptPdf(pdfData);
   const { documentId } = await uploadBillingPdf({
     ownerId,
@@ -135,6 +156,8 @@ export async function recordClientReceipt(
           clientId: v.clientId,
           mode: v.mode,
           transferMethod: v.transferMethod ?? null,
+          chequeNumber: v.transferMethod === 'cheque' ? (v.chequeNumber ?? null) : null,
+          chequeDate: v.transferMethod === 'cheque' ? (v.chequeDate ?? null) : null,
           bankAccountId: v.bankAccountId ?? null,
           counterpartyBankAccountId: v.counterpartyBankAccountId ?? null,
           amountPaise: v.totalPaise,
@@ -144,7 +167,7 @@ export async function recordClientReceipt(
           receiptDocumentId: documentId,
           externalRef,
           txnDate: v.paymentDate,
-          notes: v.notes ?? null,
+          notes: notesWithCheque,
         },
       },
       tx as unknown as typeof db,
@@ -360,7 +383,7 @@ async function assembleReceiptData(
     receiptNumber,
     receiptDate: v.paymentDate,
     amountPaise: v.totalPaise,
-    method: v.mode === 'cash' ? 'cash' : 'bank_transfer',
+    method: v.mode === 'cash' ? 'cash' : v.transferMethod === 'cheque' ? 'cheque' : 'bank_transfer',
     bankLabel: null,
     allocations,
     unappliedPaise: v.totalPaise - appliedPaise,

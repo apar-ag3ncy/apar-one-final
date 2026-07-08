@@ -66,17 +66,23 @@ export async function getConvertedInvoiceFor(
   const ctx = await getActorContext();
   requireCapability(ctx, 'create_invoice');
   const id = z.string().uuid().parse(proformaId);
+  // Primary lookup: the persisted linkage column (0062). Fall back to the
+  // legacy idempotency-key convention for rows created before the backfill.
   const [row] = await db
+    .select({ id: invoices.id, documentNumber: invoices.documentNumber })
+    .from(invoices)
+    .where(eq(invoices.convertedFromInvoiceId, id))
+    .limit(1);
+  if (row) return { invoiceId: row.id, documentNumber: row.documentNumber };
+  const [legacy] = await db
     .select({ id: invoices.id, documentNumber: invoices.documentNumber })
     .from(invoices)
     .where(eq(invoices.idempotencyKey, conversionKeyFor(id)))
     .limit(1);
-  return row ? { invoiceId: row.id, documentNumber: row.documentNumber } : null;
+  return legacy ? { invoiceId: legacy.id, documentNumber: legacy.documentNumber } : null;
 }
 
-export async function convertProformaToInvoice(
-  proformaId: string,
-): Promise<ConvertProformaResult> {
+export async function convertProformaToInvoice(proformaId: string): Promise<ConvertProformaResult> {
   const ctx = await getActorContext();
   requireCapability(ctx, 'create_invoice');
   const id = z.string().uuid().parse(proformaId);
@@ -96,7 +102,11 @@ export async function convertProformaToInvoice(
     .where(eq(invoices.idempotencyKey, key))
     .limit(1);
   if (existing) {
-    return { invoiceId: existing.id, documentNumber: existing.documentNumber, alreadyConverted: true };
+    return {
+      invoiceId: existing.id,
+      documentNumber: existing.documentNumber,
+      alreadyConverted: true,
+    };
   }
 
   const lines = await db
@@ -115,6 +125,10 @@ export async function convertProformaToInvoice(
   const result = await createDraftInvoice({
     clientId: proforma.clientId,
     projectId: proforma.projectId,
+    // Carry the retainer flag and record the conversion source (0062) —
+    // previously both were dropped in the copy.
+    coveredUnderRetainer: proforma.coveredUnderRetainer,
+    convertedFromInvoiceId: proforma.id,
     documentType: 'invoice',
     billToAddressId: proforma.billToAddressId,
     documentDate: proforma.documentDate,
@@ -137,6 +151,8 @@ export async function convertProformaToInvoice(
     lines: lines.map((l) => ({
       lineNo: l.lineNo,
       serviceItemId: l.serviceItemId,
+      // Per-line project attribution survives the conversion (0062).
+      projectId: l.projectId,
       description: l.description,
       sacCode: l.sacCode,
       qty: l.qty,

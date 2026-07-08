@@ -5,6 +5,7 @@ import { useState } from 'react';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
+import { DateField } from '@/components/shared/date-field';
 import {
   Select,
   SelectContent,
@@ -96,11 +97,11 @@ export function AuditFilters() {
       </div>
       <div>
         <Label className="text-muted-foreground text-xs tracking-wide uppercase">From</Label>
-        <Input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} />
+        <DateField value={fromDate} onChange={setFromDate} clearable={false} />
       </div>
       <div>
         <Label className="text-muted-foreground text-xs tracking-wide uppercase">To</Label>
-        <Input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} />
+        <DateField value={toDate} onChange={setToDate} clearable={false} />
       </div>
       <div className="flex items-end gap-2 lg:col-span-6">
         <Button onClick={apply}>Apply</Button>

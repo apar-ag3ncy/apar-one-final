@@ -16,8 +16,8 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { DateField } from '@/components/shared/date-field';
 import { PageHeader } from '@/components/shared/page-header';
 import { ExportMenu } from '@/components/shared/export-menu';
 import { formatINR } from '@/components/shared/format-inr';
@@ -117,16 +117,11 @@ export function ReportRangeView({
       <div className="flex flex-wrap items-end gap-3">
         <div>
           <Label className="text-muted-foreground text-xs tracking-wide uppercase">From</Label>
-          <Input
-            type="date"
-            value={from}
-            onChange={(e) => setFrom(e.target.value)}
-            className="w-44"
-          />
+          <DateField value={from} onChange={setFrom} clearable={false} className="w-44" />
         </div>
         <div>
           <Label className="text-muted-foreground text-xs tracking-wide uppercase">To</Label>
-          <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="w-44" />
+          <DateField value={to} onChange={setTo} clearable={false} className="w-44" />
         </div>
         {extraControls}
         <div className="ml-auto">

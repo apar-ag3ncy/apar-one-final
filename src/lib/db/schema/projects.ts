@@ -13,6 +13,7 @@ import {
 import { auditColumns, timestamps } from './_shared';
 import { clients } from './clients';
 import { employees } from './employees';
+import { entityContacts } from './entity_contacts';
 import { users } from './users';
 
 export const projectStatusEnum = pgEnum('project_status', [
@@ -46,9 +47,25 @@ export const projects = pgTable(
       onDelete: 'set null',
     }),
     accountManagerId: uuid().references(() => users.id, { onDelete: 'set null' }),
+    /**
+     * One-level sub-projects (0061). A sub-project is a full project row
+     * (own fee, team, deliverables) under a parent. Self-FK RESTRICT lives
+     * in the SQL migration (kept a plain uuid here like
+     * transactions.reversesId to avoid the circular reference).
+     * tg_projects_one_level_nesting enforces single-level nesting + client
+     * inheritance at the DB.
+     */
+    parentProjectId: uuid(),
+    /**
+     * Client-side POC for this project — one of the client's entity_contacts
+     * rows. SET NULL on contact delete (0061).
+     */
+    clientContactId: uuid().references(() => entityContacts.id, {
+      onDelete: 'set null',
+    }),
 
     name: text().notNull(),
-    code: text(), // optional short code: 'LODHA-DIWALI-26'
+    code: text(), // short code: 'LODHA-DIWALI-26'; auto 'PRJ-NNNN' when left blank (0063)
     status: projectStatusEnum().notNull().default('pitch'),
     /** Captured SOW amount in paise. Apar doesn't compute — entered as-is. */
     feePaise: bigint({ mode: 'bigint' }).notNull().default(0n),
@@ -68,6 +85,8 @@ export const projects = pgTable(
     index().on(t.status),
     index().on(t.name),
     index().on(t.isArchived),
+    index().on(t.parentProjectId),
+    index().on(t.clientContactId),
   ],
 );
 

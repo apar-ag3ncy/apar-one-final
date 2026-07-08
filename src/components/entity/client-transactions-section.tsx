@@ -9,6 +9,7 @@ import { PostTransactionDialog } from './post-transaction-dialog';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/shared/empty-state';
+import { DateField } from '@/components/shared/date-field';
 import { StatusBadge } from '@/components/shared/status-badge';
 import { ReceiptIcon } from 'lucide-react';
 
@@ -546,13 +547,12 @@ function NewInvoiceDialog({
               <label htmlFor="inv-date" className="os-field-label">
                 Invoice date
               </label>
-              <input
+              <DateField
                 id="inv-date"
-                type="date"
                 value={txnDate}
-                onChange={(e) => setTxnDate(e.target.value)}
+                onChange={(next) => setTxnDate(next)}
                 disabled={submitting}
-                style={osInputStyle}
+                clearable={false}
               />
             </div>
           </div>

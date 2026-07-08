@@ -17,6 +17,7 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { CurrencyInput } from '@/components/shared/currency-input';
+import { DateField } from '@/components/shared/date-field';
 import { formatINR } from '@/components/shared/format-inr';
 import { previewSalaryFromAttendance } from '@/lib/server/entities/salary-attendance';
 
@@ -50,9 +51,10 @@ export function SalaryRunWizardClient({
   employees: readonly { id: string; fullName: string }[];
 }) {
   const [prorating, setProrating] = useState(false);
-  const [periodMeta, setPeriodMeta] = useState<{ workingDays: number; holidayCount: number } | null>(
-    null,
-  );
+  const [periodMeta, setPeriodMeta] = useState<{
+    workingDays: number;
+    holidayCount: number;
+  } | null>(null);
 
   const initialValues: Values = {
     month: new Date().toISOString().slice(0, 7),
@@ -135,17 +137,19 @@ export function SalaryRunWizardClient({
             />
           </Field>
           <Field label="Paydate" error={errors.payDate}>
-            <Input
-              type="date"
+            <DateField
               value={values.payDate}
-              onChange={(e) => onPatch({ payDate: e.target.value })}
+              onChange={(next) => onPatch({ payDate: next })}
+              clearable={false}
             />
           </Field>
           <Field label="Paid from" error={errors.paymentSource}>
             <select
               className="bg-background h-9 rounded-md border px-3 text-sm"
               value={values.paymentSource}
-              onChange={(e) => onPatch({ paymentSource: e.target.value as Values['paymentSource'] })}
+              onChange={(e) =>
+                onPatch({ paymentSource: e.target.value as Values['paymentSource'] })
+              }
             >
               <option value="">Choose…</option>
               <option value="1100">1100 — HDFC Current</option>

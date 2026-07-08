@@ -18,8 +18,8 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { DateField } from '@/components/shared/date-field';
 import { formatINR } from '@/components/shared/format-inr';
 import { ExportMenu } from '@/components/shared/export-menu';
 import { EntityRef } from '@/components/entity/entity-ref';
@@ -124,19 +124,19 @@ export function StatementClient({
           </div>
           <div>
             <Label className="text-muted-foreground text-xs tracking-wide uppercase">From</Label>
-            <Input
-              type="date"
-              defaultValue={fromDate}
-              onChange={(e) => apply({ from: e.target.value })}
+            <DateField
+              value={fromDate}
+              onChange={(next) => apply({ from: next })}
+              clearable={false}
               className="w-44"
             />
           </div>
           <div>
             <Label className="text-muted-foreground text-xs tracking-wide uppercase">To</Label>
-            <Input
-              type="date"
-              defaultValue={toDate}
-              onChange={(e) => apply({ to: e.target.value })}
+            <DateField
+              value={toDate}
+              onChange={(next) => apply({ to: next })}
+              clearable={false}
               className="w-44"
             />
           </div>

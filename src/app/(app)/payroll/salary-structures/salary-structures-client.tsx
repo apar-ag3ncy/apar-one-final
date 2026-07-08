@@ -14,6 +14,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { CurrencyInput } from '@/components/shared/currency-input';
+import { DateField } from '@/components/shared/date-field';
 import { formatINR } from '@/components/shared/format-inr';
 import { StatusBadge } from '@/components/shared/status-badge';
 
@@ -97,11 +98,7 @@ export function SalaryStructuresClient({ employees }: Props) {
             <Label className="text-muted-foreground text-xs tracking-wide uppercase">
               Effective from
             </Label>
-            <Input
-              type="date"
-              value={effectiveFrom}
-              onChange={(e) => setEffectiveFrom(e.target.value)}
-            />
+            <DateField value={effectiveFrom} onChange={setEffectiveFrom} clearable={false} />
           </div>
           <div className="ml-auto flex items-center gap-2">
             <StatusBadge tone="info" label={`v${version} (draft)`} dot={false} />

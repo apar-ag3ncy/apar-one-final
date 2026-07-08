@@ -22,6 +22,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { DateField } from '@/components/shared/date-field';
 import { defaultStatusForDate } from '@/lib/attendance-defaults';
 import { exportRows, type ExportFormat } from '@/lib/client/export-rows';
 import {
@@ -349,25 +350,23 @@ export function ExportAttendanceDialog() {
               ))}
             </div>
             <div className="flex items-center gap-2">
-              <Input
-                type="date"
+              <DateField
                 value={from}
-                onChange={(e) => {
-                  setFrom(e.target.value);
+                onChange={(next) => {
+                  setFrom(next);
                   setPreset('custom');
                 }}
-                aria-label="From date"
+                clearable={false}
                 className="h-8"
               />
               <span className="text-muted-foreground text-sm">to</span>
-              <Input
-                type="date"
+              <DateField
                 value={to}
-                onChange={(e) => {
-                  setTo(e.target.value);
+                onChange={(next) => {
+                  setTo(next);
                   setPreset('custom');
                 }}
-                aria-label="To date"
+                clearable={false}
                 className="h-8"
               />
             </div>

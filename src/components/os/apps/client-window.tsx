@@ -535,6 +535,14 @@ function Header({
           {client.name}
         </div>
         <div style={{ color: 'var(--text-muted)', fontSize: 13, marginTop: 4 }}>
+          {client.code ? (
+            <>
+              <span className="entity-code" style={{ fontSize: 12 }}>
+                {client.code}
+              </span>
+              {' · '}
+            </>
+          ) : null}
           {client.industry || '—'} · Managed by {client.accountManager || '—'}
         </div>
         <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>

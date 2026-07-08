@@ -16,6 +16,8 @@ export type ClientPoc = {
 
 export type Client = {
   id: string;
+  /** Human-readable display id 'CL-0001' (0063). */
+  code: string;
   name: string;
   industry: string;
   status: ClientStatus;

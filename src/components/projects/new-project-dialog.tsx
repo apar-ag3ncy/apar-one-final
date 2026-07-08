@@ -26,6 +26,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
+import { DateField } from '@/components/shared/date-field';
 import { createProject } from '@/lib/server/entities/projects';
 import { PROJECT_DB_STATUS_LABELS, type ProjectDbStatus } from '@/components/projects/types';
 
@@ -251,11 +252,19 @@ export function NewProjectDialog({
             </div>
             <div className="grid gap-1.5">
               <Label htmlFor="project-start">Start date</Label>
-              <Input id="project-start" type="date" {...form.register('startedOn')} />
+              <DateField
+                id="project-start"
+                value={form.watch('startedOn') ?? ''}
+                onChange={(next) => form.setValue('startedOn', next)}
+              />
             </div>
             <div className="grid gap-1.5">
               <Label htmlFor="project-end">Target end</Label>
-              <Input id="project-end" type="date" {...form.register('targetEndOn')} />
+              <DateField
+                id="project-end"
+                value={form.watch('targetEndOn') ?? ''}
+                onChange={(next) => form.setValue('targetEndOn', next)}
+              />
             </div>
           </div>
 

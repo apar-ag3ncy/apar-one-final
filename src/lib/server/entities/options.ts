@@ -19,21 +19,30 @@ export type EntityOption = { id: string; label: string; sub?: string | null };
 export async function listClientOptions(): Promise<readonly EntityOption[]> {
   await getActorContext();
   const rows = await db
-    .select({ id: clients.id, name: clients.name, industry: clients.industry })
+    .select({ id: clients.id, code: clients.code, name: clients.name, industry: clients.industry })
     .from(clients)
     .where(and(isNull(clients.deletedAt), eq(clients.isArchived, false)))
     .orderBy(asc(clients.name));
-  return rows.map((r) => ({ id: r.id, label: r.name, sub: r.industry }));
+  // Show the display code alongside the industry so a picker disambiguates.
+  return rows.map((r) => ({
+    id: r.id,
+    label: r.name,
+    sub: [r.code, r.industry].filter(Boolean).join(' · ') || null,
+  }));
 }
 
 export async function listVendorOptions(): Promise<readonly EntityOption[]> {
   await getActorContext();
   const rows = await db
-    .select({ id: vendors.id, name: vendors.name, category: vendors.category })
+    .select({ id: vendors.id, code: vendors.code, name: vendors.name, category: vendors.category })
     .from(vendors)
     .where(and(isNull(vendors.deletedAt), eq(vendors.isArchived, false)))
     .orderBy(asc(vendors.name));
-  return rows.map((r) => ({ id: r.id, label: r.name, sub: r.category }));
+  return rows.map((r) => ({
+    id: r.id,
+    label: r.name,
+    sub: [r.code, r.category].filter(Boolean).join(' · ') || null,
+  }));
 }
 
 export async function listEmployeeOptions(): Promise<readonly EntityOption[]> {
@@ -68,6 +77,9 @@ export async function listProjectOptions(): Promise<readonly EntityOption[]> {
  * Active (non-archived) projects for a single client — backs the project
  * picker on the invoice composer and the "expenses on behalf" form, where the
  * choices must be scoped to the client the document is for.
+ *
+ * Sub-projects (0061) are listed under their parent and labelled
+ * "Parent › Sub" so a per-line picker reads unambiguously.
  */
 export async function listProjectOptionsForClient(
   clientId: string,
@@ -79,6 +91,7 @@ export async function listProjectOptionsForClient(
       id: projects.id,
       name: projects.name,
       code: projects.code,
+      parentProjectId: projects.parentProjectId,
     })
     .from(projects)
     .where(
@@ -89,5 +102,22 @@ export async function listProjectOptionsForClient(
       ),
     )
     .orderBy(asc(projects.name));
-  return rows.map((r) => ({ id: r.id, label: r.name, sub: r.code }));
+
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  const parents = rows.filter((r) => !r.parentProjectId);
+  const childrenOf = (pid: string) => rows.filter((r) => r.parentProjectId === pid);
+  const out: EntityOption[] = [];
+  for (const p of parents) {
+    out.push({ id: p.id, label: p.name, sub: p.code });
+    for (const c of childrenOf(p.id)) {
+      out.push({ id: c.id, label: `${p.name} › ${c.name}`, sub: c.code });
+    }
+  }
+  // Orphaned subs (parent archived/deleted) still need to be pickable.
+  for (const r of rows) {
+    if (r.parentProjectId && !byId.has(r.parentProjectId)) {
+      out.push({ id: r.id, label: `› ${r.name}`, sub: r.code });
+    }
+  }
+  return out;
 }

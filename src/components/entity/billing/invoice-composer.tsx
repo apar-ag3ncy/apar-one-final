@@ -5,6 +5,7 @@ import { DownloadIcon, EyeIcon, PlusIcon, Trash2Icon } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   Dialog,
   DialogContent,
@@ -24,6 +25,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { PdfJsViewer } from '@/components/entity/pdfjs-viewer';
+import { DateField } from '@/components/shared/date-field';
 import { formatINR, paiseToRupees, rupeesToPaise } from '@/lib/money';
 import {
   createDraftInvoice,
@@ -52,6 +54,9 @@ type LineDraft = {
   qty: string;
   rate: string; // rupees, as typed
   taxPct: string; // e.g. "18"
+  /** Per-line project / sub-project (0062). Null → falls back to the header
+   *  default project. */
+  projectId: string | null;
 };
 
 function emptyLine(): LineDraft {
@@ -62,6 +67,7 @@ function emptyLine(): LineDraft {
     qty: '1',
     rate: '',
     taxPct: '18',
+    projectId: null,
   };
 }
 
@@ -99,6 +105,9 @@ function computeLine(l: LineDraft): ComputedLine {
  *  option uses this sentinel; it maps back to `null` on submit. */
 const NO_PROJECT = '__none__';
 
+/** Per-line sentinel: "use the header default project" (null in the payload). */
+const LINE_DEFAULT_PROJECT = '__default__';
+
 /** Sentinel for "print the primary account" — maps back to `null` (the renderer
  *  then resolves the primary account at generation time). */
 const BANK_PRIMARY = '__primary__';
@@ -131,6 +140,9 @@ export type InvoiceComposerDialogProps = {
   bankAccounts?: CompanyBankAccountOption[];
   /** When set, edit an existing draft instead of creating a new one. */
   existingInvoiceId?: string | null;
+  /** Pre-select the header default project (e.g. composing from a project
+   *  window). Create mode only — an existing draft keeps its own project. */
+  defaultProjectId?: string | null;
   /** Called after a successful finalise (send), so the host reloads its list. */
   onFinalized: () => void;
 };
@@ -169,6 +181,7 @@ export function InvoiceComposerDialog({
   defaultThemeId,
   bankAccounts = [],
   existingInvoiceId,
+  defaultProjectId = null,
   onFinalized,
 }: InvoiceComposerDialogProps) {
   const [stage, setStage] = useState<'edit' | 'preview'>('edit');
@@ -185,6 +198,7 @@ export function InvoiceComposerDialog({
   const [themeId, setThemeId] = useState<string>('');
   const [bankAccountId, setBankAccountId] = useState<string>(BANK_PRIMARY);
   const [projectId, setProjectId] = useState<string | null>(null);
+  const [coveredUnderRetainer, setCoveredUnderRetainer] = useState(false);
   const [lines, setLines] = useState<LineDraft[]>([emptyLine()]);
 
   // Document type (invoice vs proforma) and the editable document number.
@@ -233,6 +247,7 @@ export function InvoiceComposerDialog({
             setThemeId(invoice.themeId ?? '');
             setBankAccountId(invoice.bankAccountId ?? BANK_PRIMARY);
             setProjectId(invoice.projectId ?? null);
+            setCoveredUnderRetainer(invoice.coveredUnderRetainer ?? false);
             setDocumentType(invoice.documentType);
             setDocumentNumber(invoice.documentNumber);
             setSuggestedNumber(invoice.documentNumber);
@@ -246,6 +261,7 @@ export function InvoiceComposerDialog({
                     qty: String(l.qty),
                     rate: paiseToRupees(l.ratePaise),
                     taxPct: String(l.capturedTaxRateBps / 100),
+                    projectId: l.projectId ?? null,
                   }))
                 : [emptyLine()],
             );
@@ -267,7 +283,8 @@ export function InvoiceComposerDialog({
         setNotes('');
         setThemeId(defaultThemeId ?? '');
         setBankAccountId(BANK_PRIMARY);
-        setProjectId(null);
+        setProjectId(defaultProjectId ?? null);
+        setCoveredUnderRetainer(false);
         setDocumentType('invoice');
         setDocumentNumber('');
         setSuggestedNumber('');
@@ -288,7 +305,14 @@ export function InvoiceComposerDialog({
     return () => {
       cancelled = true;
     };
-  }, [open, existingInvoiceId, supplierStateCode, clientStateCode, defaultThemeId]);
+  }, [
+    open,
+    existingInvoiceId,
+    supplierStateCode,
+    clientStateCode,
+    defaultThemeId,
+    defaultProjectId,
+  ]);
 
   // Load this client's projects + bill-to addresses for the header pickers.
   // On create, default bill-to to the primary (else first) address.
@@ -424,6 +448,9 @@ export function InvoiceComposerDialog({
         const c = computeLine(l);
         return {
           lineNo: i + 1,
+          // Per-line attribution must round-trip: draft edit replaces lines
+          // wholesale server-side, so dropping this here would wipe the tags.
+          projectId: l.projectId,
           description: l.description.trim(),
           sacCode: l.sacCode.trim() === '' ? null : l.sacCode.trim(),
           qty: c.qty,
@@ -437,6 +464,7 @@ export function InvoiceComposerDialog({
     const base: Omit<CreateInvoiceInput, 'idempotencyKey'> = {
       clientId,
       projectId,
+      coveredUnderRetainer,
       documentType,
       documentNumber: documentNumber.trim() === '' ? null : documentNumber.trim(),
       billToAddressId: addresses.length >= 2 ? billToAddressId : null,
@@ -575,20 +603,20 @@ export function InvoiceComposerDialog({
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
               <div className="grid gap-1.5">
                 <Label htmlFor="inv-date">Invoice date</Label>
-                <Input
+                <DateField
                   id="inv-date"
-                  type="date"
                   value={documentDate}
-                  onChange={(e) => setDocumentDate(e.target.value)}
+                  onChange={(next) => setDocumentDate(next)}
+                  clearable={false}
                 />
               </div>
               <div className="grid gap-1.5">
                 <Label htmlFor="inv-due">Due date</Label>
-                <Input
+                <DateField
                   id="inv-due"
-                  type="date"
                   value={dueDate}
-                  onChange={(e) => setDueDate(e.target.value)}
+                  onChange={(next) => setDueDate(next)}
+                  clearable={false}
                 />
                 <div className="flex flex-wrap gap-1">
                   {DUE_DATE_PRESETS.map((n) => {
@@ -647,7 +675,7 @@ export function InvoiceComposerDialog({
             {/* Project + bill-to address */}
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="grid gap-1.5">
-                <Label htmlFor="inv-project">Project</Label>
+                <Label htmlFor="inv-project">Default project (untagged lines)</Label>
                 <Select
                   value={projectId ?? NO_PROJECT}
                   onValueChange={(v) => setProjectId(v === NO_PROJECT ? null : v)}
@@ -665,6 +693,9 @@ export function InvoiceComposerDialog({
                     ))}
                   </SelectContent>
                 </Select>
+                <p className="text-muted-foreground text-xs">
+                  Lines without their own project fall back to this one.
+                </p>
               </div>
               {addresses.length >= 2 ? (
                 <div className="grid gap-1.5">
@@ -729,8 +760,9 @@ export function InvoiceComposerDialog({
                 <span className="text-muted-foreground text-xs">{taxLabel}</span>
               </div>
               <div className="overflow-hidden rounded-md border">
-                <div className="bg-muted/40 text-muted-foreground grid grid-cols-[1fr_70px_60px_90px_56px_40px] items-center gap-2 px-2 py-1.5 text-xs font-medium">
+                <div className="bg-muted/40 text-muted-foreground grid grid-cols-[1fr_120px_70px_60px_90px_56px_40px] items-center gap-2 px-2 py-1.5 text-xs font-medium">
                   <span>Description</span>
+                  <span>Project</span>
                   <span>SAC</span>
                   <span className="text-right">Qty</span>
                   <span className="text-right">Rate ₹</span>
@@ -740,7 +772,7 @@ export function InvoiceComposerDialog({
                 {lines.map((l) => (
                   <div
                     key={l.id}
-                    className="grid grid-cols-[1fr_70px_60px_90px_56px_40px] items-center gap-2 border-t px-2 py-1.5"
+                    className="grid grid-cols-[1fr_120px_70px_60px_90px_56px_40px] items-center gap-2 border-t px-2 py-1.5"
                   >
                     <Input
                       aria-label="Description"
@@ -748,6 +780,24 @@ export function InvoiceComposerDialog({
                       placeholder="Brand identity refresh"
                       onChange={(e) => setLine(l.id, { description: e.target.value })}
                     />
+                    <Select
+                      value={l.projectId ?? LINE_DEFAULT_PROJECT}
+                      onValueChange={(v) =>
+                        setLine(l.id, { projectId: v === LINE_DEFAULT_PROJECT ? null : v })
+                      }
+                    >
+                      <SelectTrigger aria-label="Line project" className="h-9 text-xs">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value={LINE_DEFAULT_PROJECT}>— Default —</SelectItem>
+                        {projectOptions.map((p) => (
+                          <SelectItem key={p.id} value={p.id}>
+                            {p.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                     <Input
                       aria-label="SAC"
                       value={l.sacCode}
@@ -798,6 +848,21 @@ export function InvoiceComposerDialog({
                 <PlusIcon className="mr-1.5 size-4" aria-hidden />
                 Add line
               </Button>
+            </div>
+
+            {/* Retainer flag */}
+            <div className="flex items-center gap-2">
+              <Checkbox
+                id="inv-retainer"
+                checked={coveredUnderRetainer}
+                onCheckedChange={(v) => setCoveredUnderRetainer(v === true)}
+              />
+              <Label htmlFor="inv-retainer" className="cursor-pointer font-normal">
+                Covered under a retainer
+              </Label>
+              <span className="text-muted-foreground text-xs">
+                — marks this invoice as billing services the client&apos;s retainer covers.
+              </span>
             </div>
 
             {/* Terms / notes */}

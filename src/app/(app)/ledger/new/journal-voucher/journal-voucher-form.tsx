@@ -16,6 +16,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { StatusBadge } from '@/components/shared/status-badge';
+import { DateField } from '@/components/shared/date-field';
 import { CurrencyInput } from '@/components/shared/currency-input';
 import { formatINR } from '@/components/shared/format-inr';
 import {
@@ -155,7 +156,7 @@ export function JournalVoucherForm() {
           <div className="grid gap-3 sm:grid-cols-2">
             <div>
               <Label className="text-muted-foreground text-xs tracking-wide uppercase">Date</Label>
-              <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+              <DateField value={date} onChange={setDate} clearable={false} />
             </div>
             <div className="sm:col-span-2">
               <Label className="text-muted-foreground text-xs tracking-wide uppercase">

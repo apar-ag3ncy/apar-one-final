@@ -1,11 +1,19 @@
 'use server';
 
-import { and, asc, desc, eq, isNull, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { logAudit } from '@/lib/audit';
 import { db } from '@/lib/db/client';
-import { clients, employees, projectMembers, projectTasks, projects } from '@/lib/db/schema';
+import {
+  clients,
+  deliverableCategories,
+  employees,
+  projectMembers,
+  projectTaskAssignees,
+  projectTasks,
+  projects,
+} from '@/lib/db/schema';
 import { AppError } from '@/lib/errors';
 import { requireCapability } from '@/lib/rbac';
 import { getActorContext } from '@/lib/server/actor';
@@ -40,9 +48,7 @@ export type ProjectMemberRow = {
 
 const ProjectMemberIdSchema = z.string().uuid();
 
-export async function listProjectMembers(
-  projectId: string,
-): Promise<readonly ProjectMemberRow[]> {
+export async function listProjectMembers(projectId: string): Promise<readonly ProjectMemberRow[]> {
   await getActorContext();
   const parsedProjectId = z.string().uuid().parse(projectId);
 
@@ -179,7 +185,7 @@ export async function removeProjectMember(input: { id: string }): Promise<void> 
 }
 
 /* -------------------------------------------------------------------------- */
-/* Project tasks                                                              */
+/* Project deliverables (table: project_tasks)                                */
 /* -------------------------------------------------------------------------- */
 
 export type ProjectTaskStatus = 'todo' | 'in_progress' | 'done';
@@ -187,23 +193,29 @@ export type ProjectTaskStatus = 'todo' | 'in_progress' | 'done';
 const ProjectTaskStatusSchema = z.enum(['todo', 'in_progress', 'done']);
 const ProjectTaskIdSchema = z.string().uuid();
 
+export type ProjectTaskAssignee = {
+  employeeId: string;
+  name: string;
+};
+
 export type ProjectTaskRow = {
   id: string;
   projectId: string;
   title: string;
   description: string | null;
   status: ProjectTaskStatus;
-  assigneeEmployeeId: string | null;
-  assigneeName: string | null;
+  /** Multi-assignee (0061) — every employee working this deliverable. */
+  assignees: readonly ProjectTaskAssignee[];
+  categoryId: string | null;
+  categoryName: string | null;
+  categoryColor: string | null;
   dueOn: string | null;
   position: number;
   completedAt: string | null;
   createdAt: string;
 };
 
-export async function listProjectTasks(
-  projectId: string,
-): Promise<readonly ProjectTaskRow[]> {
+export async function listProjectTasks(projectId: string): Promise<readonly ProjectTaskRow[]> {
   await getActorContext();
   const parsedProjectId = z.string().uuid().parse(projectId);
 
@@ -214,26 +226,29 @@ export async function listProjectTasks(
       title: projectTasks.title,
       description: projectTasks.description,
       status: projectTasks.status,
-      assigneeEmployeeId: projectTasks.assigneeEmployeeId,
-      assigneeName: employees.fullName,
+      categoryId: projectTasks.categoryId,
+      categoryName: deliverableCategories.name,
+      categoryColor: deliverableCategories.color,
       dueOn: projectTasks.dueOn,
       position: projectTasks.position,
       completedAt: projectTasks.completedAt,
       createdAt: projectTasks.createdAt,
     })
     .from(projectTasks)
-    .leftJoin(employees, eq(employees.id, projectTasks.assigneeEmployeeId))
+    .leftJoin(deliverableCategories, eq(deliverableCategories.id, projectTasks.categoryId))
     .where(and(eq(projectTasks.projectId, parsedProjectId), isNull(projectTasks.deletedAt)))
     .orderBy(asc(projectTasks.position), asc(projectTasks.createdAt));
 
-  return rows.map((r) => mapTaskRow(r));
+  const assigneesByTask = await loadAssignees(rows.map((r) => r.id));
+  return rows.map((r) => mapTaskRow(r, assigneesByTask.get(r.id) ?? []));
 }
 
 const CreateProjectTaskSchema = z.object({
   projectId: z.string().uuid(),
   title: z.string().min(1).max(300),
   description: z.string().max(4000).nullable().optional(),
-  assigneeEmployeeId: z.string().uuid().nullable().optional(),
+  assigneeEmployeeIds: z.array(z.string().uuid()).max(50).optional(),
+  categoryId: z.string().uuid().nullable().optional(),
   dueOn: z.string().nullable().optional(),
   status: ProjectTaskStatusSchema.optional(),
 });
@@ -242,7 +257,8 @@ export async function createProjectTask(input: {
   projectId: string;
   title: string;
   description?: string | null;
-  assigneeEmployeeId?: string | null;
+  assigneeEmployeeIds?: string[];
+  categoryId?: string | null;
   dueOn?: string | null;
   status?: ProjectTaskStatus;
 }): Promise<ProjectTaskRow> {
@@ -250,6 +266,7 @@ export async function createProjectTask(input: {
   requireCapability(ctx, 'update_client');
   const parsed = CreateProjectTaskSchema.parse(input);
   const status = parsed.status ?? 'todo';
+  const assigneeIds = [...new Set(parsed.assigneeEmployeeIds ?? [])];
 
   const [inserted] = await db
     .insert(projectTasks)
@@ -258,7 +275,7 @@ export async function createProjectTask(input: {
       title: parsed.title,
       description: parsed.description ?? null,
       status,
-      assigneeEmployeeId: parsed.assigneeEmployeeId ?? null,
+      categoryId: parsed.categoryId ?? null,
       dueOn: parsed.dueOn ?? null,
       completedAt: status === 'done' ? new Date() : null,
       createdBy: ctx.userId,
@@ -268,12 +285,29 @@ export async function createProjectTask(input: {
 
   if (!inserted) throw new AppError('internal', 'project_tasks insert returned no row');
 
+  if (assigneeIds.length > 0) {
+    await db
+      .insert(projectTaskAssignees)
+      .values(
+        assigneeIds.map((employeeId) => ({
+          taskId: inserted.id,
+          employeeId,
+          createdBy: ctx.userId,
+        })),
+      )
+      .onConflictDoNothing({
+        target: [projectTaskAssignees.taskId, projectTaskAssignees.employeeId],
+      });
+  }
+
   await logAudit({
     actorId: ctx.userId,
     entityType: 'project',
     entityId: parsed.projectId,
     action: 'insert',
-    changes: { task_created: { id: inserted.id, title: parsed.title, status } },
+    changes: {
+      task_created: { id: inserted.id, title: parsed.title, status, assignees: assigneeIds },
+    },
   });
 
   return await getTaskRow(inserted.id);
@@ -283,7 +317,8 @@ const UpdateProjectTaskSchema = z.object({
   id: z.string().uuid(),
   title: z.string().min(1).max(300).optional(),
   description: z.string().max(4000).nullable().optional(),
-  assigneeEmployeeId: z.string().uuid().nullable().optional(),
+  assigneeEmployeeIds: z.array(z.string().uuid()).max(50).optional(),
+  categoryId: z.string().uuid().nullable().optional(),
   dueOn: z.string().nullable().optional(),
   status: ProjectTaskStatusSchema.optional(),
 });
@@ -292,7 +327,8 @@ export async function updateProjectTask(input: {
   id: string;
   title?: string;
   description?: string | null;
-  assigneeEmployeeId?: string | null;
+  assigneeEmployeeIds?: string[];
+  categoryId?: string | null;
   dueOn?: string | null;
   status?: ProjectTaskStatus;
 }): Promise<ProjectTaskRow> {
@@ -325,15 +361,45 @@ export async function updateProjectTask(input: {
     .set({
       ...(parsed.title !== undefined ? { title: parsed.title } : {}),
       ...(parsed.description !== undefined ? { description: parsed.description } : {}),
-      ...(parsed.assigneeEmployeeId !== undefined
-        ? { assigneeEmployeeId: parsed.assigneeEmployeeId }
-        : {}),
+      ...(parsed.categoryId !== undefined ? { categoryId: parsed.categoryId } : {}),
       ...(parsed.dueOn !== undefined ? { dueOn: parsed.dueOn } : {}),
       ...(parsed.status !== undefined ? { status: parsed.status } : {}),
       ...completedAtPatch,
       updatedBy: ctx.userId,
     })
     .where(and(eq(projectTasks.id, parsed.id), isNull(projectTasks.deletedAt)));
+
+  // Replace-set assignee semantics: the provided list becomes THE list.
+  if (parsed.assigneeEmployeeIds !== undefined) {
+    const next = [...new Set(parsed.assigneeEmployeeIds)];
+    const current = await db
+      .select({ employeeId: projectTaskAssignees.employeeId })
+      .from(projectTaskAssignees)
+      .where(eq(projectTaskAssignees.taskId, parsed.id));
+    const currentIds = new Set(current.map((r) => r.employeeId));
+    const toAdd = next.filter((id) => !currentIds.has(id));
+    const toRemove = [...currentIds].filter((id) => !next.includes(id));
+    if (toAdd.length > 0) {
+      await db
+        .insert(projectTaskAssignees)
+        .values(
+          toAdd.map((employeeId) => ({ taskId: parsed.id, employeeId, createdBy: ctx.userId })),
+        )
+        .onConflictDoNothing({
+          target: [projectTaskAssignees.taskId, projectTaskAssignees.employeeId],
+        });
+    }
+    if (toRemove.length > 0) {
+      await db
+        .delete(projectTaskAssignees)
+        .where(
+          and(
+            eq(projectTaskAssignees.taskId, parsed.id),
+            inArray(projectTaskAssignees.employeeId, toRemove),
+          ),
+        );
+    }
+  }
 
   const { id: _id, ...changes } = parsed;
   await logAudit({
@@ -459,7 +525,11 @@ export async function listEmployeeProjectTasks(
     .innerJoin(projects, eq(projects.id, projectTasks.projectId))
     .where(
       and(
-        eq(projectTasks.assigneeEmployeeId, parsedEmployeeId),
+        // Multi-assignee (0061): membership lives in project_task_assignees.
+        sql`exists (
+          select 1 from project_task_assignees a
+          where a.task_id = ${projectTasks.id} and a.employee_id = ${parsedEmployeeId}
+        )`,
         isNull(projectTasks.deletedAt),
       ),
     )
@@ -489,28 +559,55 @@ type TaskSelectRow = {
   title: string;
   description: string | null;
   status: string;
-  assigneeEmployeeId: string | null;
-  assigneeName: string | null;
+  categoryId: string | null;
+  categoryName: string | null;
+  categoryColor: string | null;
   dueOn: string | null;
   position: number;
   completedAt: Date | null;
   createdAt: Date;
 };
 
-function mapTaskRow(r: TaskSelectRow): ProjectTaskRow {
+function mapTaskRow(r: TaskSelectRow, assignees: readonly ProjectTaskAssignee[]): ProjectTaskRow {
   return {
     id: r.id,
     projectId: r.projectId,
     title: r.title,
     description: r.description,
     status: r.status as ProjectTaskStatus,
-    assigneeEmployeeId: r.assigneeEmployeeId,
-    assigneeName: r.assigneeName,
+    assignees,
+    categoryId: r.categoryId,
+    categoryName: r.categoryName,
+    categoryColor: r.categoryColor,
     dueOn: r.dueOn,
     position: r.position,
     completedAt: r.completedAt ? r.completedAt.toISOString() : null,
     createdAt: r.createdAt.toISOString(),
   };
+}
+
+/** Batch-load assignees for a set of tasks; one query, grouped in JS. */
+async function loadAssignees(
+  taskIds: readonly string[],
+): Promise<Map<string, ProjectTaskAssignee[]>> {
+  const out = new Map<string, ProjectTaskAssignee[]>();
+  if (taskIds.length === 0) return out;
+  const rows = await db
+    .select({
+      taskId: projectTaskAssignees.taskId,
+      employeeId: projectTaskAssignees.employeeId,
+      name: employees.fullName,
+    })
+    .from(projectTaskAssignees)
+    .innerJoin(employees, eq(employees.id, projectTaskAssignees.employeeId))
+    .where(inArray(projectTaskAssignees.taskId, taskIds as string[]))
+    .orderBy(asc(employees.fullName));
+  for (const r of rows) {
+    const list = out.get(r.taskId) ?? [];
+    list.push({ employeeId: r.employeeId, name: r.name });
+    out.set(r.taskId, list);
+  }
+  return out;
 }
 
 async function getTaskRow(id: string): Promise<ProjectTaskRow> {
@@ -521,18 +618,20 @@ async function getTaskRow(id: string): Promise<ProjectTaskRow> {
       title: projectTasks.title,
       description: projectTasks.description,
       status: projectTasks.status,
-      assigneeEmployeeId: projectTasks.assigneeEmployeeId,
-      assigneeName: employees.fullName,
+      categoryId: projectTasks.categoryId,
+      categoryName: deliverableCategories.name,
+      categoryColor: deliverableCategories.color,
       dueOn: projectTasks.dueOn,
       position: projectTasks.position,
       completedAt: projectTasks.completedAt,
       createdAt: projectTasks.createdAt,
     })
     .from(projectTasks)
-    .leftJoin(employees, eq(employees.id, projectTasks.assigneeEmployeeId))
+    .leftJoin(deliverableCategories, eq(deliverableCategories.id, projectTasks.categoryId))
     .where(eq(projectTasks.id, id))
     .limit(1);
 
   if (!row) throw new AppError('not_found', 'Task not found.', { detail: { id } });
-  return mapTaskRow(row);
+  const assignees = await loadAssignees([row.id]);
+  return mapTaskRow(row, assignees.get(row.id) ?? []);
 }

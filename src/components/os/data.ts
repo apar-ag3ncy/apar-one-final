@@ -37,7 +37,7 @@ export const APPS: readonly AppDef[] = [
     accent: '#5B6677',
   },
   { id: 'ledger', name: 'Ledger', icon: 'book', size: { w: 920, h: 580 }, accent: '#5B6677' },
-  { id: 'reports', name: 'Reports', icon: 'chart', size: { w: 1000, h: 620 }, accent: '#2E8F5A' },
+  { id: 'reports', name: 'Library', icon: 'chart', size: { w: 1000, h: 620 }, accent: '#2E8F5A' },
   { id: 'office', name: 'Office', icon: 'zap', size: { w: 1100, h: 700 }, accent: '#C46A28' },
   {
     id: 'trash',

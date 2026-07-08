@@ -52,6 +52,10 @@
   --color-popover: var(--popover);
   --color-card-foreground: var(--card-foreground);
   --color-card: var(--card);
+  /* Calendar accent — brand orange, deliberately decoupled from --primary so
+     recolouring date pickers doesn't recolour every primary button. */
+  --color-calendar-accent: var(--calendar-accent);
+  --color-calendar-accent-foreground: var(--calendar-accent-foreground);
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);
@@ -76,6 +80,9 @@
   --muted-foreground: oklch(0.556 0 0);
   --accent: oklch(0.97 0 0);
   --accent-foreground: oklch(0.205 0 0);
+  /* Calendar accent — Apar Orange (#e63a1f). White foreground for contrast. */
+  --calendar-accent: #e63a1f;
+  --calendar-accent-foreground: #ffffff;
   --destructive: oklch(0.577 0.245 27.325);
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
@@ -111,6 +118,9 @@
   --muted-foreground: oklch(0.708 0 0);
   --accent: oklch(0.269 0 0);
   --accent-foreground: oklch(0.985 0 0);
+  /* #e63a1f reads on both themes; keep white foreground. */
+  --calendar-accent: #e63a1f;
+  --calendar-accent-foreground: #ffffff;
   --destructive: oklch(0.704 0.191 22.216);
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
@@ -154,5 +164,19 @@
   .dark input[type='week']::-webkit-calendar-picker-indicator,
   .dark input[type='time']::-webkit-calendar-picker-indicator {
     filter: invert(1) brightness(1.7);
+  }
+
+  /*
+   * Brand-orange accent on native date/time inputs (item 2). Progressive
+   * enhancement only: Firefox honours accent-color on the popup's selected
+   * day; Chrome/Safari ignore it for the calendar popup (that popup can't be
+   * styled), so those fully brand-match only via the in-app DateField.
+   */
+  input[type='date'],
+  input[type='datetime-local'],
+  input[type='month'],
+  input[type='week'],
+  input[type='time'] {
+    accent-color: var(--calendar-accent);
   }
 }

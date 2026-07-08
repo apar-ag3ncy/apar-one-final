@@ -6,6 +6,7 @@ import { useState } from 'react';
 
 import { ArrowRightIcon, LandmarkIcon, PencilIcon, PlusIcon } from 'lucide-react';
 
+import { DateField } from '@/components/shared/date-field';
 import { formatINR } from '@/components/shared/format-inr';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -322,12 +323,10 @@ function BankDialog({
               />
             </Field>
             <Field label="As of date">
-              <input
-                type="date"
-                style={osInputStyle}
-                value={form.openingBalanceDate}
-                onChange={(e) => set('openingBalanceDate', e.target.value)}
+              <DateField
                 id="bank-opening-date"
+                value={form.openingBalanceDate}
+                onChange={(next) => set('openingBalanceDate', next)}
               />
             </Field>
           </div>
