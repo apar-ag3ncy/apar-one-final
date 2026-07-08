@@ -428,6 +428,41 @@
       "when": 1781800090000,
       "tag": "0060_salary_bonus_event_kinds",
       "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "7",
+      "when": 1781900090000,
+      "tag": "0061_project_structure",
+      "breakpoints": true
+    },
+    {
+      "idx": 62,
+      "version": "7",
+      "when": 1782000090000,
+      "tag": "0062_invoice_project_links",
+      "breakpoints": true
+    },
+    {
+      "idx": 63,
+      "version": "7",
+      "when": 1782100090000,
+      "tag": "0063_entity_codes",
+      "breakpoints": true
+    },
+    {
+      "idx": 64,
+      "version": "7",
+      "when": 1782200090000,
+      "tag": "0064_cheque_provision",
+      "breakpoints": true
+    },
+    {
+      "idx": 65,
+      "version": "7",
+      "when": 1782300090000,
+      "tag": "0065_office_seed_categories",
+      "breakpoints": true
     }
   ]
 }

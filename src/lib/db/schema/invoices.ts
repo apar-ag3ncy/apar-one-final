@@ -1,5 +1,6 @@
 import {
   bigint,
+  boolean,
   char,
   date,
   index,
@@ -74,7 +75,27 @@ export const invoices = pgTable(
     clientId: uuid()
       .notNull()
       .references(() => clients.id, { onDelete: 'restrict' }),
+    /**
+     * Header-level project link — the DEFAULT project for lines without their
+     * own `invoice_lines.projectId` (0062). Since 0062 this column is exempt
+     * from the sent-invoice freeze (management attribution, not part of the
+     * legal artifact), so an already-sent invoice can be (re)linked.
+     */
     projectId: uuid().references(() => projects.id, { onDelete: 'restrict' }),
+    /**
+     * Proforma → invoice conversion linkage (0062): the tax invoice created
+     * by converting a proforma records the proforma's id here. Self-FK
+     * (SET NULL) lives in the SQL migration — kept a plain uuid like
+     * transactions.reversesId. Backfilled from the
+     * 'proforma-conv:<id>' idempotency-key convention.
+     */
+    convertedFromInvoiceId: uuid(),
+    /**
+     * "Covered under a retainer" (0062) — flags an invoice as billing work a
+     * client retainer covers. Pure capture; badge in lists, no posting
+     * impact. Editable after send (a mis-tag must be fixable).
+     */
+    coveredUnderRetainer: boolean().notNull().default(false),
     // Chosen bill-to address (one of the client's entity_addresses). Nullable:
     // when unset, the PDF falls back to the client's registered/primary address.
     // ON DELETE SET NULL — the address can be removed without orphaning the
@@ -126,6 +147,7 @@ export const invoices = pgTable(
     uniqueIndex('invoices_idempotency_key_unique').on(t.idempotencyKey),
     index().on(t.clientId, t.documentDate.desc()),
     index().on(t.projectId),
+    index().on(t.convertedFromInvoiceId),
     index().on(t.billToAddressId),
     index().on(t.bankAccountId),
     index().on(t.state),

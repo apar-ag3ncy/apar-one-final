@@ -140,13 +140,17 @@ export const salaryPayments = pgTable(
     // record time) — stored beside the amount actually paid so under/over
     // payment is visible later. Null on legacy rows recorded before capture.
     expectedAmountPaise: bigint({ mode: 'bigint' }),
-    // How the salary left the company: 'cash' → Cr 1110, 'bank' → Cr 1120
-    // sub-ledgered to bank_account_id. Legacy rows all posted cash.
+    // How the salary left the company: 'cash' → Cr 1110, 'bank'/'cheque' →
+    // Cr 1120 sub-ledgered to bank_account_id. Legacy rows all posted cash.
+    // CHECK ('cash','bank','cheque') widened in 0064.
     paymentMethod: text().notNull().default('cash'),
     // Agency bank the payment went out from (bank_accounts.id) when
-    // payment_method = 'bank'. FK added in the SQL migration; kept a plain
-    // uuid here like transaction_id.
+    // payment_method = 'bank' or 'cheque'. FK added in the SQL migration;
+    // kept a plain uuid here like transaction_id.
     bankAccountId: uuid(),
+    // Cheque capture (0064) — set when payment_method='cheque'.
+    chequeNumber: text(),
+    chequeDate: date(),
     notes: text(),
     // Ledger transaction this payment posted. FK added in the SQL migration;
     // kept a plain uuid here like salary_lines.transaction_id.

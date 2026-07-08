@@ -10,6 +10,7 @@ import {
 } from 'drizzle-orm/pg-core';
 
 import { auditColumns, timestamps } from './_shared';
+import { deliverableCategories } from './deliverable_categories';
 import { employees } from './employees';
 import { projects } from './projects';
 
@@ -20,12 +21,17 @@ export const projectTaskStatusEnum = pgEnum('project_task_status', [
 ]);
 
 /**
- * A lightweight per-project task board. Tasks move through
+ * A lightweight per-project deliverable board (surfaced as "Deliverables" in
+ * the OS; table name kept for continuity). Deliverables move through
  * todo → in_progress → done; `completedAt` is stamped by the server action
- * when a task enters 'done' (and cleared when it leaves). Soft-delete via
- * `deletedAt` (from timestamps()). `assigneeEmployeeId` points the task at a
- * team member (nullable; SET NULL when the employee is deleted). `position`
- * orders tasks within a project/column.
+ * when one enters 'done' (and cleared when it leaves). Soft-delete via
+ * `deletedAt` (from timestamps()). `position` orders rows within a
+ * project/column.
+ *
+ * Assignment is many-to-many via `project_task_assignees` (0061).
+ * `assigneeEmployeeId` is the LEGACY single-assignee column — backfilled into
+ * the join table and no longer read or written; dropped in a later cleanup
+ * migration once verified.
  */
 export const projectTasks = pgTable(
   'project_tasks',
@@ -41,6 +47,10 @@ export const projectTasks = pgTable(
     assigneeEmployeeId: uuid().references(() => employees.id, {
       onDelete: 'set null',
     }),
+    /** Global deliverable category (0061). SET NULL on category delete. */
+    categoryId: uuid().references(() => deliverableCategories.id, {
+      onDelete: 'set null',
+    }),
     dueOn: date(),
     position: integer().notNull().default(0),
     completedAt: timestamp({ withTimezone: true }),
@@ -49,6 +59,7 @@ export const projectTasks = pgTable(
     index().on(t.projectId),
     index().on(t.assigneeEmployeeId),
     index().on(t.status),
+    index().on(t.categoryId),
   ],
 );
 

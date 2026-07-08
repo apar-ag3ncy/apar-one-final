@@ -33,6 +33,7 @@ export const officeExpensePaymentMethodEnum = pgEnum('office_expense_payment_met
   'bank',
   'card',
   'upi',
+  'cheque',
   'employee_paid',
 ]);
 
@@ -83,6 +84,9 @@ export const officeExpenses = pgTable(
     /** GST captured from the bill — 0 if the seller didn't levy any. */
     gstPaise: bigint({ mode: 'bigint' }).notNull().default(0n),
     paymentMethod: officeExpensePaymentMethodEnum().notNull().default('bank'),
+    /** Cheque capture (0064) — set when paymentMethod='cheque'. */
+    chequeNumber: text(),
+    chequeDate: date(),
     status: officeExpenseStatusEnum().notNull().default('approved'),
     /** Optional reference number from the bill / receipt. */
     referenceNumber: text(),

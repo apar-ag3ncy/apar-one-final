@@ -66,6 +66,10 @@ export const receipts = pgTable(
     capturedTdsSection: text(),
     capturedTdsRateBps: integer().notNull().default(0),
 
+    // Cheque capture (0064) — set when method='cheque'.
+    chequeNumber: text(),
+    chequeDate: date(),
+
     notes: text(),
 
     sourceDocumentId: uuid().references(() => documents.id, { onDelete: 'set null' }),

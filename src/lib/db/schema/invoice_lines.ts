@@ -2,6 +2,7 @@ import { bigint, index, integer, pgTable, text, uniqueIndex, uuid } from 'drizzl
 
 import { auditColumns, timestamps } from './_shared';
 import { invoices } from './invoices';
+import { projects } from './projects';
 import { serviceItems } from './service_items';
 
 /**
@@ -26,6 +27,14 @@ export const invoiceLines = pgTable(
       .references(() => invoices.id, { onDelete: 'cascade' }),
     lineNo: integer().notNull(),
     serviceItemId: uuid().references(() => serviceItems.id, { onDelete: 'set null' }),
+    /**
+     * Per-line project / sub-project attribution (0062). Nullable — untagged
+     * lines fall back to the header `invoices.projectId` (COALESCE at read
+     * time). Lets one invoice span several projects; drives per-project
+     * "amount received" apportionment. RESTRICT: a project with billed lines
+     * can't be hard-deleted.
+     */
+    projectId: uuid().references(() => projects.id, { onDelete: 'restrict' }),
     description: text().notNull(),
     sacCode: text(), // optional; if linked serviceItem this is denormalized at line time
 
@@ -43,6 +52,7 @@ export const invoiceLines = pgTable(
     uniqueIndex('invoice_lines_invoice_line_no_unique').on(t.invoiceId, t.lineNo),
     index().on(t.invoiceId),
     index().on(t.serviceItemId),
+    index().on(t.projectId),
   ],
 );
 

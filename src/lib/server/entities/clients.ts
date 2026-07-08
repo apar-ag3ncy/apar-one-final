@@ -288,6 +288,24 @@ function zodErrorsToPathMap(err: z.ZodError): Record<string, string> {
 }
 
 /**
+ * Generate the next 'CL-NNNN' client code by scanning existing codes (0063).
+ * Best-effort + monotonic; `clients_code_unique` is the real guard — same
+ * stance as nextEmployeeCode() in employees.ts.
+ */
+async function nextClientCode(): Promise<string> {
+  const rows = await db
+    .select({ code: clients.code })
+    .from(clients)
+    .where(sql`${clients.code} ~ '^CL-[0-9]+$'`);
+  let max = 0;
+  for (const r of rows) {
+    const m = /^CL-(\d+)$/.exec(r.code);
+    if (m) max = Math.max(max, Number.parseInt(m[1]!, 10));
+  }
+  return `CL-${String(max + 1).padStart(4, '0')}`;
+}
+
+/**
  * Create a client with its child contacts / banking / tax identifiers /
  * registered address in a single transaction. Contract gating
  * (AUDIT-GAPS §1.3 + SPEC-AMENDMENT-001):
@@ -388,6 +406,7 @@ export async function createClient(input: CreateClientInput): Promise<CreateClie
         .insert(clients)
         .values({
           name: v.name,
+          code: await nextClientCode(),
           industry: v.industry || null,
           status: v.status ?? 'active',
           accountManagerId: v.accountManagerId || null,
