@@ -294,6 +294,18 @@ function Desktop({ signOut }: { signOut: () => void }) {
     }
   }, [settingsLoaded, settings.defaultLandingApp, windows.length, visibleApps, openApp]);
 
+  // Mirror the OS accent onto <html> as --calendar-accent so the in-app
+  // date-picker (DateField) — whose Radix popover PORTALS to <body>, outside
+  // .os-root — still picks up a user-customised accent. The default #e63a1f
+  // matches the OS default, so this only matters for custom accents.
+  useEffect(() => {
+    const root = document.documentElement;
+    root.style.setProperty('--calendar-accent', settings.accent || '#e63a1f');
+    return () => {
+      root.style.removeProperty('--calendar-accent');
+    };
+  }, [settings.accent]);
+
   // Entity-detail openers. Each calls `openApp` with `position:
   // 'beside-focused'` so a click on an `<EntityRef>` inside one window
   // opens the referenced entity to the right — the multi-window

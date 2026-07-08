@@ -12,6 +12,11 @@
   --apar-red: var(--accent, #e63a1f);
   --apar-red-deep: color-mix(in oklab, var(--apar-red) 80%, black);
   --apar-red-soft: color-mix(in oklab, var(--apar-red) 14%, white);
+  /* Calendar accent follows the OS accent so a user-customised accent recolours
+     date pickers too. os-root mirrors this onto <html> for popovers that portal
+     outside .os-root (see os-root.tsx). */
+  --calendar-accent: var(--apar-red);
+  --calendar-accent-foreground: #ffffff;
 
   /* Single OS typeface — SF UI Display via the Apple system stack.
      The legacy `--font-inter`, `--font-khand`, `--font-jetbrains-mono`
