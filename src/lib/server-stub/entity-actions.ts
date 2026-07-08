@@ -444,6 +444,33 @@ const PROJECT_LIST_COLUMNS = {
   accountManagerName: sql<
     string | null
   >`(select full_name from users where id = ${projects.accountManagerId})`,
+  clientContactId: projects.clientContactId,
+  clientContactName: sql<
+    string | null
+  >`(select name from entity_contacts where id = ${projects.clientContactId})`,
+  parentProjectId: projects.parentProjectId,
+  subProjectCount: sql<number>`(
+    select count(*)::int from projects c
+    where c.parent_project_id = ${projects.id}
+      and c.deleted_at is null and c.is_archived = false
+  )`,
+  subFeeSumPaise: sql<string>`(
+    select coalesce(sum(c.fee_paise), 0)::text from projects c
+    where c.parent_project_id = ${projects.id}
+      and c.deleted_at is null and c.is_archived = false
+  )`,
+  linkedInvoiceCount: sql<number>`(
+    select count(*)::int from invoices i
+    where i.deleted_at is null and i.state <> 'void'
+      and (
+        i.project_id = ${projects.id}
+        or exists (
+          select 1 from invoice_lines il
+          where il.invoice_id = i.id and il.deleted_at is null
+            and il.project_id = ${projects.id}
+        )
+      )
+  )`,
   documentsCount: sql<number>`(select count(*)::int from entity_documents where entity_type = 'project' and entity_id = ${projects.id})`,
 } as const;
 
@@ -464,6 +491,12 @@ type ProjectListRowResult = {
   leadEmployeeName: string | null;
   accountManagerId: string | null;
   accountManagerName: string | null;
+  clientContactId: string | null;
+  clientContactName: string | null;
+  parentProjectId: string | null;
+  subProjectCount: number;
+  subFeeSumPaise: string;
+  linkedInvoiceCount: number;
   documentsCount: number;
 };
 
@@ -482,6 +515,12 @@ function rowToProject(r: ProjectListRowResult): Project {
     leadName: r.leadEmployeeName ?? '—',
     accountManagerId: r.accountManagerId,
     accountManagerName: r.accountManagerName ?? '—',
+    clientContactId: r.clientContactId,
+    clientContactName: r.clientContactName,
+    parentProjectId: r.parentProjectId,
+    subProjectCount: r.subProjectCount,
+    subFeeSumPaise: BigInt(r.subFeeSumPaise ?? '0'),
+    linkedInvoiceCount: r.linkedInvoiceCount,
     feePaise: r.feePaise,
     startedAt: r.startedOn ? new Date(r.startedOn) : new Date(),
     endsAt: r.targetEndOn ? new Date(r.targetEndOn) : null,
@@ -674,7 +713,7 @@ export async function listProjectTransactions(projectId: string): Promise<Projec
         clients.id,
         clients.name,
         clients.isArchived,
-        clients.deletedAt
+        clients.deletedAt,
       )
       .orderBy(desc(ledgerTransactions.txnDate)),
   ]);

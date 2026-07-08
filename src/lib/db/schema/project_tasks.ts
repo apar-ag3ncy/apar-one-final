@@ -1,24 +1,11 @@
-import {
-  date,
-  index,
-  integer,
-  pgEnum,
-  pgTable,
-  text,
-  timestamp,
-  uuid,
-} from 'drizzle-orm/pg-core';
+import { date, index, integer, pgEnum, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 
 import { auditColumns, timestamps } from './_shared';
 import { deliverableCategories } from './deliverable_categories';
 import { employees } from './employees';
 import { projects } from './projects';
 
-export const projectTaskStatusEnum = pgEnum('project_task_status', [
-  'todo',
-  'in_progress',
-  'done',
-]);
+export const projectTaskStatusEnum = pgEnum('project_task_status', ['todo', 'in_progress', 'done']);
 
 /**
  * A lightweight per-project deliverable board (surfaced as "Deliverables" in

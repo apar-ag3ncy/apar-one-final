@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState, useTransition, type FormEvent, type ReactNode } from 'react';
 import { APPS } from './data';
 import { navigateBesideFocused } from './apps/navigate';
+import { ConfirmDialog, Field, Modal } from './apps/os-modal-kit';
+import { ProjectFormModal } from './apps/project-form-modal';
 import { CompanySettingsPane } from './apps/company-settings-pane';
 import { BillingSettingsPane } from './apps/billing-settings-pane';
 import { VaultPane } from './apps/vault-pane';
@@ -49,10 +51,7 @@ import {
   updateEmployee,
   type EditableEmployee,
 } from '@/lib/server/entities/employees';
-import {
-  getAttendanceForDate,
-  type AttendanceStatus,
-} from '@/lib/server/entities/attendance';
+import { getAttendanceForDate, type AttendanceStatus } from '@/lib/server/entities/attendance';
 import {
   getMyProfile,
   getMySecurity,
@@ -970,115 +969,8 @@ export function VendorsApp({
 /* Vendor modals + small bits                                                 */
 /* -------------------------------------------------------------------------- */
 
-function Modal({
-  title,
-  onClose,
-  children,
-  width = 520,
-}: {
-  title: string;
-  onClose: () => void;
-  children: ReactNode;
-  width?: number;
-}) {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
-
-  return (
-    <div className="os-modal-overlay" onMouseDown={onClose}>
-      <div className="os-modal" style={{ width }} onMouseDown={(e) => e.stopPropagation()}>
-        <div className="os-modal-head">
-          <div className="font-display" style={{ fontSize: 18 }}>
-            {title}
-          </div>
-          <button className="btn" type="button" onClick={onClose} aria-label="Close">
-            <Icon name="close" size={13} />
-          </button>
-        </div>
-        <div className="os-modal-body">{children}</div>
-      </div>
-    </div>
-  );
-}
-
-/** Demo-grade confirmation dialog. Used in place of window.confirm so the OS
- *  keeps a cohesive look. `destructive` styles the confirm button red. */
-function ConfirmDialog({
-  title,
-  message,
-  confirmLabel = 'Confirm',
-  cancelLabel = 'Cancel',
-  destructive,
-  onConfirm,
-  onCancel,
-}: {
-  title: string;
-  message: ReactNode;
-  confirmLabel?: string;
-  cancelLabel?: string;
-  destructive?: boolean;
-  onConfirm: () => void;
-  onCancel: () => void;
-}) {
-  return (
-    <Modal title={title} onClose={onCancel} width={420}>
-      <div className="os-form">
-        <div
-          style={{
-            padding: '4px 2px 12px',
-            color: 'var(--text-muted)',
-            fontSize: 13,
-            lineHeight: 1.5,
-          }}
-        >
-          {message}
-        </div>
-        <div className="os-form-actions">
-          <button type="button" className="btn" onClick={onCancel}>
-            {cancelLabel}
-          </button>
-          <button
-            type="button"
-            className="btn primary"
-            style={
-              destructive
-                ? { background: 'var(--apar-red-deep)', borderColor: 'transparent' }
-                : undefined
-            }
-            onClick={onConfirm}
-          >
-            {confirmLabel}
-          </button>
-        </div>
-      </div>
-    </Modal>
-  );
-}
-
-function Field({
-  label,
-  children,
-  hint,
-  full,
-}: {
-  label: string;
-  children: ReactNode;
-  hint?: string;
-  full?: boolean;
-}) {
-  return (
-    <label className="os-field" style={full ? { gridColumn: '1 / -1' } : undefined}>
-      <span className="os-field-label">{label}</span>
-      {children}
-      {hint && <span className="os-field-hint">{hint}</span>}
-    </label>
-  );
-}
+// Modal / ConfirmDialog / Field moved to ./apps/os-modal-kit so other OS
+// surfaces (project window, extracted form modals) can share the chrome.
 
 const GSTIN_RE = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
 const PAN_RE = /^[A-Z]{5}[0-9]{4}[A-Z]$/;
@@ -1294,6 +1186,13 @@ export function ProjectsApp({
       id: r.id,
       clientId: r.clientId,
       leadEmployeeId: r.leadEmployeeId,
+      accountManagerId: r.accountManagerId,
+      clientContactId: r.clientContactId,
+      clientContactName: r.clientContactName,
+      parentProjectId: r.parentProjectId,
+      subProjectCount: r.subProjectCount,
+      subFeeSumPaise: r.subFeeSumPaise,
+      linkedInvoiceCount: r.linkedInvoiceCount,
       code: r.code ?? r.id.slice(0, 8),
       name: r.name,
       client: r.clientName,
@@ -1337,6 +1236,9 @@ export function ProjectsApp({
     clientId?: string;
     lead: string;
     leadEmployeeId?: string | null;
+    accountManagerId?: string | null;
+    clientContactId?: string | null;
+    code?: string;
     col: (typeof PROJECT_COLS)[number];
     fee: bigint;
   }) {
@@ -1348,7 +1250,10 @@ export function ProjectsApp({
       await createProject({
         clientId: input.clientId,
         leadEmployeeId: input.leadEmployeeId ?? null,
+        accountManagerId: input.accountManagerId ?? null,
+        clientContactId: input.clientContactId ?? null,
         name: input.name,
+        code: input.code?.trim() ? input.code.trim() : null,
         status: colToDbStatus(input.col),
         feePaise: input.fee,
       });
@@ -1365,6 +1270,9 @@ export function ProjectsApp({
       name?: string;
       clientId?: string;
       leadEmployeeId?: string | null;
+      accountManagerId?: string | null;
+      clientContactId?: string | null;
+      code?: string;
       col?: (typeof PROJECT_COLS)[number];
       fee?: bigint;
     },
@@ -1374,6 +1282,13 @@ export function ProjectsApp({
         ...(patch.name !== undefined ? { name: patch.name } : {}),
         ...(patch.clientId !== undefined ? { clientId: patch.clientId } : {}),
         ...(patch.leadEmployeeId !== undefined ? { leadEmployeeId: patch.leadEmployeeId } : {}),
+        ...(patch.accountManagerId !== undefined
+          ? { accountManagerId: patch.accountManagerId }
+          : {}),
+        ...(patch.clientContactId !== undefined ? { clientContactId: patch.clientContactId } : {}),
+        ...(patch.code !== undefined && patch.code.trim() !== ''
+          ? { code: patch.code.trim() }
+          : {}),
         ...(patch.col !== undefined ? { status: colToDbStatus(patch.col) } : {}),
         ...(patch.fee !== undefined ? { feePaise: patch.fee } : {}),
       });
@@ -1393,14 +1308,37 @@ export function ProjectsApp({
     }
   }
 
+  // Sub-projects don't get their own kanban cards — they roll up under the
+  // parent (chip + fee sum + child-aware Unlinked badge). All rows are in
+  // the payload, so aggregation is a client-side map.
+  const childrenByParent = new Map<string, Project[]>();
+  for (const p of data.projects) {
+    if (p.parentProjectId) {
+      const list = childrenByParent.get(p.parentProjectId) ?? [];
+      list.push(p);
+      childrenByParent.set(p.parentProjectId, list);
+    }
+  }
+
   const q = search.toLowerCase();
-  const visible = data.projects.filter(
-    (p) =>
-      !q ||
+  const visible = data.projects.filter((p) => {
+    if (p.parentProjectId) return false; // top-level cards only
+    if (!q) return true;
+    const selfMatch =
       p.name.toLowerCase().includes(q) ||
       p.client.toLowerCase().includes(q) ||
-      p.code.toLowerCase().includes(q),
-  );
+      p.code.toLowerCase().includes(q);
+    if (selfMatch) return true;
+    const kids = p.id ? (childrenByParent.get(p.id) ?? []) : [];
+    return kids.some((k) => k.name.toLowerCase().includes(q) || k.code.toLowerCase().includes(q));
+  });
+
+  /** Own + children invoice links — a parent is "linked" if any sub is. */
+  function linkedCountFor(p: Project): number {
+    const own = p.linkedInvoiceCount ?? 0;
+    const kids = p.id ? (childrenByParent.get(p.id) ?? []) : [];
+    return own + kids.reduce((acc, k) => acc + (k.linkedInvoiceCount ?? 0), 0);
+  }
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
@@ -1457,7 +1395,7 @@ export function ProjectsApp({
               </div>
               {items.map((p) => (
                 <div
-                  key={p.code}
+                  key={p.id ?? p.code}
                   className="proj-card"
                   style={{ cursor: p.id ? 'pointer' : 'default' }}
                   onClick={() => {
@@ -1472,7 +1410,41 @@ export function ProjectsApp({
                       gap: 6,
                     }}
                   >
-                    <div className="code">{p.code}</div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+                      <div className="code">{p.code}</div>
+                      {(p.subProjectCount ?? 0) > 0 ? (
+                        <span
+                          title={`${p.subProjectCount} sub-project${p.subProjectCount === 1 ? '' : 's'}`}
+                          style={{
+                            fontSize: 9.5,
+                            fontWeight: 600,
+                            padding: '1px 6px',
+                            borderRadius: 999,
+                            border: '1px solid var(--border)',
+                            color: 'var(--text-muted)',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          {p.subProjectCount} subs
+                        </span>
+                      ) : null}
+                      {linkedCountFor(p) === 0 ? (
+                        <span
+                          title="No invoice or proforma linked to this project yet."
+                          style={{
+                            fontSize: 9.5,
+                            fontWeight: 600,
+                            padding: '1px 6px',
+                            borderRadius: 999,
+                            background: 'rgba(208,138,30,0.14)',
+                            color: '#d08a1e',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          Unlinked
+                        </span>
+                      ) : null}
+                    </div>
                     {(canEdit || canDelete) && (
                       <div className="proj-card-actions" onClick={(ev) => ev.stopPropagation()}>
                         {canEdit && (
@@ -1529,10 +1501,31 @@ export function ProjectsApp({
                       ) : null}
                     </span>
                     <div className="grow" />
-                    <span style={{ fontVariantNumeric: 'tabular-nums', color: 'var(--text)' }}>
-                      {formatINR(p.fee)}
+                    <span
+                      style={{ fontVariantNumeric: 'tabular-nums', color: 'var(--text)' }}
+                      title={
+                        (p.subProjectCount ?? 0) > 0
+                          ? `Total of ${p.subProjectCount} sub-project fees`
+                          : undefined
+                      }
+                    >
+                      {formatINR((p.subProjectCount ?? 0) > 0 ? (p.subFeeSumPaise ?? 0n) : p.fee)}
                     </span>
                   </div>
+                  {p.clientContactName ? (
+                    <div
+                      style={{
+                        fontSize: 10.5,
+                        color: 'var(--text-dim)',
+                        marginTop: 2,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      Client POC · {p.clientContactName}
+                    </div>
+                  ) : null}
                 </div>
               ))}
               {items.length === 0 && (
@@ -1569,12 +1562,16 @@ export function ProjectsApp({
           initial={editing}
           defaultCol={editing.col}
           onClose={() => setEditing(null)}
+          onSubProjectsChanged={() => void reload()}
           onSubmit={(input) => {
             if (editing.id) {
               void updateProjectAction(editing.id, {
                 name: input.name,
                 clientId: input.clientId,
                 leadEmployeeId: input.leadEmployeeId ?? null,
+                accountManagerId: input.accountManagerId ?? null,
+                clientContactId: input.clientContactId ?? null,
+                ...(input.code && input.code !== editing.code ? { code: input.code } : {}),
                 // Only send status when the column actually changed — the
                 // col↔status map is lossy (won→Proposed→pitch,
                 // cancelled→Completed→completed), so an unchanged column
@@ -1606,185 +1603,8 @@ export function ProjectsApp({
   );
 }
 
-function ProjectFormModal({
-  mode,
-  initial,
-  defaultCol,
-  onClose,
-  onSubmit,
-}: {
-  mode: 'create' | 'edit';
-  initial?: Partial<Project>;
-  defaultCol: (typeof PROJECT_COLS)[number];
-  onClose: () => void;
-  onSubmit: (input: {
-    name: string;
-    client: string;
-    clientId: string;
-    lead: string;
-    leadEmployeeId: string | null;
-    col: (typeof PROJECT_COLS)[number];
-    fee: bigint;
-  }) => void;
-}) {
-  // Real DB clients + employees for the dropdowns. Loaded once on mount.
-  const [clientOptions, setClientOptions] = useState<Array<{ id: string; name: string }>>([]);
-  const [employeeOptions, setEmployeeOptions] = useState<Array<{ id: string; name: string }>>([]);
-  useEffect(() => {
-    let cancelled = false;
-    Promise.all([listDbClients(), listDbEmployees()])
-      .then(([cs, es]) => {
-        if (cancelled) return;
-        setClientOptions(cs.map((c) => ({ id: c.id, name: c.name })));
-        setEmployeeOptions(es.map((e) => ({ id: e.id, name: e.fullName })));
-      })
-      .catch(() => {
-        /* fall through to empty lists */
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const [name, setName] = useState(initial?.name ?? '');
-  const [clientId, setClientId] = useState<string>(initial?.clientId ?? '');
-  const [leadEmployeeId, setLeadEmployeeId] = useState<string>(initial?.leadEmployeeId ?? '');
-  const [col, setCol] = useState<(typeof PROJECT_COLS)[number]>(initial?.col ?? defaultCol);
-  const [fee, setFee] = useState(
-    initial?.fee != null && initial.fee > 0n
-      ? new Intl.NumberFormat('en-IN').format(initial.fee / 100n)
-      : '',
-  );
-  const [err, setErr] = useState<string | null>(null);
-  const nameRef = useRef<HTMLInputElement | null>(null);
-
-  useEffect(() => {
-    nameRef.current?.focus();
-  }, []);
-
-  // When the dropdowns load, default to the first option if nothing was
-  // pre-selected — preserves the previous UX where the form opened with
-  // a sensible default selection. Deferred via microtask so the lint
-  // doesn't see a synchronous setState inside the effect body.
-  useEffect(() => {
-    if (clientId || clientOptions.length === 0) return;
-    const id = clientOptions[0]!.id;
-    queueMicrotask(() => setClientId((prev) => prev || id));
-  }, [clientOptions, clientId]);
-  useEffect(() => {
-    if (leadEmployeeId || employeeOptions.length === 0) return;
-    const id = employeeOptions[0]!.id;
-    queueMicrotask(() => setLeadEmployeeId((prev) => prev || id));
-  }, [employeeOptions, leadEmployeeId]);
-
-  const submit = (e: FormEvent) => {
-    e.preventDefault();
-    const n = name.trim();
-    if (!n) return setErr('Project name is required.');
-    if (!clientId) return setErr('Pick a client (or add one first via the Clients app).');
-    const feePaise = fee.trim() === '' ? 0n : (parseRupeesToPaise(fee) ?? 0n);
-
-    const clientName = clientOptions.find((c) => c.id === clientId)?.name ?? initial?.client ?? '';
-    const leadName = leadEmployeeId
-      ? (employeeOptions.find((e) => e.id === leadEmployeeId)?.name ?? '')
-      : '';
-    const leadCode = leadName
-      ? leadName
-          .split(/\s+/)
-          .slice(0, 2)
-          .map((s) => s[0] ?? '')
-          .join('')
-          .toUpperCase()
-      : '—';
-
-    onSubmit({
-      name: n,
-      client: clientName,
-      clientId,
-      lead: leadCode,
-      leadEmployeeId: leadEmployeeId || null,
-      col,
-      fee: feePaise > 0n ? feePaise : 0n,
-    });
-  };
-
-  return (
-    <Modal
-      title={mode === 'edit' ? `Edit ${initial?.code ?? 'Project'}` : 'New Project'}
-      onClose={onClose}
-      width={520}
-    >
-      <form onSubmit={submit} className="os-form">
-        <Field label="Project name" full>
-          <input
-            ref={nameRef}
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="e.g. Diwali Festive Campaign"
-          />
-        </Field>
-        <Field label="Client">
-          <select value={clientId} onChange={(e) => setClientId(e.target.value)}>
-            {clientOptions.length === 0 ? (
-              <option value="">— No clients yet —</option>
-            ) : (
-              clientOptions.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))
-            )}
-          </select>
-        </Field>
-        <Field label="Stage">
-          <select
-            value={col}
-            onChange={(e) => setCol(e.target.value as (typeof PROJECT_COLS)[number])}
-          >
-            {PROJECT_COLS.map((c) => (
-              <option key={c}>{c}</option>
-            ))}
-          </select>
-        </Field>
-        <Field label="Lead">
-          <select value={leadEmployeeId} onChange={(e) => setLeadEmployeeId(e.target.value)}>
-            {employeeOptions.length === 0 ? (
-              <option value="">— No team members yet —</option>
-            ) : (
-              <>
-                <option value="">— Unassigned —</option>
-                {employeeOptions.map((emp) => (
-                  <option key={emp.id} value={emp.id}>
-                    {emp.name}
-                  </option>
-                ))}
-              </>
-            )}
-          </select>
-        </Field>
-        <Field label="Fee (₹)" hint="Captured from the SOW. Apar doesn't compute totals.">
-          <input
-            type="text"
-            inputMode="numeric"
-            value={fee}
-            onChange={(e) => setFee(e.target.value)}
-            placeholder="48,00,000"
-          />
-        </Field>
-        {err && <div className="os-form-error">{err}</div>}
-        <div className="os-form-actions">
-          <button type="button" className="btn" onClick={onClose}>
-            Cancel
-          </button>
-          <button type="submit" className="btn primary">
-            <Icon name="check" size={13} />
-            {mode === 'edit' ? 'Save changes' : 'Create project'}
-          </button>
-        </div>
-      </form>
-    </Modal>
-  );
-}
+// ProjectFormModal moved to ./apps/project-form-modal (shared with the
+// project window's "Add sub-project" flow).
 
 /* -------------------------------------------------------------------------- */
 /* Employees                                                                  */
@@ -2065,7 +1885,13 @@ export function EmployeesApp({
               }}
             >
               <span
-                style={{ width: 6, height: 6, borderRadius: '50%', background: sm.fg, flexShrink: 0 }}
+                style={{
+                  width: 6,
+                  height: 6,
+                  borderRadius: '50%',
+                  background: sm.fg,
+                  flexShrink: 0,
+                }}
               />
               {sm.label}
             </span>
@@ -2127,8 +1953,7 @@ export function EmployeesApp({
                 </span>
               ) : null}
               <span>
-                Joined{' '}
-                {e.joinedAt.toLocaleDateString('en-IN', { month: 'short', year: 'numeric' })}
+                Joined {e.joinedAt.toLocaleDateString('en-IN', { month: 'short', year: 'numeric' })}
                 {e.managerName ? ` · ↳ ${e.managerName}` : ''}
               </span>
             </div>
@@ -3156,7 +2981,6 @@ function DepartmentsModal({
     </Modal>
   );
 }
-
 
 // `LedgerApp` placeholder removed in Phase 4. The dispatcher now routes
 // `app: 'ledger'` to `<LedgerWindow>` in

@@ -140,6 +140,19 @@ export type Project = {
   clientId?: string;
   /** FK to employees(id); pairs with `lead` (display initials). */
   leadEmployeeId?: string | null;
+  /** Internal POC (account manager, users.id). */
+  accountManagerId?: string | null;
+  /** Client-side POC (entity_contacts.id + display name). */
+  clientContactId?: string | null;
+  clientContactName?: string | null;
+  /** Parent project id when this is a sub-project (one level deep). */
+  parentProjectId?: string | null;
+  /** Live sub-projects under this project. */
+  subProjectCount?: number;
+  /** Σ fee over live sub-projects — display-only. */
+  subFeeSumPaise?: Paise;
+  /** Invoices linked to this project (header or line level, non-void). */
+  linkedInvoiceCount?: number;
 };
 
 export type Employee = {

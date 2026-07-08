@@ -1,12 +1,5 @@
 import { sql } from 'drizzle-orm';
-import {
-  index,
-  pgTable,
-  text,
-  timestamp,
-  unique,
-  uuid,
-} from 'drizzle-orm/pg-core';
+import { index, pgTable, text, timestamp, unique, uuid } from 'drizzle-orm/pg-core';
 
 import { employees } from './employees';
 import { projects } from './projects';
@@ -37,10 +30,7 @@ export const projectMembers = pgTable(
     createdBy: uuid(),
   },
   (t) => [
-    unique('project_members_project_employee_uniq').on(
-      t.projectId,
-      t.employeeId,
-    ),
+    unique('project_members_project_employee_uniq').on(t.projectId, t.employeeId),
     index().on(t.projectId),
     index().on(t.employeeId),
   ],

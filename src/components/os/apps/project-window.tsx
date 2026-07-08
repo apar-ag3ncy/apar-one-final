@@ -23,7 +23,11 @@ import {
 } from '@/components/projects/types';
 import { useRealtimeActivity } from '@/lib/client/use-realtime-activity';
 import { getEntityActivity } from '@/lib/server/entities/activity';
-import { getProject, listProjectTransactions, listEmployees } from '@/lib/server-stub/entity-actions';
+import {
+  getProject,
+  listProjectTransactions,
+  listEmployees,
+} from '@/lib/server-stub/entity-actions';
 import {
   listProjectMembers,
   addProjectMember,
@@ -33,11 +37,27 @@ import {
   updateProjectTask,
   deleteProjectTask,
   type ProjectMemberRow,
+  type ProjectTaskAssignee,
   type ProjectTaskRow,
   type ProjectTaskStatus,
 } from '@/lib/server/entities/project-tasks';
+import {
+  archiveDeliverableCategory,
+  createDeliverableCategory,
+  listDeliverableCategories,
+  type DeliverableCategoryRow,
+} from '@/lib/server/entities/deliverable-categories';
+import {
+  createProject,
+  listSubProjects,
+  type ProjectListRow,
+} from '@/lib/server/entities/projects';
+import { colToDbStatus, dbStatusToCol } from '@/lib/project-status';
+import { toast } from 'sonner';
 import { osActions } from '@/lib/os/store';
 import { navigateBesideFocused } from './navigate';
+import { Modal } from './os-modal-kit';
+import { ProjectFormModal } from './project-form-modal';
 
 type EmployeeOption = { id: string; name: string };
 
@@ -58,7 +78,7 @@ type ProjectTab =
 const TAB_LABELS: Record<ProjectTab, string> = {
   overview: 'Overview',
   team: 'Team',
-  tasks: 'Tasks',
+  tasks: 'Deliverables',
   transactions: 'Transactions',
   documents: 'Documents',
   activity: 'Activity',
@@ -82,7 +102,7 @@ type Feed = {
 type State =
   | { kind: 'loading' }
   | { kind: 'error'; message: string }
-  | { kind: 'ready'; project: Project; feed: Feed };
+  | { kind: 'ready'; project: Project; feed: Feed; subs: readonly ProjectListRow[] };
 
 export function ProjectWindow({ projectId, onClose }: ProjectWindowProps) {
   const [state, setState] = useState<State>({ kind: 'loading' });
@@ -97,13 +117,16 @@ export function ProjectWindow({ projectId, onClose }: ProjectWindowProps) {
       if (!cancelled) setState({ kind: 'loading' });
     });
     Promise.all([getProject(projectId), listProjectTransactions(projectId)])
-      .then(([project, feed]) => {
+      .then(async ([project, feed]) => {
         if (cancelled) return;
         if (!project) {
           setState({ kind: 'error', message: `Project ${projectId} not found.` });
           return;
         }
-        setState({ kind: 'ready', project, feed });
+        const subs =
+          project.subProjectCount > 0 ? await listSubProjects(projectId).catch(() => []) : [];
+        if (cancelled) return;
+        setState({ kind: 'ready', project, feed, subs });
       })
       .catch((e: unknown) => {
         if (cancelled) return;
@@ -124,7 +147,7 @@ export function ProjectWindow({ projectId, onClose }: ProjectWindowProps) {
     return <div style={{ padding: 24, color: 'var(--text-error, #c33)' }}>{state.message}</div>;
   }
 
-  const { project, feed } = state;
+  const { project, feed, subs } = state;
   const tabs: readonly ProjectTab[] = [
     'overview',
     'team',
@@ -139,6 +162,7 @@ export function ProjectWindow({ projectId, onClose }: ProjectWindowProps) {
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
       <Header
         project={project}
+        subs={subs}
         canEdit={canEdit}
         onStatusChanged={() => setReloadKey((k) => k + 1)}
       />
@@ -153,7 +177,15 @@ export function ProjectWindow({ projectId, onClose }: ProjectWindowProps) {
         ))}
       </div>
       <div style={{ flex: 1, overflow: 'auto', padding: 20 }}>
-        {tab === 'overview' ? <OverviewBody project={project} feed={feed} /> : null}
+        {tab === 'overview' ? (
+          <OverviewBody
+            project={project}
+            feed={feed}
+            subs={subs}
+            canEdit={canEdit}
+            onSubsChanged={() => setReloadKey((k) => k + 1)}
+          />
+        ) : null}
         {tab === 'team' ? <TeamBody projectId={project.id} canEdit={canEdit} /> : null}
         {tab === 'tasks' ? <TasksBody projectId={project.id} canEdit={canEdit} /> : null}
         {tab === 'transactions' ? <TransactionsBody project={project} feed={feed} /> : null}
@@ -187,14 +219,19 @@ export function ProjectWindow({ projectId, onClose }: ProjectWindowProps) {
 
 function Header({
   project,
+  subs,
   canEdit,
   onStatusChanged,
 }: {
   project: Project;
+  subs: readonly ProjectListRow[];
   canEdit: boolean;
   onStatusChanged?: () => void;
 }) {
   const tone = PROJECT_STATUS_TONE[project.status];
+  // A parent counts as linked when any of its sub-projects is (item 7).
+  const linkedTotal =
+    project.linkedInvoiceCount + subs.reduce((acc, s) => acc + s.linkedInvoiceCount, 0);
   return (
     <div
       style={{
@@ -256,12 +293,28 @@ function Header({
           {project.leadName}
           {' · POC '}
           {project.accountManagerName}
+          {project.clientContactName ? (
+            <>
+              {' · Client POC '}
+              {project.clientContactName}
+            </>
+          ) : null}
         </div>
         <div style={{ display: 'flex', gap: 8, marginTop: 10, alignItems: 'center' }}>
           <span className="pill" style={{ background: tone.bg, color: tone.fg }}>
             <span className="dot" style={{ background: tone.fg }} />
             {tone.label}
           </span>
+          {linkedTotal === 0 ? (
+            <span
+              className="pill"
+              title="No invoice or proforma linked to this project yet."
+              style={{ background: 'rgba(208,138,30,0.14)', color: '#d08a1e' }}
+            >
+              <span className="dot" style={{ background: '#d08a1e' }} />
+              Unlinked
+            </span>
+          ) : null}
           <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
             DB state: {PROJECT_DB_STATUS_LABELS[project.dbStatus]}
           </span>
@@ -284,8 +337,26 @@ function Header({
 /* Overview                                                                    */
 /* -------------------------------------------------------------------------- */
 
-function OverviewBody({ project, feed }: { project: Project; feed: Feed }) {
+function OverviewBody({
+  project,
+  feed,
+  subs,
+  canEdit,
+  onSubsChanged,
+}: {
+  project: Project;
+  feed: Feed;
+  subs: readonly ProjectListRow[];
+  canEdit: boolean;
+  onSubsChanged: () => void;
+}) {
   const net = feed.incomePaise - feed.spendPaise;
+  const [showAddSub, setShowAddSub] = useState(false);
+  const hasSubs = subs.length > 0;
+  // Parent project value = Σ sub-project fees (display-computed, never
+  // stored). Own fee still shown separately when set.
+  const subTotal = subs.reduce((acc, s) => acc + s.feePaise, 0n);
+  const isSubProject = Boolean(project.parentProjectId);
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       <div
@@ -307,8 +378,14 @@ function OverviewBody({ project, feed }: { project: Project; feed: Feed }) {
             ['Client', project.clientName],
             ['Lead', project.leadName],
             ['POC (manager)', project.accountManagerName],
+            ['Client POC', project.clientContactName ?? '—'],
             ['Status', PROJECT_DB_STATUS_LABELS[project.dbStatus]],
-            ['Fee', formatINRPaise(project.feePaise)],
+            hasSubs
+              ? ['Total (sub-projects)', formatINRPaise(subTotal)]
+              : ['Fee', formatINRPaise(project.feePaise)],
+            ...(hasSubs && project.feePaise > 0n
+              ? [['Own fee', formatINRPaise(project.feePaise)] as [string, string]]
+              : []),
             [
               'Started',
               project.startedAt.toLocaleDateString('en-IN', {
@@ -330,6 +407,128 @@ function OverviewBody({ project, feed }: { project: Project; feed: Feed }) {
           ]}
         />
       </OsCard>
+      {!isSubProject ? (
+        <OsCard title={`Sub-projects${hasSubs ? ` (${subs.length})` : ''}`}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {hasSubs ? (
+              <ul
+                style={{
+                  listStyle: 'none',
+                  margin: 0,
+                  padding: 0,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 6,
+                }}
+              >
+                {subs.map((s) => (
+                  <li
+                    key={s.id}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 10,
+                      padding: '6px 10px',
+                      borderRadius: 8,
+                      border: '1px solid var(--border)',
+                      fontSize: 13,
+                      cursor: 'pointer',
+                    }}
+                    onClick={() => navigateBesideFocused({ type: 'project', id: s.id })}
+                  >
+                    <span
+                      style={{
+                        fontFamily: 'var(--os-font)',
+                        fontVariantNumeric: 'tabular-nums',
+                        fontSize: 11,
+                        color: 'var(--text-muted)',
+                      }}
+                    >
+                      {s.code ?? ''}
+                    </span>
+                    <span style={{ flex: 1, minWidth: 0 }}>{s.name}</span>
+                    {s.linkedInvoiceCount === 0 ? (
+                      <span
+                        style={{
+                          fontSize: 9.5,
+                          fontWeight: 600,
+                          padding: '1px 6px',
+                          borderRadius: 999,
+                          background: 'rgba(208,138,30,0.14)',
+                          color: '#d08a1e',
+                        }}
+                      >
+                        Unlinked
+                      </span>
+                    ) : null}
+                    <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                      {dbStatusToCol(s.status)}
+                    </span>
+                    <span style={{ fontVariantNumeric: 'tabular-nums' }}>
+                      {formatINRPaise(s.feePaise)}
+                    </span>
+                  </li>
+                ))}
+                <li
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'flex-end',
+                    fontSize: 12,
+                    color: 'var(--text-muted)',
+                    padding: '2px 10px 0',
+                  }}
+                >
+                  Total: {formatINRPaise(subTotal)}
+                </li>
+              </ul>
+            ) : (
+              <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0 }}>
+                No sub-projects. Each sub-project carries its own deliverables, fee and team; the
+                parent&apos;s total is the sum of its sub-projects.
+              </p>
+            )}
+            {canEdit ? (
+              <div>
+                <button className="btn" type="button" onClick={() => setShowAddSub(true)}>
+                  <Icon name="plus" size={13} />
+                  Add sub-project
+                </button>
+              </div>
+            ) : null}
+          </div>
+        </OsCard>
+      ) : null}
+      {showAddSub ? (
+        <ProjectFormModal
+          mode="create"
+          defaultCol="Proposed"
+          parentProjectId={project.id}
+          lockedClientId={project.clientId}
+          onClose={() => setShowAddSub(false)}
+          onSubmit={(input) => {
+            void (async () => {
+              try {
+                await createProject({
+                  clientId: input.clientId,
+                  leadEmployeeId: input.leadEmployeeId,
+                  accountManagerId: input.accountManagerId,
+                  clientContactId: input.clientContactId,
+                  parentProjectId: project.id,
+                  name: input.name,
+                  code: input.code || null,
+                  status: colToDbStatus(input.col),
+                  feePaise: input.fee,
+                });
+                toast.success('Sub-project created.');
+                setShowAddSub(false);
+                onSubsChanged();
+              } catch (e) {
+                toast.error(e instanceof Error ? e.message : 'Create failed');
+              }
+            })();
+          }}
+        />
+      ) : null}
       {project.notes ? (
         <OsCard title="Notes">
           <p
@@ -461,7 +660,9 @@ function TeamBody({ projectId, canEdit }: { projectId: string; canEdit: boolean 
             type="button"
             onClick={() => setPickerOpen(true)}
             disabled={busy || available.length === 0}
-            title={available.length === 0 ? 'Every employee is already on this project.' : undefined}
+            title={
+              available.length === 0 ? 'Every employee is already on this project.' : undefined
+            }
           >
             <Icon name="plus" size={13} />
             Add team mate
@@ -624,7 +825,9 @@ function AddTeamMatesDialog({
             </div>
 
             {filtered.length === 0 ? (
-              <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0, padding: '8px 2px' }}>
+              <p
+                style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0, padding: '8px 2px' }}
+              >
                 {available.length === 0
                   ? 'Every employee is already on this project.'
                   : `No employees match “${query}”.`}
@@ -716,33 +919,50 @@ const TASK_STATUSES: ReadonlyArray<{ value: ProjectTaskStatus; label: string }> 
 function TasksBody({ projectId, canEdit }: { projectId: string; canEdit: boolean }) {
   const [tasks, setTasks] = useState<readonly ProjectTaskRow[]>([]);
   // Assignee options are the project's TEAM (project_members), not the whole
-  // employee directory — only people on the project can pick up its tasks.
+  // employee directory — only people on the project can pick up deliverables.
   const [team, setTeam] = useState<readonly EmployeeOption[]>([]);
+  const [categories, setCategories] = useState<readonly DeliverableCategoryRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [manageCats, setManageCats] = useState(false);
 
-  // Add-task inline form state. Due date starts at today — the common case —
-  // and stays editable.
+  // Add-deliverable inline form state. Due date starts at today — the common
+  // case — and stays editable. Multiple assignees via the picker dialog.
   const [title, setTitle] = useState('');
-  const [assignee, setAssignee] = useState('');
+  const [draftAssignees, setDraftAssignees] = useState<readonly string[]>([]);
+  const [draftCategoryId, setDraftCategoryId] = useState('');
   const [dueOn, setDueOn] = useState(todayISODate());
+  const [pickerFor, setPickerFor] = useState<'draft' | string | null>(null);
+
+  async function reloadCategories() {
+    try {
+      setCategories(await listDeliverableCategories());
+    } catch {
+      /* non-fatal — picker just stays stale */
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
     queueMicrotask(() => {
       if (!cancelled) setLoading(true);
     });
-    Promise.all([listProjectTasks(projectId), listProjectMembers(projectId)])
-      .then(([t, members]) => {
+    Promise.all([
+      listProjectTasks(projectId),
+      listProjectMembers(projectId),
+      listDeliverableCategories(),
+    ])
+      .then(([t, members, cats]) => {
         if (cancelled) return;
         setTasks(t);
         setTeam(members.map((m) => ({ id: m.employeeId, name: m.employeeName })));
+        setCategories(cats);
         setLoading(false);
       })
       .catch((e: unknown) => {
         if (cancelled) return;
-        setError(e instanceof Error ? e.message : 'Failed to load tasks');
+        setError(e instanceof Error ? e.message : 'Failed to load deliverables');
         setLoading(false);
       });
     return () => {
@@ -750,19 +970,14 @@ function TasksBody({ projectId, canEdit }: { projectId: string; canEdit: boolean
     };
   }, [projectId]);
 
-  // A task may still point at someone who has since left the team; keep that
-  // assignee visible in its row's dropdown so the selection doesn't misrender.
+  // A deliverable may still include someone who has since left the team; keep
+  // those people visible in its picker so the selection doesn't misrender.
   function optionsFor(task?: ProjectTaskRow): readonly EmployeeOption[] {
-    if (
-      task?.assigneeEmployeeId &&
-      !team.some((m) => m.id === task.assigneeEmployeeId)
-    ) {
-      return [
-        ...team,
-        { id: task.assigneeEmployeeId, name: `${task.assigneeName ?? 'Unknown'} (not on team)` },
-      ];
-    }
-    return team;
+    if (!task) return team;
+    const extra = task.assignees
+      .filter((a) => !team.some((m) => m.id === a.employeeId))
+      .map((a) => ({ id: a.employeeId, name: `${a.name} (not on team)` }));
+    return extra.length > 0 ? [...team, ...extra] : team;
   }
 
   function replaceTask(row: ProjectTaskRow) {
@@ -778,15 +993,17 @@ function TasksBody({ projectId, canEdit }: { projectId: string; canEdit: boolean
       const row = await createProjectTask({
         projectId,
         title: t,
-        assigneeEmployeeId: assignee || null,
+        assigneeEmployeeIds: [...draftAssignees],
+        categoryId: draftCategoryId || null,
         dueOn: dueOn || null,
       });
       setTasks((prev) => [...prev, row]);
       setTitle('');
-      setAssignee('');
+      setDraftAssignees([]);
+      setDraftCategoryId('');
       setDueOn(todayISODate());
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Failed to add task');
+      setError(e instanceof Error ? e.message : 'Failed to add deliverable');
     } finally {
       setBusy(false);
     }
@@ -799,20 +1016,33 @@ function TasksBody({ projectId, canEdit }: { projectId: string; canEdit: boolean
       const row = await updateProjectTask({ id, status });
       replaceTask(row);
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Failed to update task');
+      setError(e instanceof Error ? e.message : 'Failed to update deliverable');
     } finally {
       setBusy(false);
     }
   }
 
-  async function changeAssignee(id: string, assigneeEmployeeId: string) {
+  async function changeAssignees(id: string, assigneeEmployeeIds: readonly string[]) {
     setBusy(true);
     setError(null);
     try {
-      const row = await updateProjectTask({ id, assigneeEmployeeId: assigneeEmployeeId || null });
+      const row = await updateProjectTask({ id, assigneeEmployeeIds: [...assigneeEmployeeIds] });
       replaceTask(row);
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Failed to update task');
+      setError(e instanceof Error ? e.message : 'Failed to update deliverable');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function changeCategory(id: string, categoryId: string) {
+    setBusy(true);
+    setError(null);
+    try {
+      const row = await updateProjectTask({ id, categoryId: categoryId || null });
+      replaceTask(row);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Failed to update deliverable');
     } finally {
       setBusy(false);
     }
@@ -826,15 +1056,28 @@ function TasksBody({ projectId, canEdit }: { projectId: string; canEdit: boolean
       await deleteProjectTask({ id });
       setTasks((prev) => prev.filter((t) => t.id !== id));
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Failed to delete task');
+      setError(e instanceof Error ? e.message : 'Failed to delete deliverable');
     } finally {
       setBusy(false);
     }
   }
 
-  if (loading) {
-    return <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0 }}>Loading tasks…</p>;
+  function assigneeSummary(assignees: readonly ProjectTaskAssignee[]): string {
+    if (assignees.length === 0) return 'Unassigned';
+    if (assignees.length === 1) return assignees[0]!.name;
+    if (assignees.length === 2)
+      return `${firstName(assignees[0]!.name)}, ${firstName(assignees[1]!.name)}`;
+    return `${firstName(assignees[0]!.name)} +${assignees.length - 1}`;
   }
+
+  if (loading) {
+    return (
+      <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0 }}>Loading deliverables…</p>
+    );
+  }
+
+  const pickerTask =
+    pickerFor && pickerFor !== 'draft' ? tasks.find((t) => t.id === pickerFor) : null;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -856,7 +1099,7 @@ function TasksBody({ projectId, canEdit }: { projectId: string; canEdit: boolean
             style={{ flex: '1 1 200px' }}
             value={title}
             onChange={(e) => setTitle(e.target.value)}
-            placeholder="New task title…"
+            placeholder="New deliverable…"
             onKeyDown={(e) => {
               if (e.key === 'Enter') {
                 e.preventDefault();
@@ -864,20 +1107,31 @@ function TasksBody({ projectId, canEdit }: { projectId: string; canEdit: boolean
               }
             }}
           />
-          <select
-            className="input"
-            value={assignee}
-            onChange={(e) => setAssignee(e.target.value)}
+          <button
+            className="btn"
+            type="button"
+            onClick={() => setPickerFor('draft')}
             title={
               team.length === 0
-                ? 'Add team mates in the Team tab to assign tasks.'
-                : 'Assignee (optional)'
+                ? 'Add team mates in the Team tab to assign deliverables.'
+                : 'Pick one or more people for this deliverable'
             }
           >
-            <option value="">{team.length === 0 ? 'No team mates yet' : 'Unassigned'}</option>
-            {team.map((e) => (
-              <option key={e.id} value={e.id}>
-                {e.name}
+            <Icon name="users" size={13} />
+            {draftAssignees.length === 0
+              ? 'Assignees'
+              : `${draftAssignees.length} assignee${draftAssignees.length === 1 ? '' : 's'}`}
+          </button>
+          <select
+            className="input"
+            value={draftCategoryId}
+            onChange={(e) => setDraftCategoryId(e.target.value)}
+            title="Category (applies across all projects)"
+          >
+            <option value="">No category</option>
+            {categories.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
               </option>
             ))}
           </select>
@@ -895,7 +1149,15 @@ function TasksBody({ projectId, canEdit }: { projectId: string; canEdit: boolean
             disabled={busy || title.trim().length === 0}
           >
             <Icon name="plus" size={13} />
-            Add task
+            Add deliverable
+          </button>
+          <button
+            className="btn"
+            type="button"
+            onClick={() => setManageCats(true)}
+            title="Create, rename or archive the global deliverable categories."
+          >
+            Manage categories
           </button>
         </div>
       ) : null}
@@ -903,7 +1165,7 @@ function TasksBody({ projectId, canEdit }: { projectId: string; canEdit: boolean
       {error ? <div style={{ fontSize: 12, color: 'var(--text-error, #c33)' }}>{error}</div> : null}
 
       {tasks.length === 0 ? (
-        <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0 }}>No tasks yet.</p>
+        <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0 }}>No deliverables yet.</p>
       ) : (
         <ul
           style={{
@@ -940,6 +1202,22 @@ function TasksBody({ projectId, canEdit }: { projectId: string; canEdit: boolean
                   }}
                 >
                   {t.title}
+                  {t.categoryName ? (
+                    <span
+                      style={{
+                        marginLeft: 8,
+                        fontSize: 10,
+                        fontWeight: 600,
+                        padding: '1px 7px',
+                        borderRadius: 999,
+                        border: `1px solid ${t.categoryColor ?? 'var(--border)'}`,
+                        color: t.categoryColor ?? 'var(--text-muted)',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {t.categoryName}
+                    </span>
+                  ) : null}
                   {t.dueOn ? (
                     <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--text-muted)' }}>
                       due{' '}
@@ -952,19 +1230,39 @@ function TasksBody({ projectId, canEdit }: { projectId: string; canEdit: boolean
                 </span>
                 {canEdit ? (
                   <>
+                    <button
+                      className="btn"
+                      type="button"
+                      onClick={() => setPickerFor(t.id)}
+                      disabled={busy}
+                      title={
+                        t.assignees.length > 0
+                          ? t.assignees.map((a) => a.name).join(', ')
+                          : 'Assign people'
+                      }
+                      style={{ fontSize: 12 }}
+                    >
+                      <Icon name="users" size={12} />
+                      {assigneeSummary(t.assignees)}
+                    </button>
                     <select
                       className="input"
-                      value={t.assigneeEmployeeId ?? ''}
-                      onChange={(e) => void changeAssignee(t.id, e.target.value)}
+                      value={t.categoryId ?? ''}
+                      onChange={(e) => void changeCategory(t.id, e.target.value)}
                       disabled={busy}
-                      title="Assignee"
+                      title="Category"
                     >
-                      <option value="">Unassigned</option>
-                      {optionsFor(t).map((e) => (
-                        <option key={e.id} value={e.id}>
-                          {e.name}
+                      <option value="">No category</option>
+                      {categories.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name}
                         </option>
                       ))}
+                      {t.categoryId && !categories.some((c) => c.id === t.categoryId) ? (
+                        <option value={t.categoryId}>
+                          {t.categoryName ?? 'Archived category'}
+                        </option>
+                      ) : null}
                     </select>
                     <select
                       className="input"
@@ -982,7 +1280,7 @@ function TasksBody({ projectId, canEdit }: { projectId: string; canEdit: boolean
                     <button
                       className="btn row-action row-delete"
                       type="button"
-                      title="Delete task"
+                      title="Delete deliverable"
                       onClick={() => void remove(t.id)}
                       disabled={busy}
                     >
@@ -991,9 +1289,12 @@ function TasksBody({ projectId, canEdit }: { projectId: string; canEdit: boolean
                   </>
                 ) : (
                   <>
-                    {t.assigneeName ? (
-                      <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                        {t.assigneeName}
+                    {t.assignees.length > 0 ? (
+                      <span
+                        style={{ fontSize: 11, color: 'var(--text-muted)' }}
+                        title={t.assignees.map((a) => a.name).join(', ')}
+                      >
+                        {assigneeSummary(t.assignees)}
                       </span>
                     ) : null}
                     <span
@@ -1017,7 +1318,318 @@ function TasksBody({ projectId, canEdit }: { projectId: string; canEdit: boolean
           })}
         </ul>
       )}
+
+      {pickerFor ? (
+        <AssigneePickerDialog
+          options={pickerFor === 'draft' ? team : optionsFor(pickerTask ?? undefined)}
+          initial={
+            pickerFor === 'draft'
+              ? draftAssignees
+              : (pickerTask?.assignees.map((a) => a.employeeId) ?? [])
+          }
+          busy={busy}
+          onCancel={() => setPickerFor(null)}
+          onSave={(ids) => {
+            if (pickerFor === 'draft') {
+              setDraftAssignees(ids);
+              setPickerFor(null);
+            } else {
+              const id = pickerFor;
+              setPickerFor(null);
+              void changeAssignees(id, ids);
+            }
+          }}
+        />
+      ) : null}
+
+      {manageCats ? (
+        <CategoryManagerModal
+          categories={categories}
+          onClose={() => setManageCats(false)}
+          onChanged={() => void reloadCategories()}
+        />
+      ) : null}
     </div>
+  );
+}
+
+function firstName(full: string): string {
+  return full.trim().split(/\s+/)[0] ?? full;
+}
+
+/**
+ * Multi-select assignee picker — same os-modal chrome + checkbox-list pattern
+ * as AddTeamMatesDialog, but returns the full replacement set (deliverables
+ * use replace-set semantics server-side).
+ */
+function AssigneePickerDialog({
+  options,
+  initial,
+  busy,
+  onCancel,
+  onSave,
+}: {
+  options: readonly EmployeeOption[];
+  initial: readonly string[];
+  busy: boolean;
+  onCancel: () => void;
+  onSave: (employeeIds: readonly string[]) => void;
+}) {
+  const [selected, setSelected] = useState<ReadonlySet<string>>(new Set(initial));
+
+  function toggle(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  return (
+    <Modal title="Assignees" onClose={onCancel} width={400}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: 18 }}>
+        {options.length === 0 ? (
+          <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0 }}>
+            No team mates yet — add people in the Team tab first.
+          </p>
+        ) : (
+          <ul
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 4,
+              listStyle: 'none',
+              padding: 0,
+              margin: 0,
+              maxHeight: 280,
+              overflowY: 'auto',
+            }}
+          >
+            {options.map((e) => (
+              <li key={e.id}>
+                <label
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 10,
+                    padding: '7px 10px',
+                    borderRadius: 8,
+                    border: '1px solid var(--border)',
+                    fontSize: 13,
+                    cursor: 'pointer',
+                    background: selected.has(e.id) ? 'var(--hover)' : 'transparent',
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={selected.has(e.id)}
+                    onChange={() => toggle(e.id)}
+                    style={{ accentColor: 'var(--apar-red, #e63a1f)' }}
+                  />
+                  <span style={{ flex: 1 }}>{e.name}</span>
+                </label>
+              </li>
+            ))}
+          </ul>
+        )}
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'flex-end',
+            gap: 8,
+            paddingTop: 6,
+            borderTop: '1px solid var(--border)',
+          }}
+        >
+          <button className="btn" type="button" onClick={onCancel} disabled={busy}>
+            Cancel
+          </button>
+          <button
+            className="btn primary"
+            type="button"
+            onClick={() => onSave([...selected])}
+            disabled={busy}
+          >
+            <Icon name="check" size={13} />
+            Save assignees
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+const CATEGORY_SWATCHES = [
+  '#e63a1f',
+  '#3F4E8E',
+  '#2D8A8A',
+  '#5E7344',
+  '#7A2D4E',
+  '#7A4E2D',
+  '#d08a1e',
+] as const;
+
+/**
+ * Global deliverable-category manager. Categories apply to deliverables in
+ * ALL projects (item 6) — create, archive; archive detaches live rows.
+ */
+function CategoryManagerModal({
+  categories,
+  onClose,
+  onChanged,
+}: {
+  categories: readonly DeliverableCategoryRow[];
+  onClose: () => void;
+  onChanged: () => void;
+}) {
+  const [name, setName] = useState('');
+  const [color, setColor] = useState<string>(CATEGORY_SWATCHES[1]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function create() {
+    const n = name.trim();
+    if (!n || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await createDeliverableCategory({ name: n, color });
+      setName('');
+      onChanged();
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Failed to create category');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function archive(id: string) {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await archiveDeliverableCategory(id);
+      onChanged();
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Failed to archive category');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal title="Deliverable categories" onClose={onClose} width={460}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12, padding: 18 }}>
+        <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0 }}>
+          Categories are global — they apply to deliverables across all projects.
+        </p>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <input
+            className="input"
+            style={{ flex: 1 }}
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="New category name…"
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                void create();
+              }
+            }}
+          />
+          <div style={{ display: 'flex', gap: 4 }}>
+            {CATEGORY_SWATCHES.map((c) => (
+              <button
+                key={c}
+                type="button"
+                aria-label={`Colour ${c}`}
+                onClick={() => setColor(c)}
+                style={{
+                  width: 18,
+                  height: 18,
+                  borderRadius: 999,
+                  background: c,
+                  border: color === c ? '2px solid var(--text)' : '2px solid transparent',
+                  cursor: 'pointer',
+                  padding: 0,
+                }}
+              />
+            ))}
+          </div>
+          <button
+            className="btn primary"
+            type="button"
+            onClick={() => void create()}
+            disabled={busy || name.trim().length === 0}
+          >
+            <Icon name="plus" size={13} />
+            Add
+          </button>
+        </div>
+        {error ? (
+          <div style={{ fontSize: 12, color: 'var(--text-error, #c33)' }}>{error}</div>
+        ) : null}
+        {categories.length === 0 ? (
+          <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0 }}>No categories yet.</p>
+        ) : (
+          <ul
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 4,
+              listStyle: 'none',
+              padding: 0,
+              margin: 0,
+              maxHeight: 260,
+              overflowY: 'auto',
+            }}
+          >
+            {categories.map((c) => (
+              <li
+                key={c.id}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 10,
+                  padding: '6px 10px',
+                  borderRadius: 8,
+                  border: '1px solid var(--border)',
+                  fontSize: 13,
+                }}
+              >
+                <span
+                  style={{
+                    width: 10,
+                    height: 10,
+                    borderRadius: 999,
+                    background: c.color ?? 'var(--border)',
+                    flexShrink: 0,
+                  }}
+                />
+                <span style={{ flex: 1, minWidth: 0 }}>{c.name}</span>
+                <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                  {c.usageCount} in use
+                </span>
+                <button
+                  className="btn row-action row-delete"
+                  type="button"
+                  title={
+                    c.usageCount > 0
+                      ? 'Archiving detaches this category from its deliverables.'
+                      : 'Archive category'
+                  }
+                  onClick={() => void archive(c.id)}
+                  disabled={busy}
+                >
+                  <Icon name="trash" size={13} />
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </Modal>
   );
 }
 
