@@ -6,6 +6,8 @@ import type { Employee } from './types';
 export const SAMPLE_EMPLOYEES: readonly Employee[] = [
   {
     id: 'em_001',
+
+    employeeCode: 'APAR-001',
     fullName: 'Riya Patel',
     displayName: null,
     designation: 'Partner — Client',
@@ -26,6 +28,8 @@ export const SAMPLE_EMPLOYEES: readonly Employee[] = [
   },
   {
     id: 'em_002',
+
+    employeeCode: 'APAR-002',
     fullName: 'Karan Shah',
     displayName: null,
     designation: 'Partner — Strategy',
@@ -46,6 +50,8 @@ export const SAMPLE_EMPLOYEES: readonly Employee[] = [
   },
   {
     id: 'em_003',
+
+    employeeCode: 'APAR-003',
     fullName: 'Aarav Singh',
     displayName: null,
     designation: 'Growth Lead',
@@ -66,6 +72,8 @@ export const SAMPLE_EMPLOYEES: readonly Employee[] = [
   },
   {
     id: 'em_004',
+
+    employeeCode: 'APAR-004',
     fullName: 'Tanvi Desai',
     displayName: null,
     designation: 'Senior Designer',
@@ -86,6 +94,8 @@ export const SAMPLE_EMPLOYEES: readonly Employee[] = [
   },
   {
     id: 'em_005',
+
+    employeeCode: 'APAR-005',
     fullName: 'Devansh Roy',
     displayName: null,
     designation: 'Project Manager',
@@ -106,6 +116,8 @@ export const SAMPLE_EMPLOYEES: readonly Employee[] = [
   },
   {
     id: 'em_006',
+
+    employeeCode: 'APAR-006',
     fullName: 'Priya Nair',
     displayName: null,
     designation: 'Accountant',
@@ -126,6 +138,8 @@ export const SAMPLE_EMPLOYEES: readonly Employee[] = [
   },
   {
     id: 'em_007',
+
+    employeeCode: 'APAR-007',
     fullName: 'Ishaan Kapoor',
     displayName: null,
     designation: 'Intern — Creative',
@@ -146,6 +160,8 @@ export const SAMPLE_EMPLOYEES: readonly Employee[] = [
   },
   {
     id: 'em_008',
+
+    employeeCode: 'APAR-008',
     fullName: 'Ananya Kulkarni',
     displayName: null,
     designation: 'Brand Strategist',

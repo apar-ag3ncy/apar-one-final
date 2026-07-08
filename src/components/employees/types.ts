@@ -34,6 +34,8 @@ export function departmentLabel(d: string | null | undefined): string {
 
 export type Employee = {
   id: string;
+  /** Human-readable display id 'APAR-001'. */
+  employeeCode: string;
   fullName: string;
   displayName: string | null;
   designation: string;

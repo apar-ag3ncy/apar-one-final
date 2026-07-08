@@ -956,6 +956,15 @@
   letter-spacing: 0.02em;
   color: var(--text-muted);
 }
+/* Shared human-readable entity id chip (client/vendor/employee, 0063).
+   Same monospace-ish treatment as the project card code. */
+.os-root .entity-code {
+  font-family: var(--os-font);
+  font-variant-numeric: tabular-nums;
+  font-size: 10.5px;
+  letter-spacing: 0.02em;
+  color: var(--text-muted);
+}
 .os-root .proj-card .name {
   font-weight: 600;
   color: var(--text);

@@ -227,6 +227,7 @@ export function ClientsApp({
           }
           return {
             id: r.id,
+            code: r.code,
             name: r.name,
             industry: r.industry || '—',
             status: DB_TO_OS_CLIENT_STATUS[r.status] ?? 'Active',
@@ -342,7 +343,10 @@ export function ClientsApp({
                         {c.logo}
                       </div>
                     )}
-                    <span style={{ fontWeight: 600 }}>{c.name}</span>
+                    <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+                      <span style={{ fontWeight: 600 }}>{c.name}</span>
+                      {c.code ? <span className="entity-code">{c.code}</span> : null}
+                    </div>
                   </div>
                 </td>
                 <td style={{ color: 'var(--text-muted)' }}>{c.industry}</td>
@@ -723,6 +727,7 @@ export function VendorsApp({
         .map(
           (r): Vendor => ({
             id: r.id,
+            code: r.code,
             name: r.name,
             cat: r.category ? r.category.charAt(0).toUpperCase() + r.category.slice(1) : 'Other',
             outstanding: r.outstandingPaise,
@@ -815,7 +820,10 @@ export function VendorsApp({
                     >
                       {initials(v.name)}
                     </div>
-                    <span style={{ fontWeight: 600 }}>{v.name}</span>
+                    <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+                      <span style={{ fontWeight: 600 }}>{v.name}</span>
+                      {v.code ? <span className="entity-code">{v.code}</span> : null}
+                    </div>
                   </div>
                 </td>
                 <td>
@@ -1867,6 +1875,11 @@ export function EmployeesApp({
             >
               {visibleName}
             </div>
+            {e.employeeCode ? (
+              <div className="entity-code" style={{ marginTop: 1 }}>
+                {e.employeeCode}
+              </div>
+            ) : null}
             {/* Status sits on its own line BELOW the name (not beside it). */}
             <span
               style={{

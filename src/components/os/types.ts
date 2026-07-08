@@ -46,6 +46,8 @@ export type AppDef = {
 
 export type Client = {
   id: string;
+  /** Human-readable display id 'CL-0001' (0063). */
+  code?: string;
   name: string;
   industry: string;
   manager: string;
@@ -61,6 +63,8 @@ export type Client = {
 
 export type Vendor = {
   id: string;
+  /** Human-readable display id 'VN-0001' (0063). */
+  code?: string;
   name: string;
   cat: string;
   outstanding: Paise;

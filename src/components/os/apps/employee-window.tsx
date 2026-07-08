@@ -305,6 +305,12 @@ function Header({
           {employee.fullName}
         </div>
         <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+          {employee.employeeCode ? (
+            <>
+              <span className="entity-code">{employee.employeeCode}</span>
+              {' · '}
+            </>
+          ) : null}
           {employee.designation ?? '—'}
           {employee.department ? ` · ${employee.department}` : ''}
           {' · joined '}
@@ -483,12 +489,21 @@ function ProjectsLedBody({
   }, [employeeId]);
 
   // Group the tasks-performed list by project so each project heads its tasks.
-  const groups: { projectId: string; projectName: string; projectCode: string | null; rows: EmployeeProjectTaskRow[] }[] =
-    [];
+  const groups: {
+    projectId: string;
+    projectName: string;
+    projectCode: string | null;
+    rows: EmployeeProjectTaskRow[];
+  }[] = [];
   for (const t of tasks) {
     let g = groups.find((x) => x.projectId === t.projectId);
     if (!g) {
-      g = { projectId: t.projectId, projectName: t.projectName, projectCode: t.projectCode, rows: [] };
+      g = {
+        projectId: t.projectId,
+        projectName: t.projectName,
+        projectCode: t.projectCode,
+        rows: [],
+      };
       groups.push(g);
     }
     g.rows.push(t);

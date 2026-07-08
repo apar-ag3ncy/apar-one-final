@@ -46,6 +46,8 @@ export type EmployeeDocumentRow = {
 export type EmployeeSummary = {
   employee: {
     id: string;
+    /** Human-readable display id 'APAR-001'. */
+    employeeCode: string;
     fullName: string;
     displayName: string | null;
     designation: string | null;
@@ -179,6 +181,7 @@ export async function getEmployeeSummary(employeeId: string): Promise<EmployeeSu
   return {
     employee: {
       id: emp.id,
+      employeeCode: emp.employeeCode,
       fullName: emp.fullName,
       displayName: emp.displayName,
       designation: emp.designation,

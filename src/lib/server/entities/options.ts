@@ -19,21 +19,30 @@ export type EntityOption = { id: string; label: string; sub?: string | null };
 export async function listClientOptions(): Promise<readonly EntityOption[]> {
   await getActorContext();
   const rows = await db
-    .select({ id: clients.id, name: clients.name, industry: clients.industry })
+    .select({ id: clients.id, code: clients.code, name: clients.name, industry: clients.industry })
     .from(clients)
     .where(and(isNull(clients.deletedAt), eq(clients.isArchived, false)))
     .orderBy(asc(clients.name));
-  return rows.map((r) => ({ id: r.id, label: r.name, sub: r.industry }));
+  // Show the display code alongside the industry so a picker disambiguates.
+  return rows.map((r) => ({
+    id: r.id,
+    label: r.name,
+    sub: [r.code, r.industry].filter(Boolean).join(' · ') || null,
+  }));
 }
 
 export async function listVendorOptions(): Promise<readonly EntityOption[]> {
   await getActorContext();
   const rows = await db
-    .select({ id: vendors.id, name: vendors.name, category: vendors.category })
+    .select({ id: vendors.id, code: vendors.code, name: vendors.name, category: vendors.category })
     .from(vendors)
     .where(and(isNull(vendors.deletedAt), eq(vendors.isArchived, false)))
     .orderBy(asc(vendors.name));
-  return rows.map((r) => ({ id: r.id, label: r.name, sub: r.category }));
+  return rows.map((r) => ({
+    id: r.id,
+    label: r.name,
+    sub: [r.code, r.category].filter(Boolean).join(' · ') || null,
+  }));
 }
 
 export async function listEmployeeOptions(): Promise<readonly EntityOption[]> {

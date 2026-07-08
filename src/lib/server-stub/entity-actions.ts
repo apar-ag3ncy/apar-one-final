@@ -89,6 +89,7 @@ export async function listClients(): Promise<readonly Client[]> {
   const rows = await db
     .select({
       id: clients.id,
+      code: clients.code,
       name: clients.name,
       industry: clients.industry,
       status: clients.status,
@@ -112,6 +113,7 @@ export async function listClients(): Promise<readonly Client[]> {
   return rows.map(
     (r): Client => ({
       id: r.id,
+      code: r.code,
       name: r.name,
       industry: r.industry ?? '',
       status: mapClientStatus(r.status, r.isArchived),
@@ -137,6 +139,7 @@ export async function getClient(id: string): Promise<Client | null> {
   const rows = await db
     .select({
       id: clients.id,
+      code: clients.code,
       name: clients.name,
       industry: clients.industry,
       status: clients.status,
@@ -185,6 +188,7 @@ export async function getClient(id: string): Promise<Client | null> {
 
   return {
     id: row.id,
+    code: row.code,
     name: row.name,
     industry: row.industry ?? '',
     status: mapClientStatus(row.status, row.isArchived),
@@ -248,6 +252,7 @@ export async function listVendors(opts?: {
   const rows = await db
     .select({
       id: vendors.id,
+      code: vendors.code,
       name: vendors.name,
       category: vendors.category,
       status: vendors.status,
@@ -264,6 +269,7 @@ export async function listVendors(opts?: {
   return rows.map(
     (r): Vendor => ({
       id: r.id,
+      code: r.code,
       name: r.name,
       category: mapVendorCategory(r.category),
       status: mapVendorStatus(r.status, r.isArchived),
@@ -350,6 +356,7 @@ export async function listEmployees(): Promise<readonly Employee[]> {
   const rows = await db
     .select({
       id: employees.id,
+      employeeCode: employees.employeeCode,
       fullName: employees.fullName,
       displayName: employees.displayName,
       designation: employees.designation,
@@ -377,6 +384,7 @@ export async function listEmployees(): Promise<readonly Employee[]> {
   return rows.map(
     (r): Employee => ({
       id: r.id,
+      employeeCode: r.employeeCode,
       fullName: r.fullName,
       displayName: r.displayName,
       designation: r.designation ?? '',

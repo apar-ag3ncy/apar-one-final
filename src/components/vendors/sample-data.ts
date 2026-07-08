@@ -5,6 +5,8 @@ import type { Vendor } from './types';
 export const SAMPLE_VENDORS: readonly Vendor[] = [
   {
     id: 'vn_001',
+
+    code: 'VN-0001',
     name: 'Kabir Photography',
     category: 'photographer',
     status: 'active',
@@ -22,6 +24,8 @@ export const SAMPLE_VENDORS: readonly Vendor[] = [
   },
   {
     id: 'vn_002',
+
+    code: 'VN-0002',
     name: 'Saffron Prints',
     category: 'printer',
     status: 'active',
@@ -39,6 +43,8 @@ export const SAMPLE_VENDORS: readonly Vendor[] = [
   },
   {
     id: 'vn_003',
+
+    code: 'VN-0003',
     name: 'Notion Labs',
     category: 'software',
     status: 'active',
@@ -56,6 +62,8 @@ export const SAMPLE_VENDORS: readonly Vendor[] = [
   },
   {
     id: 'vn_004',
+
+    code: 'VN-0004',
     name: 'Mehta Logistics',
     category: 'logistics',
     status: 'active',
@@ -73,6 +81,8 @@ export const SAMPLE_VENDORS: readonly Vendor[] = [
   },
   {
     id: 'vn_005',
+
+    code: 'VN-0005',
     name: 'Lumière Studios',
     category: 'videographer',
     status: 'inactive',
@@ -90,6 +100,8 @@ export const SAMPLE_VENDORS: readonly Vendor[] = [
   },
   {
     id: 'vn_006',
+
+    code: 'VN-0006',
     name: 'Velocity Studio',
     category: 'agency',
     status: 'active',
