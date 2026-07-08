@@ -25,6 +25,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { PdfJsViewer } from '@/components/entity/pdfjs-viewer';
+import { DateField } from '@/components/shared/date-field';
 import { formatINR, paiseToRupees, rupeesToPaise } from '@/lib/money';
 import {
   createDraftInvoice,
@@ -602,20 +603,20 @@ export function InvoiceComposerDialog({
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
               <div className="grid gap-1.5">
                 <Label htmlFor="inv-date">Invoice date</Label>
-                <Input
+                <DateField
                   id="inv-date"
-                  type="date"
                   value={documentDate}
-                  onChange={(e) => setDocumentDate(e.target.value)}
+                  onChange={(next) => setDocumentDate(next)}
+                  clearable={false}
                 />
               </div>
               <div className="grid gap-1.5">
                 <Label htmlFor="inv-due">Due date</Label>
-                <Input
+                <DateField
                   id="inv-due"
-                  type="date"
                   value={dueDate}
-                  onChange={(e) => setDueDate(e.target.value)}
+                  onChange={(next) => setDueDate(next)}
+                  clearable={false}
                 />
                 <div className="flex flex-wrap gap-1">
                   {DUE_DATE_PRESETS.map((n) => {

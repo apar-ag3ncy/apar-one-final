@@ -14,6 +14,7 @@ import { EntitySettingsSection } from '@/components/entity/entity-settings-secti
 import { DocumentsSection } from '@/components/entity/documents-section';
 import { TransactionList, type Transaction } from '@/components/entity/transaction-list';
 import { ProjectStatusChanger } from '@/components/projects/project-status-changer';
+import { DateField } from '@/components/shared/date-field';
 import { Icon } from '../icons';
 import { useEntityMutation } from '../auth/entity-mutation-gate';
 import {
@@ -1547,12 +1548,11 @@ function TasksBody({ projectId, canEdit }: { projectId: string; canEdit: boolean
               </option>
             ))}
           </select>
-          <input
-            className="input"
-            type="date"
+          <DateField
             value={dueOn}
-            onChange={(e) => setDueOn(e.target.value)}
-            title="Due date (optional)"
+            onChange={(next) => setDueOn(next)}
+            placeholder="Due date (optional)"
+            className="w-[150px]"
           />
           <button
             className="btn primary"

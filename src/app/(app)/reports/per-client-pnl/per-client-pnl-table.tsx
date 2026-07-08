@@ -18,8 +18,8 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { DateField as SharedDateField } from '@/components/shared/date-field';
 import { formatINR } from '@/components/shared/format-inr';
 import { ExportMenu } from '@/components/shared/export-menu';
 import { EntityRef } from '@/components/entity/entity-ref';
@@ -252,11 +252,11 @@ function DateField({
       <Label htmlFor={name} className="text-muted-foreground text-xs tracking-wide uppercase">
         {label}
       </Label>
-      <Input
+      <SharedDateField
         id={name}
-        type="date"
-        defaultValue={defaultValue}
-        onChange={(e) => onApply(e.target.value)}
+        value={defaultValue}
+        onChange={onApply}
+        clearable={false}
         className="w-44"
       />
     </div>

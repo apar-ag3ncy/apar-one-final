@@ -14,6 +14,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { CurrencyInput } from '@/components/shared/currency-input';
+import { DateField } from '@/components/shared/date-field';
 import { formatINR } from '@/components/shared/format-inr';
 import { CreationWizard, type WizardStep } from '@/components/entity/creation-wizard';
 import { CustomFieldsStep } from '@/components/entity/creation/custom-fields-step';
@@ -256,17 +257,16 @@ export function EmployeeWizard() {
             />
           </Field>
           <Field label="Joining date" error={errors.joinedOn} required>
-            <Input
-              type="date"
+            <DateField
               value={values.joinedOn}
-              onChange={(e) => onPatch({ joinedOn: e.target.value })}
+              onChange={(next) => onPatch({ joinedOn: next })}
+              clearable={false}
             />
           </Field>
           <Field label="Confirmation date" hint="Optional">
-            <Input
-              type="date"
+            <DateField
               value={values.confirmedOn}
-              onChange={(e) => onPatch({ confirmedOn: e.target.value })}
+              onChange={(next) => onPatch({ confirmedOn: next })}
             />
           </Field>
           {(values.status === 'notice' || values.status === 'separated') && (
@@ -276,10 +276,10 @@ export function EmployeeWizard() {
               required
               hint="Required for notice/separated status"
             >
-              <Input
-                type="date"
+              <DateField
                 value={values.separatedOn}
-                onChange={(e) => onPatch({ separatedOn: e.target.value })}
+                onChange={(next) => onPatch({ separatedOn: next })}
+                clearable={false}
               />
             </Field>
           )}
@@ -362,12 +362,9 @@ export function EmployeeWizard() {
               />
             </Field>
             <Field label="Effective from" hint="Defaults to the joining date">
-              <Input
-                type="date"
+              <DateField
                 value={values.salary.effectiveFrom}
-                onChange={(e) =>
-                  onPatch({ salary: { ...values.salary, effectiveFrom: e.target.value } })
-                }
+                onChange={(next) => onPatch({ salary: { ...values.salary, effectiveFrom: next } })}
               />
             </Field>
           </div>
@@ -450,12 +447,11 @@ export function EmployeeWizard() {
             {values.contract.kind === 'signed' ? (
               <>
                 <Field label="Signed on" error={errors['contract.signedAt']}>
-                  <Input
-                    type="date"
+                  <DateField
                     value={values.contract.signedAt}
-                    onChange={(e) =>
+                    onChange={(next) =>
                       onPatch({
-                        contract: { ...values.contract, signedAt: e.target.value } as ContractDraft,
+                        contract: { ...values.contract, signedAt: next } as ContractDraft,
                       })
                     }
                   />
@@ -490,14 +486,13 @@ export function EmployeeWizard() {
                   />
                 </Field>
                 <Field label="Expected by" error={errors['contract.expectedBy']}>
-                  <Input
-                    type="date"
+                  <DateField
                     value={values.contract.expectedBy}
-                    onChange={(e) =>
+                    onChange={(next) =>
                       onPatch({
                         contract: {
                           ...values.contract,
-                          expectedBy: e.target.value,
+                          expectedBy: next,
                         } as ContractDraft,
                       })
                     }

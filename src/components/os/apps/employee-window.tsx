@@ -24,6 +24,7 @@ import { ActivityFeed } from '@/components/entity/activity-feed';
 import { EntityRef } from '@/components/entity/entity-ref';
 import { EntitySettingsSection } from '@/components/entity/entity-settings-section';
 import { StatementOfAccount } from '@/components/entity/statement-of-account';
+import { DateField } from '@/components/shared/date-field';
 import { useRealtimeActivity } from '@/lib/client/use-realtime-activity';
 import { getEntityActivity } from '@/lib/server/entities/activity';
 import { listContacts, type ContactRow } from '@/lib/server/entities/contacts';
@@ -841,12 +842,11 @@ function AchievementsBody({
               }}
             />
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-              <input
-                className="input"
-                type="date"
+              <DateField
                 value={occurredOn}
-                onChange={(e) => setOccurredOn(e.target.value)}
-                title="Date (optional)"
+                onChange={(next) => setOccurredOn(next)}
+                placeholder="Date (optional)"
+                className="w-[150px]"
               />
               <div style={{ flex: 1 }} />
               <button

@@ -12,6 +12,7 @@ import { TrashPane } from './apps/trash-pane';
 import { AdminConsole } from './auth/admin-console';
 import { ImportEmployeesDialog } from '@/components/employees/import-employees-dialog';
 import { InvoiceFormatEditor } from '@/components/settings/invoice-format-editor';
+import { DateField } from '@/components/shared/date-field';
 import { exportRows, type ExportFormat } from '@/lib/client/export-rows';
 import {
   listClients as listDbClients,
@@ -2679,27 +2680,15 @@ export function EmployeeProfileEditor({
             {errors.phone ? <FieldErr msg={errors.phone} /> : null}
           </Field>
           <Field label="Date of birth">
-            <input
-              type="date"
-              value={form.dateOfBirth}
-              onChange={(e) => set('dateOfBirth', e.target.value)}
-            />
+            <DateField value={form.dateOfBirth} onChange={(next) => set('dateOfBirth', next)} />
             {errors.dateOfBirth ? <FieldErr msg={errors.dateOfBirth} /> : null}
           </Field>
           <Field label="Joined on">
-            <input
-              type="date"
-              value={form.joinedOn}
-              onChange={(e) => set('joinedOn', e.target.value)}
-            />
+            <DateField value={form.joinedOn} onChange={(next) => set('joinedOn', next)} />
             {errors.joinedOn ? <FieldErr msg={errors.joinedOn} /> : null}
           </Field>
           <Field label="Confirmed on">
-            <input
-              type="date"
-              value={form.confirmedOn}
-              onChange={(e) => set('confirmedOn', e.target.value)}
-            />
+            <DateField value={form.confirmedOn} onChange={(next) => set('confirmedOn', next)} />
             {errors.confirmedOn ? <FieldErr msg={errors.confirmedOn} /> : null}
           </Field>
           {mode === 'edit' || form.status === 'notice' || form.status === 'separated' ? (
@@ -2710,11 +2699,7 @@ export function EmployeeProfileEditor({
                   : 'Separated on'
               }
             >
-              <input
-                type="date"
-                value={form.separatedOn}
-                onChange={(e) => set('separatedOn', e.target.value)}
-              />
+              <DateField value={form.separatedOn} onChange={(next) => set('separatedOn', next)} />
               {errors.separatedOn ? <FieldErr msg={errors.separatedOn} /> : null}
             </Field>
           ) : null}

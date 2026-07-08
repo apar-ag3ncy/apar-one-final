@@ -2,9 +2,9 @@
 
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { DateField } from '@/components/shared/date-field';
 import {
   Select,
   SelectContent,
@@ -54,11 +54,11 @@ export function LeaveApplyForm() {
       <div className="grid grid-cols-2 gap-2">
         <div>
           <Label className="text-muted-foreground text-xs tracking-wide uppercase">From</Label>
-          <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+          <DateField value={from} onChange={setFrom} clearable={false} />
         </div>
         <div>
           <Label className="text-muted-foreground text-xs tracking-wide uppercase">To</Label>
-          <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+          <DateField value={to} onChange={setTo} clearable={false} />
         </div>
       </div>
       <div>

@@ -4,6 +4,7 @@ import { FileUpIcon, PaperclipIcon, ShieldAlertIcon, Trash2Icon } from 'lucide-r
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { DateField } from '@/components/shared/date-field';
 import {
   Select,
   SelectContent,
@@ -121,11 +122,10 @@ export function PriorRecordsStep({
                   <Label className="text-muted-foreground text-[10px] tracking-wide uppercase">
                     Date
                   </Label>
-                  <Input
-                    type="date"
+                  <DateField
                     className="mt-1.5"
                     value={draft.docDate}
-                    onChange={(e) => patch(draft.uid, { docDate: e.target.value })}
+                    onChange={(next) => patch(draft.uid, { docDate: next })}
                   />
                 </div>
 

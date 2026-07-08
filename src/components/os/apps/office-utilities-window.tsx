@@ -12,6 +12,7 @@
 import { useEffect, useMemo, useState } from 'react';
 
 import { StatementOfAccount } from '@/components/entity/statement-of-account';
+import { DateField as SharedDateField } from '@/components/shared/date-field';
 import { getOfficeUtilitiesStatement, type Statement } from '@/lib/server/ledger/statements';
 import { osActions } from '@/lib/os/store';
 
@@ -71,9 +72,9 @@ export function OfficeUtilitiesWindow() {
             Office utilities ledger
           </div>
           <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-            Every expense recorded in the Office app — rent, utilities, stationery, travel,
-            repairs and every other category, each one landing here as it&apos;s logged. Closing
-            balance = total office spend in the window.
+            Every expense recorded in the Office app — rent, utilities, stationery, travel, repairs
+            and every other category, each one landing here as it&apos;s logged. Closing balance =
+            total office spend in the window.
           </div>
         </div>
         <DateField label="From" value={fromDate} onChange={setFromDate} />
@@ -124,19 +125,7 @@ function DateField({
       >
         {label}
       </span>
-      <input
-        type="date"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        style={{
-          background: 'var(--content-2)',
-          border: '1px solid var(--border)',
-          borderRadius: 6,
-          padding: '4px 8px',
-          fontSize: 12,
-          color: 'var(--text)',
-        }}
-      />
+      <SharedDateField value={value} onChange={onChange} clearable={false} className="w-[150px]" />
     </label>
   );
 }

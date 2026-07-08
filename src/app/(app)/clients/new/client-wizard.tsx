@@ -14,6 +14,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { DateField } from '@/components/shared/date-field';
 import { CreationWizard, type WizardStep } from '@/components/entity/creation-wizard';
 import { CustomFieldsStep } from '@/components/entity/creation/custom-fields-step';
 import { PriorRecordsStep } from '@/components/entity/creation/prior-records-step';
@@ -365,14 +366,13 @@ export function ClientWizard() {
                 />
               </Field>
               <Field label="Signed on" error={errors['contract.signedAt']}>
-                <Input
-                  type="date"
+                <DateField
                   value={(values.contract as Extract<ContractDraft, { kind: 'signed' }>).signedAt}
-                  onChange={(e) =>
+                  onChange={(next) =>
                     onPatch({
                       contract: {
                         ...(values.contract as Extract<ContractDraft, { kind: 'signed' }>),
-                        signedAt: e.target.value,
+                        signedAt: next,
                       },
                     })
                   }
@@ -395,16 +395,15 @@ export function ClientWizard() {
                 />
               </Field>
               <Field label="Expected by" error={errors['contract.expectedBy']}>
-                <Input
-                  type="date"
+                <DateField
                   value={
                     (values.contract as Extract<ContractDraft, { kind: 'pending' }>).expectedBy
                   }
-                  onChange={(e) =>
+                  onChange={(next) =>
                     onPatch({
                       contract: {
                         ...(values.contract as Extract<ContractDraft, { kind: 'pending' }>),
-                        expectedBy: e.target.value,
+                        expectedBy: next,
                       },
                     })
                   }

@@ -2,9 +2,9 @@
 
 import { useRouter } from 'next/navigation';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
+import { DateField } from '@/components/shared/date-field';
 import { ExportMenu } from '@/components/shared/export-menu';
 import type { ExportFormat } from '@/lib/client/export-rows';
 
@@ -52,10 +52,10 @@ export function ReportShell({
         <CardHeader className="flex flex-row flex-wrap items-end gap-3 pb-3">
           <div>
             <Label className="text-muted-foreground text-xs tracking-wide uppercase">As-of</Label>
-            <Input
-              type="date"
-              defaultValue={asOfDate}
-              onChange={(e) => apply({ asOf: e.target.value })}
+            <DateField
+              value={asOfDate}
+              onChange={(next) => apply({ asOf: next })}
+              clearable={false}
               className="w-44"
             />
           </div>
