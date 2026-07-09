@@ -45,46 +45,43 @@ try {
   await ow.getByRole('button', { name: 'New Expense' }).click();
   await page.waitForTimeout(1200);
 
-  const before = await fieldText();
-  console.log('FIELD_BEFORE=' + JSON.stringify(before));
-
-  // 1) open the calendar
+  // 1) OPEN → should land on the MONTHS view (not days)
   await dateBtn().click();
   await page.waitForTimeout(800);
   const cal = page.locator('[data-slot="popover-content"]').last();
   report('iOS calendar opens', (await cal.count()) > 0);
+  const monthBtns0 = await cal.getByRole('button', { name: 'Jul', exact: true }).count();
+  const dayBtns0 = await cal.locator('button[data-day]').count();
+  report('opens at MONTHS view (months shown, no day grid yet)', monthBtns0 > 0 && dayBtns0 === 0, `monthBtns=${monthBtns0} dayBtns=${dayBtns0}`);
+  const headerText = (await cal.locator('button[aria-label="Switch month or year"]').innerText().catch(() => '')).trim();
+  report('months-view header shows the year', /20\d\d/.test(headerText), headerText);
   await shot('ios-01-open');
 
-  // 2) CLICK A DAY changes the field (the core complaint)
-  // pick a day different from today in the current month
-  const dayBtns = cal.locator('button[data-day]');
-  const nDays = await dayBtns.count();
-  // choose the in-month "20" (avoid today); fall back to any non-selected day
-  const target = cal.locator('button[data-day$="-20"]').first();
-  await target.click();
+  // 2) common flow: click a month → days → click a day → field updates
+  await cal.getByRole('button', { name: 'Jul', exact: true }).click();
+  await cal.locator('button[data-day]').first().waitFor({ timeout: 5000 });
+  const before = await fieldText();
+  await cal.locator('button[data-day="2026-07-20"]').click();
   await page.waitForTimeout(1000);
   const after = await fieldText();
   console.log('FIELD_AFTER_CLICK=' + JSON.stringify(after));
-  report('clicking a day changes the field', after !== before && /20/.test(after), `${before} -> ${after}`);
+  report('month → day picks a date', /20 Jul 2026/.test(after), `${before} -> ${after}`);
   report('popover closed after pick', (await page.locator('[data-slot="popover-content"]').count()) === 0);
   await shot('ios-02-picked');
 
-  // 3) persistence — wait past any re-render, field keeps the value
+  // 3) persistence
   await page.waitForTimeout(3500);
-  const persisted = await fieldText();
-  report('selected date persists (no revert)', persisted === after, `now=${persisted}`);
+  report('selected date persists (no revert)', (await fieldText()) === after);
 
-  // 4) reopen → the picked day is marked selected
+  // 4) tap the YEAR in the header → years view → drill to 1990 → month → day
   await dateBtn().click();
   await page.waitForTimeout(700);
   const cal2 = page.locator('[data-slot="popover-content"]').last();
-  const selMark = await cal2.locator('button[data-day][data-selected="true"]').count();
-  report('reopening shows the selected day highlighted', selMark >= 1, `selectedMarks=${selMark}`);
-
-  // 5) month/year DRILL to a far year (1990), then pick a day
-  await cal2.locator('button[aria-label="Switch month or year"]').click(); // header -> years
+  // opens at months; tap the year to go to years
+  await cal2.locator('button[aria-label="Switch month or year"]').click();
   await page.waitForTimeout(400);
-  // page back with the ‹ button until 1990 is visible
+  const yearsShown = await cal2.getByRole('button', { name: /^20\d\d$/ }).count();
+  report('tapping the year opens the YEARS view', yearsShown >= 6, `yearBtns=${yearsShown}`);
   let found1990 = false;
   for (let i = 0; i < 12; i++) {
     if ((await cal2.getByRole('button', { name: '1990', exact: true }).count()) > 0) { found1990 = true; break; }
@@ -93,15 +90,15 @@ try {
   }
   report('year drill can reach 1990', found1990);
   if (found1990) {
-    await cal2.getByRole('button', { name: '1990', exact: true }).click(); // -> months
+    await cal2.getByRole('button', { name: '1990', exact: true }).click(); // → months (1990)
     await page.waitForTimeout(300);
-    await cal2.getByRole('button', { name: 'Jun', exact: true }).click(); // -> days (June 1990)
+    await cal2.getByRole('button', { name: 'Jun', exact: true }).click();  // → days
     await page.waitForTimeout(300);
     await cal2.locator('button[data-day="1990-06-15"]').click();
     await page.waitForTimeout(900);
     const far = await fieldText();
     console.log('FIELD_AFTER_1990=' + JSON.stringify(far));
-    report('picking a 1990 date works', /1990/.test(far) && /15/.test(far), far);
+    report('picking a 1990 date works', /15 Jun 1990/.test(far), far);
   }
   await shot('ios-03-far-year');
 

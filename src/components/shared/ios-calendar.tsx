@@ -44,7 +44,8 @@ export function IosCalendar({ value, onSelect, min, max, defaultMonth }: IosCale
   const initial = value ?? defaultMonth ?? today;
   // The displayed month (any day within it).
   const [view, setView] = React.useState<Date>(new Date(initial.getFullYear(), initial.getMonth(), 1));
-  const [mode, setMode] = React.useState<'days' | 'months' | 'years'>('days');
+  // Open at the MONTHS level: pick a month → days, or tap the year → years.
+  const [mode, setMode] = React.useState<'days' | 'months' | 'years'>('months');
   // The popover remounts this component every time it opens, so `view`'s
   // initializer already reflects the current value — no sync effect needed.
 
@@ -84,7 +85,9 @@ export function IosCalendar({ value, onSelect, min, max, defaultMonth }: IosCale
       <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '2px 2px 8px' }}>
         <button
           type="button"
-          onClick={() => setMode(mode === 'days' ? 'years' : 'days')}
+          // Drill up a level: days → months, months → years (tap the year),
+          // years → back to months.
+          onClick={() => setMode(mode === 'months' ? 'years' : 'months')}
           style={{
             flex: 1, textAlign: 'left', background: 'transparent', border: 'none', color: 'inherit',
             cursor: 'pointer', fontSize: 15, fontWeight: 600, padding: '4px 6px', borderRadius: 8,
