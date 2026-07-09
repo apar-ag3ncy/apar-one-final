@@ -2,10 +2,10 @@
 
 // Project create/edit modal — extracted from apps.tsx (ProjectsApp) so the
 // project window's "Add sub-project" flow can reuse it. Extends the original
-// form with: Code (auto 'PRJ-NNNN' when blank), internal POC (account
-// manager), client-side POC (one of the client's contacts), and — in edit
-// mode — a Sub-projects section with "+ Add sub-project" that opens a second
-// instance of this modal locked to the parent.
+// form with: Code (auto 'PRJ-NNNN' when blank), a single POC (account manager)
+// picked from the selected client's contacts, and — in edit mode — a
+// Sub-projects section with "+ Add sub-project" that opens a second instance
+// of this modal locked to the parent.
 //
 // The modal is conditionally MOUNTED by its callers ({show && <ProjectFormModal/>}),
 // so state initializes on mount — do not convert to an always-mounted
@@ -17,7 +17,6 @@ import { toast } from 'sonner';
 import {
   listClients as listDbClients,
   listEmployees as listDbEmployees,
-  listUsers as listDbUsers,
 } from '@/lib/server-stub/entity-actions';
 import { listContacts } from '@/lib/server/entities/contacts';
 import {
@@ -70,15 +69,13 @@ export function ProjectFormModal({
   // Real DB clients + employees + users for the dropdowns. Loaded once on mount.
   const [clientOptions, setClientOptions] = useState<Option[]>([]);
   const [employeeOptions, setEmployeeOptions] = useState<Option[]>([]);
-  const [userOptions, setUserOptions] = useState<Option[]>([]);
   useEffect(() => {
     let cancelled = false;
-    Promise.all([listDbClients(), listDbEmployees(), listDbUsers()])
-      .then(([cs, es, us]) => {
+    Promise.all([listDbClients(), listDbEmployees()])
+      .then(([cs, es]) => {
         if (cancelled) return;
         setClientOptions(cs.map((c) => ({ id: c.id, name: c.name })));
         setEmployeeOptions(es.map((e) => ({ id: e.id, name: e.fullName })));
-        setUserOptions(us.map((u) => ({ id: u.id, name: u.fullName })));
       })
       .catch(() => {
         /* fall through to empty lists */
@@ -92,7 +89,6 @@ export function ProjectFormModal({
   const [code, setCode] = useState(mode === 'edit' ? (initial?.code ?? '') : '');
   const [clientId, setClientId] = useState<string>(lockedClientId ?? initial?.clientId ?? '');
   const [leadEmployeeId, setLeadEmployeeId] = useState<string>(initial?.leadEmployeeId ?? '');
-  const [accountManagerId, setAccountManagerId] = useState<string>(initial?.accountManagerId ?? '');
   const [clientContactId, setClientContactId] = useState<string>(initial?.clientContactId ?? '');
   const [col, setCol] = useState<ProjectCol>(initial?.col ?? defaultCol);
   const [fee, setFee] = useState(
@@ -196,7 +192,7 @@ export function ProjectFormModal({
       clientId,
       lead: leadCode,
       leadEmployeeId: leadEmployeeId || null,
-      accountManagerId: accountManagerId || null,
+      accountManagerId: null,
       clientContactId: clientContactId || null,
       code: code.trim(),
       col,
@@ -269,22 +265,12 @@ export function ProjectFormModal({
             )}
           </select>
         </Field>
-        <Field label="POC (internal)" hint="Account manager responsible for this project.">
-          <select value={accountManagerId} onChange={(e) => setAccountManagerId(e.target.value)}>
-            <option value="">— Unassigned —</option>
-            {userOptions.map((u) => (
-              <option key={u.id} value={u.id}>
-                {u.name}
-              </option>
-            ))}
-          </select>
-        </Field>
         <Field
-          label="Client POC"
+          label="POC (account manager)"
           hint={
             contactOptions.length === 0
-              ? 'No contacts saved for this client yet.'
-              : 'The client-side contact for this project.'
+              ? 'No contacts saved for this client yet — add them in the Clients app.'
+              : "The client's point of contact for this project."
           }
         >
           <select

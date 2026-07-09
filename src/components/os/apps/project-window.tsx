@@ -218,7 +218,14 @@ export function ProjectWindow({ projectId, onClose }: ProjectWindowProps) {
           />
         ) : null}
         {tab === 'team' ? <TeamBody projectId={project.id} canEdit={canEdit} /> : null}
-        {tab === 'tasks' ? <TasksBody projectId={project.id} canEdit={canEdit} /> : null}
+        {tab === 'tasks' ? (
+          <TasksBody
+            projectId={project.id}
+            canEdit={canEdit}
+            parentName={project.name}
+            subProjects={subs.map((sp) => ({ id: sp.id, name: sp.name, code: sp.code }))}
+          />
+        ) : null}
         {tab === 'invoices' ? (
           <InvoicesBody
             project={project}
@@ -329,11 +336,9 @@ function Header({
           </a>
           {' · Lead '}
           {project.leadName}
-          {' · POC '}
-          {project.accountManagerName}
           {project.clientContactName ? (
             <>
-              {' · Client POC '}
+              {' · POC '}
               {project.clientContactName}
             </>
           ) : null}
@@ -397,6 +402,7 @@ function OverviewBody({
   // stored). Own fee still shown separately when set.
   const subTotal = subs.reduce((acc, s) => acc + s.feePaise, 0n);
   const isSubProject = Boolean(project.parentProjectId);
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       <div
@@ -418,8 +424,7 @@ function OverviewBody({
           items={[
             ['Client', project.clientName],
             ['Lead', project.leadName],
-            ['POC (manager)', project.accountManagerName],
-            ['Client POC', project.clientContactName ?? '—'],
+            ['POC (account manager)', project.clientContactName ?? '—'],
             ['Status', PROJECT_DB_STATUS_LABELS[project.dbStatus]],
             hasSubs
               ? ['Total (sub-projects)', formatINRPaise(subTotal)]
@@ -1329,7 +1334,18 @@ const TASK_STATUSES: ReadonlyArray<{ value: ProjectTaskStatus; label: string }> 
   { value: 'done', label: 'Done' },
 ];
 
-function TasksBody({ projectId, canEdit }: { projectId: string; canEdit: boolean }) {
+function TasksBody({
+  projectId,
+  canEdit,
+  subProjects = [],
+  parentName,
+}: {
+  projectId: string;
+  canEdit: boolean;
+  /** When present, deliverables are grouped by sub-project (item request). */
+  subProjects?: readonly { id: string; name: string; code: string | null }[];
+  parentName: string;
+}) {
   const [tasks, setTasks] = useState<readonly ProjectTaskRow[]>([]);
   // Assignee options are the project's TEAM (project_members), not the whole
   // employee directory — only people on the project can pick up deliverables.
@@ -1348,6 +1364,17 @@ function TasksBody({ projectId, canEdit }: { projectId: string; canEdit: boolean
   const [dueOn, setDueOn] = useState(todayISODate());
   const [pickerFor, setPickerFor] = useState<'draft' | string | null>(null);
 
+  // Grouping: when the project has sub-projects, show a heading per project
+  // (this project first, then each sub-project) and let new deliverables target
+  // any of them. `subKey` keeps the fetch effect stable across renders.
+  const grouped = subProjects.length > 0;
+  const targets: readonly { id: string; name: string; code: string | null }[] = [
+    { id: projectId, name: parentName, code: null },
+    ...subProjects,
+  ];
+  const subKey = subProjects.map((sp) => sp.id).join(',');
+  const [addTargetId, setAddTargetId] = useState<string>(projectId);
+
   async function reloadCategories() {
     try {
       setCategories(await listDeliverableCategories());
@@ -1361,15 +1388,18 @@ function TasksBody({ projectId, canEdit }: { projectId: string; canEdit: boolean
     queueMicrotask(() => {
       if (!cancelled) setLoading(true);
     });
+    const ids = [projectId, ...subProjects.map((sp) => sp.id)];
     Promise.all([
-      listProjectTasks(projectId),
-      listProjectMembers(projectId),
+      Promise.all(ids.map((id) => listProjectTasks(id))).then((g) => g.flat()),
+      Promise.all(ids.map((id) => listProjectMembers(id).catch(() => []))).then((g) => g.flat()),
       listDeliverableCategories(),
     ])
       .then(([t, members, cats]) => {
         if (cancelled) return;
         setTasks(t);
-        setTeam(members.map((m) => ({ id: m.employeeId, name: m.employeeName })));
+        // Union the team across the parent + sub-projects for the assignee picker.
+        const uniq = new Map(members.map((m) => [m.employeeId, m.employeeName]));
+        setTeam([...uniq].map(([id, name]) => ({ id, name })));
         setCategories(cats);
         setLoading(false);
       })
@@ -1381,7 +1411,9 @@ function TasksBody({ projectId, canEdit }: { projectId: string; canEdit: boolean
     return () => {
       cancelled = true;
     };
-  }, [projectId]);
+    // subKey is the stable proxy for the subProjects array (which changes identity each render).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, subKey]);
 
   // A deliverable may still include someone who has since left the team; keep
   // those people visible in its picker so the selection doesn't misrender.
@@ -1404,7 +1436,7 @@ function TasksBody({ projectId, canEdit }: { projectId: string; canEdit: boolean
     setError(null);
     try {
       const row = await createProjectTask({
-        projectId,
+        projectId: grouped ? addTargetId : projectId,
         title: t,
         assigneeEmployeeIds: [...draftAssignees],
         categoryId: draftCategoryId || null,
@@ -1492,6 +1524,146 @@ function TasksBody({ projectId, canEdit }: { projectId: string; canEdit: boolean
   const pickerTask =
     pickerFor && pickerFor !== 'draft' ? tasks.find((t) => t.id === pickerFor) : null;
 
+  const renderTask = (t: ProjectTaskRow) => {
+    const done = t.status === 'done';
+    return (
+      <li
+        key={t.id}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 10,
+          padding: '7px 10px',
+          borderRadius: 8,
+          border: '1px solid var(--border)',
+          fontSize: 13,
+          opacity: done ? 0.7 : 1,
+        }}
+      >
+        <span
+          style={{
+            flex: 1,
+            minWidth: 0,
+            textDecoration: done ? 'line-through' : 'none',
+            color: done ? 'var(--text-muted)' : 'inherit',
+          }}
+        >
+          {t.title}
+          {t.categoryName ? (
+            <span
+              style={{
+                marginLeft: 8,
+                fontSize: 10,
+                fontWeight: 600,
+                padding: '1px 7px',
+                borderRadius: 999,
+                border: `1px solid ${t.categoryColor ?? 'var(--border)'}`,
+                color: t.categoryColor ?? 'var(--text-muted)',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {t.categoryName}
+            </span>
+          ) : null}
+          {t.dueOn ? (
+            <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--text-muted)' }}>
+              due{' '}
+              {new Date(t.dueOn).toLocaleDateString('en-IN', {
+                day: '2-digit',
+                month: 'short',
+              })}
+            </span>
+          ) : null}
+        </span>
+        {canEdit ? (
+          <>
+            <button
+              className="btn"
+              type="button"
+              onClick={() => setPickerFor(t.id)}
+              disabled={busy}
+              title={
+                t.assignees.length > 0
+                  ? t.assignees.map((a) => a.name).join(', ')
+                  : 'Assign people'
+              }
+              style={{ fontSize: 12 }}
+            >
+              <Icon name="users" size={12} />
+              {assigneeSummary(t.assignees)}
+            </button>
+            <select
+              className="input"
+              value={t.categoryId ?? ''}
+              onChange={(e) => void changeCategory(t.id, e.target.value)}
+              disabled={busy}
+              title="Category"
+            >
+              <option value="">No category</option>
+              {categories.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+              {t.categoryId && !categories.some((c) => c.id === t.categoryId) ? (
+                <option value={t.categoryId}>
+                  {t.categoryName ?? 'Archived category'}
+                </option>
+              ) : null}
+            </select>
+            <select
+              className="input"
+              value={t.status}
+              onChange={(e) => void changeStatus(t.id, e.target.value as ProjectTaskStatus)}
+              disabled={busy}
+              title="Status"
+            >
+              {TASK_STATUSES.map((s) => (
+                <option key={s.value} value={s.value}>
+                  {s.label}
+                </option>
+              ))}
+            </select>
+            <button
+              className="btn row-action row-delete"
+              type="button"
+              title="Delete deliverable"
+              onClick={() => void remove(t.id)}
+              disabled={busy}
+            >
+              <Icon name="trash" size={13} />
+            </button>
+          </>
+        ) : (
+          <>
+            {t.assignees.length > 0 ? (
+              <span
+                style={{ fontSize: 11, color: 'var(--text-muted)' }}
+                title={t.assignees.map((a) => a.name).join(', ')}
+              >
+                {assigneeSummary(t.assignees)}
+              </span>
+            ) : null}
+            <span
+              style={{
+                fontSize: 10.5,
+                fontWeight: 600,
+                padding: '2px 8px',
+                borderRadius: 999,
+                border: '1px solid var(--border)',
+                color: 'var(--text-muted)',
+                textTransform: 'uppercase',
+                letterSpacing: '0.05em',
+              }}
+            >
+              {TASK_STATUSES.find((s) => s.value === t.status)?.label ?? t.status}
+            </span>
+          </>
+        )}
+      </li>
+    );
+  };
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       {canEdit ? (
@@ -1520,6 +1692,20 @@ function TasksBody({ projectId, canEdit }: { projectId: string; canEdit: boolean
               }
             }}
           />
+          {grouped ? (
+            <select
+              className="input"
+              value={addTargetId}
+              onChange={(e) => setAddTargetId(e.target.value)}
+              title="Which project this deliverable belongs to"
+            >
+              {targets.map((tg) => (
+                <option key={tg.id} value={tg.id}>
+                  {tg.id === projectId ? `${tg.name} (parent)` : `${tg.code ? tg.code + ' · ' : ''}${tg.name}`}
+                </option>
+              ))}
+            </select>
+          ) : null}
           <button
             className="btn"
             type="button"
@@ -1578,6 +1764,57 @@ function TasksBody({ projectId, canEdit }: { projectId: string; canEdit: boolean
 
       {tasks.length === 0 ? (
         <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0 }}>No deliverables yet.</p>
+      ) : grouped ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {targets.map((tg) => {
+            const groupTasks = tasks
+              .filter((t) => t.projectId === tg.id)
+              .slice()
+              .sort((a, b) => a.position - b.position);
+            return (
+              <div key={tg.id} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'baseline',
+                    gap: 8,
+                    fontSize: 11.5,
+                    fontWeight: 700,
+                    color: 'var(--text-muted)',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.05em',
+                    padding: '2px 2px',
+                  }}
+                >
+                  <span>
+                    {tg.id === projectId
+                      ? `${tg.name} · parent`
+                      : `${tg.code ? tg.code + ' \u00b7 ' : ''}${tg.name}`}
+                  </span>
+                  <span style={{ fontWeight: 500 }}>{groupTasks.length}</span>
+                </div>
+                {groupTasks.length === 0 ? (
+                  <p style={{ fontSize: 12.5, color: 'var(--text-muted)', margin: '0 0 2px' }}>
+                    No deliverables here yet.
+                  </p>
+                ) : (
+                  <ul
+                    style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 6,
+                      listStyle: 'none',
+                      padding: 0,
+                      margin: 0,
+                    }}
+                  >
+                    {groupTasks.map(renderTask)}
+                  </ul>
+                )}
+              </div>
+            );
+          })}
+        </div>
       ) : (
         <ul
           style={{
@@ -1589,145 +1826,7 @@ function TasksBody({ projectId, canEdit }: { projectId: string; canEdit: boolean
             margin: 0,
           }}
         >
-          {tasks.map((t) => {
-            const done = t.status === 'done';
-            return (
-              <li
-                key={t.id}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 10,
-                  padding: '7px 10px',
-                  borderRadius: 8,
-                  border: '1px solid var(--border)',
-                  fontSize: 13,
-                  opacity: done ? 0.7 : 1,
-                }}
-              >
-                <span
-                  style={{
-                    flex: 1,
-                    minWidth: 0,
-                    textDecoration: done ? 'line-through' : 'none',
-                    color: done ? 'var(--text-muted)' : 'inherit',
-                  }}
-                >
-                  {t.title}
-                  {t.categoryName ? (
-                    <span
-                      style={{
-                        marginLeft: 8,
-                        fontSize: 10,
-                        fontWeight: 600,
-                        padding: '1px 7px',
-                        borderRadius: 999,
-                        border: `1px solid ${t.categoryColor ?? 'var(--border)'}`,
-                        color: t.categoryColor ?? 'var(--text-muted)',
-                        whiteSpace: 'nowrap',
-                      }}
-                    >
-                      {t.categoryName}
-                    </span>
-                  ) : null}
-                  {t.dueOn ? (
-                    <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--text-muted)' }}>
-                      due{' '}
-                      {new Date(t.dueOn).toLocaleDateString('en-IN', {
-                        day: '2-digit',
-                        month: 'short',
-                      })}
-                    </span>
-                  ) : null}
-                </span>
-                {canEdit ? (
-                  <>
-                    <button
-                      className="btn"
-                      type="button"
-                      onClick={() => setPickerFor(t.id)}
-                      disabled={busy}
-                      title={
-                        t.assignees.length > 0
-                          ? t.assignees.map((a) => a.name).join(', ')
-                          : 'Assign people'
-                      }
-                      style={{ fontSize: 12 }}
-                    >
-                      <Icon name="users" size={12} />
-                      {assigneeSummary(t.assignees)}
-                    </button>
-                    <select
-                      className="input"
-                      value={t.categoryId ?? ''}
-                      onChange={(e) => void changeCategory(t.id, e.target.value)}
-                      disabled={busy}
-                      title="Category"
-                    >
-                      <option value="">No category</option>
-                      {categories.map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {c.name}
-                        </option>
-                      ))}
-                      {t.categoryId && !categories.some((c) => c.id === t.categoryId) ? (
-                        <option value={t.categoryId}>
-                          {t.categoryName ?? 'Archived category'}
-                        </option>
-                      ) : null}
-                    </select>
-                    <select
-                      className="input"
-                      value={t.status}
-                      onChange={(e) => void changeStatus(t.id, e.target.value as ProjectTaskStatus)}
-                      disabled={busy}
-                      title="Status"
-                    >
-                      {TASK_STATUSES.map((s) => (
-                        <option key={s.value} value={s.value}>
-                          {s.label}
-                        </option>
-                      ))}
-                    </select>
-                    <button
-                      className="btn row-action row-delete"
-                      type="button"
-                      title="Delete deliverable"
-                      onClick={() => void remove(t.id)}
-                      disabled={busy}
-                    >
-                      <Icon name="trash" size={13} />
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    {t.assignees.length > 0 ? (
-                      <span
-                        style={{ fontSize: 11, color: 'var(--text-muted)' }}
-                        title={t.assignees.map((a) => a.name).join(', ')}
-                      >
-                        {assigneeSummary(t.assignees)}
-                      </span>
-                    ) : null}
-                    <span
-                      style={{
-                        fontSize: 10.5,
-                        fontWeight: 600,
-                        padding: '2px 8px',
-                        borderRadius: 999,
-                        border: '1px solid var(--border)',
-                        color: 'var(--text-muted)',
-                        textTransform: 'uppercase',
-                        letterSpacing: '0.05em',
-                      }}
-                    >
-                      {TASK_STATUSES.find((s) => s.value === t.status)?.label ?? t.status}
-                    </span>
-                  </>
-                )}
-              </li>
-            );
-          })}
+          {tasks.map(renderTask)}
         </ul>
       )}
 
