@@ -44,6 +44,18 @@ export function DateInput({
 }: DateInputProps) {
   const [open, setOpen] = React.useState(false);
   const display = value && isValid(value) ? format(value, displayFormat) : '';
+
+  // Month + year DROPDOWN navigation. Without an explicit min/max, allow a wide
+  // year range so a date of birth, an old bill, or a future effective date is
+  // reachable in one click instead of stepping month-by-month with the arrows.
+  const navStart = React.useMemo(() => fromDate ?? new Date(1940, 0, 1), [fromDate]);
+  const navEnd = React.useMemo(
+    () => toDate ?? new Date(new Date().getFullYear() + 10, 11, 31),
+    [toDate],
+  );
+  // Keep the calendar showing a sensible month when there's no value yet
+  // (defaults to the selected date, else today — but clamp into the nav range).
+  const defaultMonth = value ?? undefined;
   return (
     <div className={cn('relative flex w-full', className)}>
       <Popover open={open} onOpenChange={setOpen}>
@@ -67,12 +79,14 @@ export function DateInput({
           <Calendar
             mode="single"
             selected={value ?? undefined}
+            defaultMonth={defaultMonth}
             onSelect={(next) => {
               onValueChange(next ?? null);
               setOpen(false);
             }}
-            startMonth={fromDate}
-            endMonth={toDate}
+            captionLayout="dropdown"
+            startMonth={navStart}
+            endMonth={navEnd}
             disabled={
               fromDate || toDate
                 ? (date) => {
