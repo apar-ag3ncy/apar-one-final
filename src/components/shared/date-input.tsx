@@ -4,7 +4,7 @@ import * as React from 'react';
 import { format, isValid } from 'date-fns';
 import { CalendarIcon, XIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Calendar } from '@/components/ui/calendar';
+import { IosCalendar } from '@/components/shared/ios-calendar';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { cn } from '@/lib/utils';
 
@@ -44,17 +44,7 @@ export function DateInput({
 }: DateInputProps) {
   const [open, setOpen] = React.useState(false);
   const display = value && isValid(value) ? format(value, displayFormat) : '';
-
-  // Month + year DROPDOWN navigation. Without an explicit min/max, allow a wide
-  // year range so a date of birth, an old bill, or a future effective date is
-  // reachable in one click instead of stepping month-by-month with the arrows.
-  const navStart = React.useMemo(() => fromDate ?? new Date(1940, 0, 1), [fromDate]);
-  const navEnd = React.useMemo(
-    () => toDate ?? new Date(new Date().getFullYear() + 10, 11, 31),
-    [toDate],
-  );
-  // Keep the calendar showing a sensible month when there's no value yet
-  // (defaults to the selected date, else today — but clamp into the nav range).
+  // Which month the calendar opens on when there's no value yet.
   const defaultMonth = value ?? undefined;
   return (
     <div className={cn('relative flex w-full', className)}>
@@ -75,28 +65,16 @@ export function DateInput({
             {display || placeholder}
           </Button>
         </PopoverTrigger>
-        <PopoverContent align="start" className="w-auto p-0">
-          <Calendar
-            mode="single"
-            selected={value ?? undefined}
-            defaultMonth={defaultMonth}
+        <PopoverContent align="start" className="w-auto p-3">
+          <IosCalendar
+            value={value}
+            defaultMonth={defaultMonth ?? undefined}
+            min={fromDate}
+            max={toDate}
             onSelect={(next) => {
-              onValueChange(next ?? null);
+              onValueChange(next);
               setOpen(false);
             }}
-            captionLayout="dropdown"
-            startMonth={navStart}
-            endMonth={navEnd}
-            disabled={
-              fromDate || toDate
-                ? (date) => {
-                    if (fromDate && date < fromDate) return true;
-                    if (toDate && date > toDate) return true;
-                    return false;
-                  }
-                : undefined
-            }
-            autoFocus
           />
         </PopoverContent>
       </Popover>
