@@ -484,6 +484,13 @@
       "when": 1782600090000,
       "tag": "0068_remove_import_test_row",
       "breakpoints": true
+    },
+    {
+      "idx": 69,
+      "version": "7",
+      "when": 1782700090000,
+      "tag": "0069_move_salary_out_of_office_expenses",
+      "breakpoints": true
     }
   ]
 }
