@@ -1080,6 +1080,14 @@ function AddToBalanceDialog({
   onRecorded: () => void;
 }) {
   const [ourBanks, setOurBanks] = useState<readonly AgencyBankAccountRow[]>([]);
+  const [mode, setMode] = useState<'bank' | 'cash'>('bank');
+  // NEFT / RTGS / IMPS / UPI / cheque — how the money arrived (bank mode only).
+  const [transferMethod, setTransferMethod] = useState<
+    'neft' | 'rtgs' | 'imps' | 'upi' | 'cheque' | ''
+  >('');
+  // Cheque capture (0064) — surfaced only while transferMethod === 'cheque'.
+  const [chequeNumber, setChequeNumber] = useState('');
+  const [chequeDate, setChequeDate] = useState('');
   const [bankAccountId, setBankAccountId] = useState('');
   const [receiptDate, setReceiptDate] = useState(todayISO());
   const [amountRupees, setAmountRupees] = useState('');
@@ -1091,6 +1099,10 @@ function AddToBalanceDialog({
     let cancelled = false;
     queueMicrotask(() => {
       if (cancelled) return;
+      setMode('bank');
+      setTransferMethod('');
+      setChequeNumber('');
+      setChequeDate('');
       setBankAccountId('');
       setReceiptDate(todayISO());
       setAmountRupees('');
@@ -1120,7 +1132,7 @@ function AddToBalanceDialog({
   if (!open) return null;
 
   async function submit() {
-    if (!bankAccountId) {
+    if (mode === 'bank' && !bankAccountId) {
       toast.error('Pick the bank account the money was received into.');
       return;
     }
@@ -1135,15 +1147,23 @@ function AddToBalanceDialog({
       toast.error('Amount must be positive.');
       return;
     }
+    if (mode === 'bank' && transferMethod === 'cheque' && !chequeNumber.trim()) {
+      toast.error('Enter the cheque number.');
+      return;
+    }
     setSubmitting(true);
     try {
       const res = await recordCustomerAdvance({
         clientId,
-        bankAccountId,
+        mode,
+        transferMethod: mode === 'bank' && transferMethod ? transferMethod : null,
+        chequeNumber:
+          mode === 'bank' && transferMethod === 'cheque' ? chequeNumber.trim() || null : null,
+        chequeDate: mode === 'bank' && transferMethod === 'cheque' ? chequeDate || null : null,
+        bankAccountId: mode === 'bank' ? bankAccountId : null,
         receiptDate,
         advancePaise,
         advanceTaxPaise: 0n,
-        method: 'bank_transfer',
         description: description.trim() || null,
       });
       toast.success(
@@ -1202,27 +1222,110 @@ function AddToBalanceDialog({
             it to invoices later.
           </p>
 
-          <div className="os-field">
-            <label htmlFor="bal-bank" className="os-field-label">
-              Into our bank account
-            </label>
-            <select
-              id="bal-bank"
-              style={osInputStyle}
-              value={bankAccountId}
-              onChange={(e) => setBankAccountId(e.target.value)}
-              disabled={submitting}
-            >
-              <option value="" disabled>
-                Select account
-              </option>
-              {ourBanks.map((b) => (
-                <option key={b.id} value={b.id}>
-                  {b.label} ••{b.accountLast4}
-                </option>
-              ))}
-            </select>
+          {/* Mode toggle */}
+          <div style={{ display: 'flex', gap: 8 }}>
+            {(['bank', 'cash'] as const).map((m) => (
+              <button
+                key={m}
+                type="button"
+                onClick={() => setMode(m)}
+                disabled={submitting}
+                style={{
+                  flex: 1,
+                  padding: '8px 10px',
+                  borderRadius: 7,
+                  fontSize: 13,
+                  cursor: 'pointer',
+                  border: `1px solid ${mode === m ? 'var(--apar-red, #E63A1F)' : 'var(--border, #e5e7eb)'}`,
+                  background: mode === m ? 'rgba(230,58,31,0.08)' : 'transparent',
+                  color: 'inherit',
+                }}
+              >
+                {m === 'bank' ? 'Bank transfer' : 'Cash'}
+              </button>
+            ))}
           </div>
+
+          {mode === 'bank' ? (
+            <div className="os-field">
+              <span className="os-field-label">Transfer method</span>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {(['neft', 'rtgs', 'imps', 'upi', 'cheque'] as const).map((t) => (
+                  <button
+                    key={t}
+                    type="button"
+                    onClick={() => setTransferMethod((cur) => (cur === t ? '' : t))}
+                    disabled={submitting}
+                    style={{
+                      padding: '6px 14px',
+                      borderRadius: 999,
+                      fontSize: 12,
+                      cursor: 'pointer',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.04em',
+                      border: `1px solid ${transferMethod === t ? 'var(--apar-red, #E63A1F)' : 'var(--border, #e5e7eb)'}`,
+                      background: transferMethod === t ? 'rgba(230,58,31,0.08)' : 'transparent',
+                      color: 'inherit',
+                    }}
+                  >
+                    {t}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          {mode === 'bank' && transferMethod === 'cheque' ? (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+              <div className="os-field">
+                <span className="os-field-label">Cheque number</span>
+                <input
+                  value={chequeNumber}
+                  onChange={(e) => setChequeNumber(e.target.value)}
+                  disabled={submitting}
+                  placeholder="e.g. 123456"
+                  style={osInputStyle}
+                />
+              </div>
+              <div className="os-field">
+                <span className="os-field-label">Cheque date (optional)</span>
+                <DateField
+                  value={chequeDate}
+                  onChange={(next) => setChequeDate(next)}
+                  disabled={submitting}
+                />
+              </div>
+            </div>
+          ) : null}
+
+          {mode === 'bank' ? (
+            <div className="os-field">
+              <label htmlFor="bal-bank" className="os-field-label">
+                Into our bank account
+              </label>
+              <select
+                id="bal-bank"
+                style={osInputStyle}
+                value={bankAccountId}
+                onChange={(e) => setBankAccountId(e.target.value)}
+                disabled={submitting}
+              >
+                <option value="" disabled>
+                  Select account
+                </option>
+                {ourBanks.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.label} ••{b.accountLast4}
+                    {b.isActive ? '' : ' (inactive)'}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : (
+            <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0 }}>
+              Cash receipt — posts to Cash on Hand (1110).
+            </p>
+          )}
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             <div className="os-field">
@@ -1285,7 +1388,11 @@ function AddToBalanceDialog({
           >
             Cancel
           </Button>
-          <Button size="sm" onClick={submit} disabled={submitting}>
+          <Button
+            size="sm"
+            onClick={submit}
+            disabled={submitting || (mode === 'bank' && !bankAccountId)}
+          >
             {submitting ? 'Saving…' : 'Add to balance'}
           </Button>
         </div>
