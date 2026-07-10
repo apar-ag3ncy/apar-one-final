@@ -11,11 +11,13 @@ import {
   employees,
   officeExpenseCategories,
   officeExpenses,
+  periods,
   postings,
+  transactions,
   vendors,
 } from '@/lib/db/schema';
 import { AppError } from '@/lib/errors';
-import { requireCapability } from '@/lib/rbac';
+import { hasCapability, requireCapability, type CurrentUserContext } from '@/lib/rbac';
 import { getActorContext } from '@/lib/server/actor';
 import { createDraftTransaction, postTransaction, reverseTransaction } from '@/lib/server/ledger';
 import { sniffMime } from '@/lib/storage';
@@ -1453,16 +1455,65 @@ const ImportSchema = z.object({
   rows: z.array(z.unknown()).max(2000),
 });
 
+/** A single import row that passed in-memory validation. */
+type ValidImportRow = {
+  /** 1-based line number in the source sheet, for human-readable errors. */
+  rowNo: number;
+  /** Client-generated PK — set explicitly so nothing depends on RETURNING order. */
+  id: string;
+  expenseDate: string;
+  description: string;
+  amountPaise: bigint;
+  gstPaise: bigint;
+  paymentMethod: OfficeExpensePaymentMethod;
+  referenceNumber: string | null;
+  notes: string | null;
+  category: OfficeExpenseCategory;
+  categoryNote: string | null;
+  /** Normalised custom-category key, or null for a built-in / no category. */
+  customNormKey: string | null;
+};
+
+/** Format a per-row parse error the same way the legacy per-row loop did. */
+function formatImportRowError(err: unknown): string {
+  if (err instanceof z.ZodError) {
+    return err.issues.map((e) => `${e.path.join('.') || 'row'}: ${e.message}`).join('; ');
+  }
+  if (err instanceof AppError) return err.message;
+  if (err instanceof Error) return err.message;
+  return 'Unknown error';
+}
+
 /**
- * Best-effort bulk import of office expenses from a parsed sheet. Each row is
- * validated + inserted independently: a bad row is recorded in `errors` and the
- * import continues. Category resolution:
+ * Bulk import of office expenses from a parsed sheet. Rows are validated in
+ * memory first (partitioned into valid / errors with no awaits), then written
+ * as a handful of set-based statements instead of ~15 round-trips per row:
+ *   - ONE SELECT of the active custom categories + ONE multi-row insert for the
+ *     misses (client-generated ids, so no RETURNING-order dependence);
+ *   - ONE multi-row insert of every valid expense;
+ *   - for the postable subset, ONE transaction: one multi-row `transactions`
+ *     insert (already-posted journals), one multi-row `postings` insert, and one
+ *     bulk `office_expenses.transaction_id` UPDATE.
+ * This keeps a 2000-row import to a small constant number of round-trips so the
+ * serverless function returns well inside its budget and the client reliably
+ * reaches its success / summary toast.
+ *
+ * Category resolution is unchanged from the per-row path:
  *   - a name matching a built-in ({@link CategoryEnum}) id or label uses that
  *     enum value with `customCategoryId=null`;
  *   - any other non-empty name find-or-creates a custom category (mirrors
  *     {@link createOfficeExpenseCategory}) and sets `category='other'` +
  *     `customCategoryId` + `categoryNote=<name>`;
  *   - a blank/absent name falls back to `'other'` with no custom category.
+ *
+ * Ledger posting matches {@link postExpenseToLedger} leg-for-leg
+ *   (Dr <6xxx/1510 OpEx> net / Dr 1250 GST input gst / Cr 1110 cash net+gst),
+ * written directly as posted `journal` transactions. Capability + period-close
+ * rules are enforced ONCE for the whole batch; a row whose date has no period,
+ * or lands in a hard/soft-closed period the caller can't post into, is SAVED
+ * but left unposted and reported in `errors` exactly like the per-row path did
+ * — it never aborts the import. Reimbursements / zero-amount rows are never
+ * posted (`shouldPostToLedger`).
  */
 export async function importOfficeExpenses(input: {
   rows: ImportOfficeExpenseRow[];
@@ -1476,19 +1527,20 @@ export async function importOfficeExpenses(input: {
     errors: [],
   };
 
-  // Cache resolved custom categories by normalised name within this import so
-  // two rows with the same custom label reuse one category (and count once).
-  const customCategoryCache = new Map<string, string>();
+  // ── 1. Validate every row in memory (no awaits). ────────────────────────
+  const valid: ValidImportRow[] = [];
+  // First-seen trimmed name + case-insensitive lookup key per custom normKey,
+  // mirroring the legacy per-run cache keyed by normalised category name.
+  const customGroups = new Map<string, { rawTrimmed: string; ilikeKey: string }>();
 
   for (let i = 0; i < rows.length; i++) {
-    // `row` numbers are 1-based for a human reading the source sheet.
-    const rowNo = i + 1;
+    const rowNo = i + 1; // 1-based for a human reading the source sheet
     try {
       const parsed = ImportRowSchema.parse(rows[i]);
 
       let category: OfficeExpenseCategory = 'other';
-      let customCategoryId: string | null = null;
       let categoryNote: string | null = null;
+      let customNormKey: string | null = null;
 
       const rawName = parsed.categoryName?.trim() ?? '';
       if (rawName) {
@@ -1498,76 +1550,105 @@ export async function importOfficeExpenses(input: {
         } else {
           category = 'other';
           categoryNote = rawName;
-          const key = normaliseCategoryKey(rawName);
-          const cached = customCategoryCache.get(key);
-          if (cached) {
-            customCategoryId = cached;
-          } else {
-            customCategoryId = await resolveOrCreateCustomCategory(rawName, ctx.userId, result);
-            customCategoryCache.set(key, customCategoryId);
+          customNormKey = normaliseCategoryKey(rawName);
+          if (!customGroups.has(customNormKey)) {
+            // `ilikeKey` mirrors the DB dedupe `ilike(name, rawName.trim())`.
+            customGroups.set(customNormKey, {
+              rawTrimmed: rawName,
+              ilikeKey: rawName.toLowerCase(),
+            });
           }
         }
       }
 
-      const [insertedRow] = await db
-        .insert(officeExpenses)
-        .values({
-          expenseDate: parsed.expenseDate,
-          category,
-          description: parsed.description,
-          vendorId: null,
-          vendorName: null,
-          employeeId: null,
-          amountPaise: parsed.amountPaise,
-          gstPaise: parsed.gstPaise ?? 0n,
-          paymentMethod: parsed.paymentMethod ?? 'bank',
-          status: category === 'reimbursement' ? 'pending' : 'approved',
-          referenceNumber: parsed.referenceNumber ?? null,
-          notes: parsed.notes ?? null,
-          customCategoryId,
-          categoryNote,
-          createdBy: ctx.userId,
-          updatedBy: ctx.userId,
-        })
-        .returning();
-      result.inserted += 1;
+      valid.push({
+        rowNo,
+        id: crypto.randomUUID(),
+        expenseDate: parsed.expenseDate,
+        description: parsed.description,
+        amountPaise: parsed.amountPaise,
+        gstPaise: parsed.gstPaise ?? 0n,
+        paymentMethod: parsed.paymentMethod ?? 'bank',
+        referenceNumber: parsed.referenceNumber ?? null,
+        notes: parsed.notes ?? null,
+        category,
+        categoryNote,
+        customNormKey,
+      });
+    } catch (err) {
+      result.errors.push({ row: rowNo, message: formatImportRowError(err) });
+    }
+  }
 
-      // Auto-post to the GL (best-effort — a posting failure leaves the row
-      // captured-but-unposted and is surfaced as a warning, not a hard error,
-      // so one bad date/period doesn't abort the whole import).
-      if (insertedRow && shouldPostToLedger(category, insertedRow.amountPaise)) {
-        try {
-          const txnId = await postExpenseToLedger(ctx, {
-            id: insertedRow.id,
-            category,
-            customCategoryId: insertedRow.customCategoryId ?? null,
-            description: insertedRow.description,
-            expenseDate: insertedRow.expenseDate,
-            amountPaise: insertedRow.amountPaise,
-            gstPaise: insertedRow.gstPaise,
-            notes: insertedRow.notes,
-          });
-          await db
-            .update(officeExpenses)
-            .set({ transactionId: txnId })
-            .where(eq(officeExpenses.id, insertedRow.id));
-        } catch (postErr) {
-          result.errors.push({
-            row: rowNo,
-            message: `saved but not posted to ledger: ${postErr instanceof Error ? postErr.message : 'unknown error'}`,
-          });
+  if (valid.length > 0) {
+    // ── 2. Resolve custom categories in bulk. ─────────────────────────────
+    // normKey → resolved category (stored `name` drives the asset-debit route).
+    const resolvedCustom = new Map<string, { id: string; name: string }>();
+    if (customGroups.size > 0) {
+      const activeCats = await db
+        .select({ id: officeExpenseCategories.id, name: officeExpenseCategories.name })
+        .from(officeExpenseCategories)
+        .where(isNull(officeExpenseCategories.deletedAt));
+      const existingByIlikeKey = new Map<string, { id: string; name: string }>();
+      for (const c of activeCats) existingByIlikeKey.set(c.name.toLowerCase(), c);
+
+      const toCreate: Array<{ id: string; name: string }> = [];
+      for (const [normKey, g] of customGroups) {
+        const existing = existingByIlikeKey.get(g.ilikeKey);
+        if (existing) {
+          resolvedCustom.set(normKey, existing);
+        } else {
+          const created = { id: crypto.randomUUID(), name: g.rawTrimmed };
+          toCreate.push(created);
+          resolvedCustom.set(normKey, created);
         }
       }
-    } catch (err) {
-      const message =
-        err instanceof z.ZodError
-          ? err.issues.map((e) => `${e.path.join('.') || 'row'}: ${e.message}`).join('; ')
-          : err instanceof AppError
-            ? err.message
-            : err instanceof Error
-              ? err.message
-              : 'Unknown error';
-      result.errors.push({ row: rowNo, message });
+
+      if (toCreate.length > 0) {
+        await db.insert(officeExpenseCategories).values(
+          toCreate.map((c) => ({
+            id: c.id,
+            name: c.name,
+            color: null,
+            hint: null,
+            createdBy: ctx.userId,
+            updatedBy: ctx.userId,
+          })),
+        );
+        result.categoriesCreated = toCreate.length;
+      }
+    }
+
+    // ── 3. Bulk-insert every valid expense in ONE statement. ──────────────
+    await db.insert(officeExpenses).values(
+      valid.map((v) => ({
+        id: v.id,
+        expenseDate: v.expenseDate,
+        category: v.category,
+        description: v.description,
+        vendorId: null,
+        vendorName: null,
+        employeeId: null,
+        amountPaise: v.amountPaise,
+        gstPaise: v.gstPaise,
+        paymentMethod: v.paymentMethod,
+        status: v.category === 'reimbursement' ? ('pending' as const) : ('approved' as const),
+        referenceNumber: v.referenceNumber,
+        notes: v.notes,
+        customCategoryId: v.customNormKey
+          ? (resolvedCustom.get(v.customNormKey)?.id ?? null)
+          : null,
+        categoryNote: v.categoryNote,
+        createdBy: ctx.userId,
+        updatedBy: ctx.userId,
+      })),
+    );
+    result.inserted = valid.length;
+
+    // ── 4. Post the eligible subset to the ledger. ────────────────────────
+    const postCandidates = valid.filter((v) => shouldPostToLedger(v.category, v.amountPaise));
+    if (postCandidates.length > 0) {
+      await postImportedExpenseBatch(ctx, postCandidates, resolvedCustom, result);
     }
   }
 
@@ -1588,39 +1669,192 @@ export async function importOfficeExpenses(input: {
 }
 
 /**
- * Find (case-insensitive, among active) or create a custom category. Mirrors
- * {@link createOfficeExpenseCategory}'s dedupe rule; increments
- * `result.categoriesCreated` when a new row is inserted.
+ * Post the postable subset of an import as balanced `journal` transactions in a
+ * single DB transaction. Preserves every invariant the per-row
+ * {@link postExpenseToLedger} → createDraftTransaction → postTransaction path
+ * upheld:
+ *   - capability parity (create_journal_voucher + post_transaction), checked
+ *     ONCE; missing either doesn't abort — the (already-saved) rows are just
+ *     reported unposted, exactly as when the per-row `requireCapability` threw;
+ *   - period-close enforcement replicated for the batch: a missing / hard- /
+ *     soft-closed period skips that row (saved, reported), never aborts;
+ *   - each header carries a UNIQUE `externalRef` (`OFFEXP-<expenseId>`, the id
+ *     being globally unique) and an explicitly-set `period_id` so the row-level
+ *     assign-period trigger is a no-op and can't RAISE mid-batch;
+ *   - the per-transaction audit that `postTransaction` wrote is intentionally
+ *     dropped — the single bulk-import audit row in the caller stands in.
  */
-async function resolveOrCreateCustomCategory(
-  rawName: string,
-  userId: string,
+async function postImportedExpenseBatch(
+  ctx: CurrentUserContext,
+  candidates: ValidImportRow[],
+  resolvedCustom: ReadonlyMap<string, { id: string; name: string }>,
   result: ImportOfficeExpensesResult,
-): Promise<string> {
-  const name = rawName.trim();
-  const [existing] = await db
-    .select({ id: officeExpenseCategories.id })
-    .from(officeExpenseCategories)
-    .where(
-      and(isNull(officeExpenseCategories.deletedAt), ilike(officeExpenseCategories.name, name)),
-    )
-    .limit(1);
-  if (existing) return existing.id;
+): Promise<void> {
+  const pushUnposted = (rowNo: number, reason: string) =>
+    result.errors.push({ row: rowNo, message: `saved but not posted to ledger: ${reason}` });
 
-  const [row] = await db
-    .insert(officeExpenseCategories)
-    .values({
-      name,
-      color: null,
-      hint: null,
-      createdBy: userId,
-      updatedBy: userId,
+  // Capability check ONCE for the whole batch (parity with the journal
+  // create + post path). Non-aborting: report every candidate, keep the import.
+  if (!hasCapability(ctx, 'create_journal_voucher') || !hasCapability(ctx, 'post_transaction')) {
+    const missing = !hasCapability(ctx, 'create_journal_voucher')
+      ? 'create_journal_voucher'
+      : 'post_transaction';
+    for (const v of candidates) pushUnposted(v.rowNo, `Missing capability: ${missing}`);
+    return;
+  }
+
+  // Resolve every candidate's period ONCE (the periods table is tiny).
+  const periodRows = await db
+    .select({
+      id: periods.id,
+      status: periods.status,
+      startsOn: periods.startsOn,
+      endsOn: periods.endsOn,
+      fiscalYear: periods.fiscalYear,
+      month: periods.month,
     })
-    .returning({ id: officeExpenseCategories.id });
-  if (!row) throw new AppError('internal', 'office expense category insert returned no row');
+    .from(periods);
+  const canPostClosed = hasCapability(ctx, 'close_period');
 
-  result.categoriesCreated += 1;
-  return row.id;
+  type PreparedTxn = {
+    txnId: string;
+    expenseId: string;
+    rowNo: number;
+    externalRef: string;
+    description: string;
+    txnDate: string;
+    notes: string | null;
+    periodId: string;
+    legs: Array<{ accountCode: string; side: 'debit' | 'credit'; amountPaise: bigint }>;
+  };
+  const prepared: PreparedTxn[] = [];
+
+  for (const v of candidates) {
+    const period = periodRows.find((p) => v.expenseDate >= p.startsOn && v.expenseDate <= p.endsOn);
+    if (!period) {
+      const year = Number(v.expenseDate.slice(0, 4));
+      const fy = Number(v.expenseDate.slice(5, 7)) >= 4 ? year + 1 : year;
+      pushUnposted(
+        v.rowNo,
+        `no period defined for txn_date ${v.expenseDate}; seed periods for FY ${fy}`,
+      );
+      continue;
+    }
+    const fyLabel = `FY${period.fiscalYear}-${String(period.month).padStart(2, '0')}`;
+    if (period.status === 'closed') {
+      pushUnposted(v.rowNo, `Period ${fyLabel} is hard-closed; reopen it before posting into it.`);
+      continue;
+    }
+    if (period.status === 'soft_closed' && !canPostClosed) {
+      pushUnposted(
+        v.rowNo,
+        `Period ${fyLabel} is soft-closed; posting into it requires the close_period capability (admins/partners).`,
+      );
+      continue;
+    }
+
+    // Debit routing mirrors debitAccountFor: custom asset-named → 1510, other
+    // custom → 6900, built-ins → opexAccountFor (utilities/rent → 6200, else 6900).
+    const debitCode = v.customNormKey
+      ? /asset/i.test(resolvedCustom.get(v.customNormKey)?.name ?? '')
+        ? '1510'
+        : '6900'
+      : opexAccountFor(v.category);
+    const reasonRaw = v.description.trim();
+    const description = (
+      reasonRaw.length >= 10 ? reasonRaw : `${reasonRaw} — office expense`
+    ).slice(0, 480);
+    prepared.push({
+      txnId: crypto.randomUUID(),
+      expenseId: v.id,
+      rowNo: v.rowNo,
+      externalRef: `OFFEXP-${v.id}`,
+      description,
+      txnDate: v.expenseDate,
+      notes: v.notes,
+      periodId: period.id,
+      legs: [
+        { accountCode: debitCode, side: 'debit', amountPaise: v.amountPaise },
+        ...(v.gstPaise > 0n
+          ? [{ accountCode: '1250', side: 'debit' as const, amountPaise: v.gstPaise }]
+          : []),
+        { accountCode: '1110', side: 'credit', amountPaise: v.amountPaise + v.gstPaise },
+      ],
+    });
+  }
+
+  if (prepared.length === 0) return;
+
+  // Resolve the distinct GL account ids ONCE (parity with createDraftTransaction).
+  const codes = Array.from(new Set(prepared.flatMap((p) => p.legs.map((l) => l.accountCode))));
+  const accountRows = await db
+    .select({ id: accounts.id, code: accounts.code })
+    .from(accounts)
+    .where(inArray(accounts.code, codes));
+  const codeToId = new Map(accountRows.map((a) => [a.code, a.id]));
+  const missingCode = codes.find((c) => !codeToId.has(c));
+  if (missingCode) {
+    throw new AppError('ledger.control_violation', `account code "${missingCode}" not found`);
+  }
+
+  try {
+    await db.transaction(async (tx) => {
+      const now = new Date();
+      // 4a. All journal headers, inserted already-posted. `period_id` set
+      // explicitly (assign-period trigger becomes a no-op); no source document
+      // required for kind='journal'; validation_flags empty (a journal office
+      // expense trips no enabled validation rule).
+      await tx.insert(transactions).values(
+        prepared.map((p) => ({
+          id: p.txnId,
+          kind: 'journal' as const,
+          externalRef: p.externalRef,
+          description: p.description,
+          txnDate: p.txnDate,
+          status: 'posted' as const,
+          postedAt: now,
+          postedBy: ctx.userId,
+          sourceKind: 'journal' as const,
+          periodId: p.periodId,
+          validationFlags: [],
+          notes: p.notes,
+          createdBy: ctx.userId,
+          updatedBy: ctx.userId,
+        })),
+      );
+
+      // 4b. Every posting leg across every header (non-control accounts → no
+      // subledger fields, matching postExpenseToLedger).
+      await tx.insert(postings).values(
+        prepared.flatMap((p) =>
+          p.legs.map((l) => ({
+            transactionId: p.txnId,
+            accountId: codeToId.get(l.accountCode)!,
+            side: l.side,
+            amountPaise: l.amountPaise,
+            currency: 'INR',
+            metadata: {},
+          })),
+        ),
+      );
+
+      // 4c. Link every posted expense to its journal in ONE UPDATE ... FROM.
+      const pairs = prepared.map((p) => sql`(${p.expenseId}::uuid, ${p.txnId}::uuid)`);
+      await tx.execute(sql`
+        UPDATE office_expenses AS oe
+        SET transaction_id = v.txn_id
+        FROM (VALUES ${sql.join(pairs, sql`, `)}) AS v(expense_id, txn_id)
+        WHERE oe.id = v.expense_id
+      `);
+    });
+  } catch (e) {
+    // A wholesale batch failure is near-impossible (balanced, pre-validated
+    // legs against seeded accounts + resolved open periods). If it happens the
+    // rows are still saved captured-but-unposted for the ledger backfill; report
+    // each, never throw the whole import away.
+    const msg = e instanceof Error ? e.message : 'unknown error';
+    for (const p of prepared) pushUnposted(p.rowNo, msg);
+  }
 }
 
 /* -------------------------------------------------------------------------- */
