@@ -470,6 +470,20 @@
       "when": 1782400090000,
       "tag": "0066_os_users",
       "breakpoints": true
+    },
+    {
+      "idx": 67,
+      "version": "7",
+      "when": 1782500090000,
+      "tag": "0067_office_expense_reset",
+      "breakpoints": true
+    },
+    {
+      "idx": 68,
+      "version": "7",
+      "when": 1782600090000,
+      "tag": "0068_remove_import_test_row",
+      "breakpoints": true
     }
   ]
 }

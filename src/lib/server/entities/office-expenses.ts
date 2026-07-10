@@ -1438,7 +1438,25 @@ export type ImportOfficeExpensesResult = {
   inserted: number;
   categoriesCreated: number;
   errors: Array<{ row: number; message: string }>;
+  /**
+   * Rows dropped because they exactly duplicate another entry — either an
+   * earlier row in the same sheet, or one already in the book. Reported, not
+   * failed: the rest of the import still goes through.
+   */
+  duplicatesSkipped: number;
+  duplicates: Array<{ row: number; message: string }>;
 };
+
+/**
+ * Identity of an office expense for duplicate detection: same day, same
+ * description (case/whitespace-insensitive) and same amount. Deliberately
+ * ignores category and notes — re-importing a sheet with a re-categorised row
+ * should still be recognised as the same expense.
+ */
+function duplicateKey(expenseDate: string, description: string, amountPaise: bigint): string {
+  const desc = description.trim().toLowerCase().replace(/\s+/g, ' ');
+  return `${expenseDate}|${desc}|${amountPaise.toString()}`;
+}
 
 const ImportRowSchema = z.object({
   expenseDate: z.string().regex(dateRegex, 'expenseDate must be YYYY-MM-DD'),
@@ -1525,13 +1543,12 @@ export async function importOfficeExpenses(input: {
     inserted: 0,
     categoriesCreated: 0,
     errors: [],
+    duplicatesSkipped: 0,
+    duplicates: [],
   };
 
   // ── 1. Validate every row in memory (no awaits). ────────────────────────
-  const valid: ValidImportRow[] = [];
-  // First-seen trimmed name + case-insensitive lookup key per custom normKey,
-  // mirroring the legacy per-run cache keyed by normalised category name.
-  const customGroups = new Map<string, { rawTrimmed: string; ilikeKey: string }>();
+  const parsedRows: ValidImportRow[] = [];
 
   for (let i = 0; i < rows.length; i++) {
     const rowNo = i + 1; // 1-based for a human reading the source sheet
@@ -1551,17 +1568,10 @@ export async function importOfficeExpenses(input: {
           category = 'other';
           categoryNote = rawName;
           customNormKey = normaliseCategoryKey(rawName);
-          if (!customGroups.has(customNormKey)) {
-            // `ilikeKey` mirrors the DB dedupe `ilike(name, rawName.trim())`.
-            customGroups.set(customNormKey, {
-              rawTrimmed: rawName,
-              ilikeKey: rawName.toLowerCase(),
-            });
-          }
         }
       }
 
-      valid.push({
+      parsedRows.push({
         rowNo,
         id: crypto.randomUUID(),
         expenseDate: parsed.expenseDate,
@@ -1577,6 +1587,58 @@ export async function importOfficeExpenses(input: {
       });
     } catch (err) {
       result.errors.push({ row: rowNo, message: formatImportRowError(err) });
+    }
+  }
+
+  // ── 1b. Drop exact duplicates (same date + description + amount), both
+  // against rows already in the book and against earlier rows in this sheet.
+  // One SELECT, bounded to the sheet's date range. Skipped — never failed.
+  const valid: ValidImportRow[] = [];
+  if (parsedRows.length > 0) {
+    const dates = parsedRows.map((r) => r.expenseDate).sort();
+    const existing = await db
+      .select({
+        expenseDate: officeExpenses.expenseDate,
+        description: officeExpenses.description,
+        amountPaise: officeExpenses.amountPaise,
+      })
+      .from(officeExpenses)
+      .where(
+        and(
+          isNull(officeExpenses.deletedAt),
+          between(officeExpenses.expenseDate, dates[0]!, dates[dates.length - 1]!),
+        ),
+      );
+
+    const seen = new Set(
+      existing.map((e) => duplicateKey(e.expenseDate, e.description, e.amountPaise)),
+    );
+    for (const row of parsedRows) {
+      const key = duplicateKey(row.expenseDate, row.description, row.amountPaise);
+      if (seen.has(key)) {
+        result.duplicatesSkipped++;
+        result.duplicates.push({
+          row: row.rowNo,
+          message: `duplicate — "${row.description}" on ${row.expenseDate} already exists; skipped`,
+        });
+        continue;
+      }
+      seen.add(key);
+      valid.push(row);
+    }
+  }
+
+  // First-seen trimmed name + case-insensitive lookup key per custom normKey.
+  // Built from the deduped set so a category referenced only by a skipped
+  // duplicate is never created.
+  const customGroups = new Map<string, { rawTrimmed: string; ilikeKey: string }>();
+  for (const row of valid) {
+    if (row.customNormKey && row.categoryNote && !customGroups.has(row.customNormKey)) {
+      // `ilikeKey` mirrors the DB dedupe `ilike(name, rawName.trim())`.
+      customGroups.set(row.customNormKey, {
+        rawTrimmed: row.categoryNote,
+        ilikeKey: row.categoryNote.toLowerCase(),
+      });
     }
   }
 
@@ -1662,6 +1724,7 @@ export async function importOfficeExpenses(input: {
       inserted: result.inserted,
       categoriesCreated: result.categoriesCreated,
       errorCount: result.errors.length,
+      duplicatesSkipped: result.duplicatesSkipped,
     },
   });
 
