@@ -61,20 +61,22 @@ export function LockScreen() {
       })
     : '';
 
-  const submit = (e?: React.FormEvent) => {
+  const submit = async (e?: React.FormEvent) => {
     e?.preventDefault();
     if (pending) return;
     setPending(true);
     setError(null);
-    // Tiny intentional delay so the button shows a transition state — purely cosmetic.
-    setTimeout(() => {
-      const ok = signIn(selected.username, password);
+    try {
+      const ok = await signIn(selected.username, password);
       if (!ok) {
         setError('Incorrect password.');
         setPassword('');
       }
+    } catch {
+      setError('Something went wrong. Try again.');
+    } finally {
       setPending(false);
-    }, 220);
+    }
   };
 
   return (

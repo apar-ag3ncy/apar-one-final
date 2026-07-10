@@ -1,95 +1,67 @@
 'use client';
 
-// Auth store for the Apar One demo.
+// Auth store for Apar One — server-backed.
 //
-// Demo-grade only. Backed by localStorage with plaintext credentials and no
-// session token — fine for showing the RBAC shape, **catastrophic** for prod.
-// CLAUDE.md mandates Supabase Auth + Postgres RLS for the real thing; this
-// module's surface is what those real bits will eventually replace.
+// User accounts live in the `os_users` table (see src/lib/server/os-auth.ts)
+// so an account created on one device can be signed into from any other. This
+// module is a thin client cache over those server actions: it hydrates once on
+// mount, keeps a shared snapshot for useSyncExternalStore consumers, and routes
+// every mutation through the server (with optimistic local updates for the
+// snappy ones). Passwords never reach the client — they are hashed and verified
+// server-side; the `password` field here is only a transient edit-form value.
 
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
-import { emptyPermissions, fullPermissions, type Permissions, type User } from './types';
 
-const USERS_KEY = 'apar-os:users';
-const SESSION_KEY = 'apar-os:session';
-const SUPER_ADMIN_KEY = 'apar-os:super-admin';
+import {
+  bootstrapOsAuth,
+  createOsUser,
+  deleteOsUser,
+  setOsPermissions,
+  signInOs,
+  signOutOs,
+  updateOsUser,
+} from '@/lib/server/os-auth';
+import { emptyPermissions, fullPermissions, type Permissions, type Role, type User } from './types';
 
-/**
- * The super admin record is editable, but the `id` is fixed forever so
- * existing sessions and per-user storage keys never break. Identity, password,
- * and tone are stored in localStorage under SUPER_ADMIN_KEY; if absent we
- * fall back to these defaults.
- */
 const SUPER_ADMIN_ID = 'super-admin';
-const SUPER_ADMIN_DEFAULTS = {
-  username: 'apar',
-  fullName: 'Apar Admin',
-  password: 'apar2026',
-  tone: '#E63A1F',
-};
 
-type SuperAdminOverrides = typeof SUPER_ADMIN_DEFAULTS;
-
-function readSuperAdminOverrides(): SuperAdminOverrides {
-  if (typeof window === 'undefined') return SUPER_ADMIN_DEFAULTS;
-  try {
-    const raw = window.localStorage.getItem(SUPER_ADMIN_KEY);
-    if (!raw) return SUPER_ADMIN_DEFAULTS;
-    const parsed = JSON.parse(raw) as Partial<SuperAdminOverrides>;
-    return {
-      username: parsed.username?.trim() || SUPER_ADMIN_DEFAULTS.username,
-      fullName: parsed.fullName?.trim() || SUPER_ADMIN_DEFAULTS.fullName,
-      password: parsed.password || SUPER_ADMIN_DEFAULTS.password,
-      tone: parsed.tone || SUPER_ADMIN_DEFAULTS.tone,
-    };
-  } catch {
-    return SUPER_ADMIN_DEFAULTS;
-  }
-}
-
-function persistSuperAdmin(v: SuperAdminOverrides) {
-  if (typeof window === 'undefined') return;
-  try {
-    window.localStorage.setItem(SUPER_ADMIN_KEY, JSON.stringify(v));
-  } catch {
-    // ignore
-  }
-}
-
-function makeSuperAdmin(): User {
-  const o = readSuperAdminOverrides();
+/** Coerce a sanitized server user into the client `User` shape. */
+function toUser(s: {
+  id: string;
+  username: string;
+  fullName: string;
+  role: string;
+  tone: string;
+  permissions: Record<string, { view: boolean; edit: boolean; delete: boolean }>;
+  createdAt: string;
+}): User {
   return {
-    id: SUPER_ADMIN_ID,
-    username: o.username,
-    fullName: o.fullName,
-    password: o.password,
-    role: 'super_admin',
-    tone: o.tone,
-    permissions: fullPermissions(),
-    createdAt: '2026-01-01T00:00:00.000Z',
+    id: s.id,
+    username: s.username,
+    fullName: s.fullName,
+    role: s.role as Role,
+    tone: s.tone,
+    // Merge over an all-false base so a partial map can't leave gaps.
+    permissions: { ...emptyPermissions(), ...(s.permissions as Permissions) },
+    createdAt: s.createdAt,
   };
 }
 
 /* -------------------------------------------------------------------------- */
-/* External store — written via setState, read via useSyncExternalStore.      */
+/* External store — module singleton, read via useSyncExternalStore.          */
 /* -------------------------------------------------------------------------- */
 
 type State = {
-  users: User[]; // additional users only — super admin is implicit
-  sessionUserId: string | null;
-  // Cache the super admin record so consumers don't have to rebuild it
-  // on every render. Updated whenever we persist overrides.
-  superAdmin: User;
+  users: User[]; // all users incl. super admin, as returned by the server
+  currentUserId: string | null;
+  loading: boolean; // true until the first bootstrap resolves
 };
 
-let state: State = {
-  users: [],
-  sessionUserId: null,
-  superAdmin: { ...makeSuperAdmin() }, // typeof window === 'undefined' returns defaults on server
-};
+let state: State = { users: [], currentUserId: null, loading: true };
 const listeners = new Set<() => void>();
 
-function emit() {
+function setState(next: State) {
+  state = next;
   for (const l of listeners) l();
 }
 
@@ -100,63 +72,32 @@ function subscribe(cb: () => void) {
   };
 }
 
-function loadFromStorage() {
-  if (typeof window === 'undefined') return;
-  try {
-    const rawUsers = window.localStorage.getItem(USERS_KEY);
-    const rawSession = window.localStorage.getItem(SESSION_KEY);
-    const users: User[] = rawUsers ? (JSON.parse(rawUsers) as User[]) : [];
-    state = {
-      users,
-      sessionUserId: rawSession || null,
-      superAdmin: makeSuperAdmin(),
-    };
-  } catch {
-    state = { users: [], sessionUserId: null, superAdmin: makeSuperAdmin() };
-  }
-}
-
-function persistUsers() {
-  if (typeof window === 'undefined') return;
-  try {
-    window.localStorage.setItem(USERS_KEY, JSON.stringify(state.users));
-  } catch {
-    // ignore
-  }
-}
-
-function persistSession() {
-  if (typeof window === 'undefined') return;
-  try {
-    if (state.sessionUserId) {
-      window.localStorage.setItem(SESSION_KEY, state.sessionUserId);
-    } else {
-      window.localStorage.removeItem(SESSION_KEY);
-    }
-  } catch {
-    // ignore
-  }
-}
-
 function getSnapshot(): State {
   return state;
 }
 
-// SSR snapshot — no session, no users. Hydration kicks in once the client store loads.
-const SSR_STATE: State = {
-  users: [],
-  sessionUserId: null,
-  superAdmin: makeSuperAdmin(),
-};
+// SSR + first client paint: loading, no users. Matches until bootstrap runs.
+const SSR_STATE: State = { users: [], currentUserId: null, loading: true };
 function getServerSnapshot(): State {
   return SSR_STATE;
 }
 
-let loaded = false;
-function ensureLoaded() {
-  if (loaded) return;
-  loaded = true;
-  loadFromStorage();
+let bootstrapStarted = false;
+async function ensureBootstrap() {
+  if (bootstrapStarted) return;
+  bootstrapStarted = true;
+  try {
+    const { users, currentUser } = await bootstrapOsAuth();
+    setState({
+      users: users.map(toUser),
+      currentUserId: currentUser?.id ?? null,
+      loading: false,
+    });
+  } catch {
+    // Network/DB blip — stop showing the splash; the lock screen will still
+    // render the (server-ensured, but here empty) list once retried.
+    setState({ ...state, loading: false });
+  }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -164,164 +105,139 @@ function ensureLoaded() {
 /* -------------------------------------------------------------------------- */
 
 export type AuthApi = {
+  loading: boolean;
   currentUser: User | null;
   allUsers: readonly User[];
-  /** Returns true on success, false if username/password didn't match. */
-  signIn: (username: string, password: string) => boolean;
-  signOut: () => void;
+  /** Resolves true on success, false if the credentials didn't match. */
+  signIn: (username: string, password: string) => Promise<boolean>;
+  signOut: () => Promise<void>;
   createUser: (input: {
     username: string;
     fullName: string;
     password: string;
     tone?: string;
-  }) => { ok: true; user: User } | { ok: false; error: string };
-  updateUser: (id: string, patch: Partial<Pick<User, 'fullName' | 'password' | 'tone'>>) => void;
-  /** Update the super admin record (id is fixed). Use for the super admin's own editable card. */
+  }) => Promise<{ ok: true; user: User } | { ok: false; error: string }>;
+  updateUser: (
+    id: string,
+    patch: Partial<Pick<User, 'fullName' | 'password' | 'tone'>>,
+  ) => Promise<void>;
   updateSuperAdmin: (
     patch: Partial<Pick<User, 'fullName' | 'username' | 'password' | 'tone'>>,
-  ) => { ok: true } | { ok: false; error: string };
-  deleteUser: (id: string) => void;
-  setPermissions: (id: string, perms: Permissions) => void;
-  resetAllPermissionsTo: (id: string, mode: 'none' | 'all') => void;
+  ) => Promise<{ ok: true } | { ok: false; error: string }>;
+  deleteUser: (id: string) => Promise<void>;
+  setPermissions: (id: string, perms: Permissions) => Promise<void>;
+  resetAllPermissionsTo: (id: string, mode: 'none' | 'all') => Promise<void>;
 };
 
 export function useAuth(): AuthApi {
-  // Eager-load on first client render.
-  if (typeof window !== 'undefined') ensureLoaded();
-
   const snap = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
 
-  // Resolve the current user. Super admin's id is constant; everyone else
-  // lives in `users`. Returns `null` if the session is stale (user deleted).
+  // Hydrate from the server once, on the client.
+  useEffect(() => {
+    void ensureBootstrap();
+  }, []);
+
   const currentUser: User | null =
-    snap.sessionUserId === SUPER_ADMIN_ID
-      ? snap.superAdmin
-      : (snap.users.find((u) => u.id === snap.sessionUserId) ?? null);
+    snap.users.find((u) => u.id === snap.currentUserId) ?? null;
+  const allUsers: readonly User[] = snap.users;
 
-  const allUsers: readonly User[] = [snap.superAdmin, ...snap.users];
-
-  const signIn = useCallback((username: string, password: string): boolean => {
-    const sa = state.superAdmin;
-    if (username.toLowerCase() === sa.username.toLowerCase() && password === sa.password) {
-      state = { ...state, sessionUserId: SUPER_ADMIN_ID };
-      persistSession();
-      emit();
-      return true;
-    }
-    const u = state.users.find(
-      (x) => x.username.toLowerCase() === username.toLowerCase() && x.password === password,
-    );
-    if (!u) return false;
-    state = { ...state, sessionUserId: u.id };
-    persistSession();
-    emit();
+  const signIn = useCallback(async (username: string, password: string): Promise<boolean> => {
+    const res = await signInOs(username, password);
+    if (!res.ok) return false;
+    const user = toUser(res.user);
+    setState({
+      ...state,
+      users: state.users.some((u) => u.id === user.id)
+        ? state.users.map((u) => (u.id === user.id ? user : u))
+        : [...state.users, user],
+      currentUserId: user.id,
+    });
     return true;
   }, []);
 
-  const signOut = useCallback(() => {
-    state = { ...state, sessionUserId: null };
-    persistSession();
-    emit();
+  const signOut = useCallback(async (): Promise<void> => {
+    await signOutOs();
+    setState({ ...state, currentUserId: null });
   }, []);
 
-  const createUser = useCallback<AuthApi['createUser']>((input) => {
+  const createUser = useCallback<AuthApi['createUser']>(async (input) => {
+    // Client-side pre-check for instant feedback; the server re-validates.
     const username = input.username.trim();
-    if (!username) return { ok: false, error: 'Username is required.' };
     if (username.length < 3) return { ok: false, error: 'Username must be at least 3 characters.' };
     if (!input.password || input.password.length < 4)
       return { ok: false, error: 'Password must be at least 4 characters.' };
-    if (
-      username.toLowerCase() === state.superAdmin.username.toLowerCase() ||
-      state.users.some((u) => u.username.toLowerCase() === username.toLowerCase())
-    ) {
+    if (state.users.some((u) => u.username.toLowerCase() === username.toLowerCase())) {
       return { ok: false, error: `Username "${username}" is already taken.` };
     }
-    const id = `u-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
-    const user: User = {
-      id,
+    const res = await createOsUser({
       username,
-      fullName: input.fullName.trim() || username,
+      fullName: input.fullName,
       password: input.password,
-      role: 'admin',
-      tone: input.tone ?? pickTone(state.users.length),
+      tone: input.tone,
       permissions: emptyPermissions(),
-      createdAt: new Date().toISOString(),
-    };
-    state = { ...state, users: [...state.users, user] };
-    persistUsers();
-    emit();
+    });
+    if (!res.ok) return res;
+    const user = toUser(res.user);
+    setState({ ...state, users: [...state.users, user] });
     return { ok: true, user };
   }, []);
 
-  const updateUser = useCallback<AuthApi['updateUser']>((id, patch) => {
-    state = {
-      ...state,
-      users: state.users.map((u) => (u.id === id ? { ...u, ...patch } : u)),
-    };
-    persistUsers();
-    emit();
+  const updateUser = useCallback<AuthApi['updateUser']>(async (id, patch) => {
+    const res = await updateOsUser(id, patch);
+    if (res.ok) {
+      const user = toUser(res.user);
+      setState({ ...state, users: state.users.map((u) => (u.id === id ? user : u)) });
+    }
   }, []);
 
-  const updateSuperAdmin = useCallback<AuthApi['updateSuperAdmin']>((patch) => {
-    const next: SuperAdminOverrides = {
-      username: (patch.username ?? state.superAdmin.username).trim(),
-      fullName: (patch.fullName ?? state.superAdmin.fullName).trim(),
-      password: patch.password ?? state.superAdmin.password,
-      tone: patch.tone ?? state.superAdmin.tone,
-    };
-    if (!next.username) return { ok: false, error: 'Username is required.' };
-    if (next.username.length < 3)
-      return { ok: false, error: 'Username must be at least 3 characters.' };
-    if (!next.fullName) return { ok: false, error: 'Name is required.' };
-    if (!next.password || next.password.length < 4)
-      return { ok: false, error: 'Password must be at least 4 characters.' };
-    // Username can't collide with an existing regular user.
-    if (state.users.some((u) => u.username.toLowerCase() === next.username.toLowerCase())) {
-      return { ok: false, error: `Username "${next.username}" is already taken.` };
-    }
-    persistSuperAdmin(next);
-    state = {
-      ...state,
-      superAdmin: { ...state.superAdmin, ...next },
-    };
-    emit();
+  const updateSuperAdmin = useCallback<AuthApi['updateSuperAdmin']>(async (patch) => {
+    const res = await updateOsUser(SUPER_ADMIN_ID, patch);
+    if (!res.ok) return res;
+    const user = toUser(res.user);
+    setState({ ...state, users: state.users.map((u) => (u.id === SUPER_ADMIN_ID ? user : u)) });
     return { ok: true };
   }, []);
 
-  const deleteUser = useCallback<AuthApi['deleteUser']>((id) => {
-    state = {
-      ...state,
-      users: state.users.filter((u) => u.id !== id),
-      // If the deleted user was signed in, bump them out.
-      sessionUserId: state.sessionUserId === id ? null : state.sessionUserId,
-    };
-    persistUsers();
-    persistSession();
-    emit();
+  const deleteUser = useCallback<AuthApi['deleteUser']>(async (id) => {
+    const res = await deleteOsUser(id);
+    if (res.ok) {
+      setState({
+        ...state,
+        users: state.users.filter((u) => u.id !== id),
+        currentUserId: state.currentUserId === id ? null : state.currentUserId,
+      });
+    }
   }, []);
 
-  const setPermissions = useCallback<AuthApi['setPermissions']>((id, perms) => {
-    state = {
+  const setPermissions = useCallback<AuthApi['setPermissions']>(async (id, perms) => {
+    // Optimistic — the grid updates instantly, the server persists in the bg.
+    setState({
       ...state,
       users: state.users.map((u) => (u.id === id ? { ...u, permissions: perms } : u)),
-    };
-    persistUsers();
-    emit();
+    });
+    await setOsPermissions(id, perms).catch(() => {
+      /* best-effort; a later bootstrap reconciles */
+    });
   }, []);
 
-  const resetAllPermissionsTo = useCallback<AuthApi['resetAllPermissionsTo']>((id, mode) => {
-    const next = mode === 'all' ? fullPermissions() : emptyPermissions();
-    // Admin Console is super-admin-only; never grant it to a regular admin even on "all".
-    next.admin_console = { view: false, edit: false, delete: false };
-    state = {
-      ...state,
-      users: state.users.map((u) => (u.id === id ? { ...u, permissions: next } : u)),
-    };
-    persistUsers();
-    emit();
-  }, []);
+  const resetAllPermissionsTo = useCallback<AuthApi['resetAllPermissionsTo']>(
+    async (id, mode) => {
+      const next = mode === 'all' ? fullPermissions() : emptyPermissions();
+      // Admin Console stays super-admin-only; never granted to a regular admin.
+      next.admin_console = { view: false, edit: false, delete: false };
+      setState({
+        ...state,
+        users: state.users.map((u) => (u.id === id ? { ...u, permissions: next } : u)),
+      });
+      await setOsPermissions(id, next).catch(() => {
+        /* best-effort */
+      });
+    },
+    [],
+  );
 
   return {
+    loading: snap.loading,
     currentUser,
     allUsers,
     signIn,
@@ -335,15 +251,6 @@ export function useAuth(): AuthApi {
   };
 }
 
-/* -------------------------------------------------------------------------- */
-/* Small helpers                                                              */
-/* -------------------------------------------------------------------------- */
-
-const TONES = ['#B5391E', '#5B6677', '#7A4E2D', '#2E8F5A', '#C46A28', '#9B3826', '#D08A1E'];
-function pickTone(seed: number): string {
-  return TONES[seed % TONES.length] ?? TONES[0]!;
-}
-
 /**
  * Convenience hook for components that just need to know whether someone is
  * signed in. Triggers a re-render on auth changes via the underlying store.
@@ -351,14 +258,10 @@ function pickTone(seed: number): string {
 export function useIsSignedIn(): boolean {
   const [, force] = useState(0);
   useEffect(() => subscribe(() => force((n) => n + 1)), []);
-  if (typeof window !== 'undefined') ensureLoaded();
-  return state.sessionUserId !== null;
-}
-
-/** Used by the lock screen to render the row of avatars. */
-export function listKnownUsers(): readonly User[] {
-  if (typeof window !== 'undefined') ensureLoaded();
-  return [state.superAdmin, ...state.users];
+  useEffect(() => {
+    void ensureBootstrap();
+  }, []);
+  return state.currentUserId !== null;
 }
 
 /** Exposed so per-user storage keys (settings, session snapshot) can use the same id. */

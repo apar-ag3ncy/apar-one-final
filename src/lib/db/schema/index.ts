@@ -50,6 +50,7 @@ export * from './role_capabilities';
 // User-facing state
 export * from './user_table_preferences';
 export * from './user_preferences';
+export * from './os_users';
 
 // Audit
 export * from './audit_log';
