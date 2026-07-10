@@ -433,6 +433,8 @@ function OperatorIdentityCard({
       setEditing(false);
       setPassword('');
       setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not save the profile.');
     } finally {
       setSaving(false);
     }
@@ -784,6 +786,8 @@ function NewUserForm({
           try {
             const err = await onCreate({ username, fullName, password });
             if (err) setError(err);
+          } catch (e) {
+            setError(e instanceof Error ? e.message : 'Could not create the user.');
           } finally {
             setSubmitting(false);
           }
