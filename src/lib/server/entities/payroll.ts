@@ -1204,17 +1204,37 @@ export type SalaryBookRow = {
   lastPaidOn: string | null;
 };
 
+/** One employee's slice of a given month. */
+export type SalaryMonthEmployee = {
+  employeeId: string;
+  employeeName: string;
+  employeeCode: string;
+  totalPaise: bigint;
+  count: number;
+};
+
+/** All salary paid in a single calendar month (`YYYY-MM`), newest first. */
+export type SalaryMonthRow = {
+  month: string; // 'YYYY-MM'
+  totalPaise: bigint;
+  count: number;
+  employeeCount: number;
+  employees: readonly SalaryMonthEmployee[];
+};
+
 export type SalaryBook = {
   rows: readonly SalaryBookRow[];
+  byMonth: readonly SalaryMonthRow[];
   totalPaise: bigint;
 };
 
 /**
- * Per-employee salary book — how much each employee has been paid, optionally
- * within a date range (paid_on), highest first. Backs the dedicated Salary Book
- * window and the Office Ledger's per-employee breakdown. Mirrors the posted
- * ledger transactions one-to-one. Aggregate only — not gated by `view_salary`,
- * mirroring the office cash/expense summaries.
+ * Salary book — how much has been paid, optionally within a date range
+ * (paid_on). Returns both views off one query: `rows` per employee (highest
+ * first) and `byMonth` per calendar month (newest first, each with its
+ * per-employee breakdown). Backs the dedicated Salary Book window and the Office
+ * Ledger's per-employee breakdown. Mirrors the posted ledger transactions
+ * one-to-one. Aggregate only — not gated by `view_salary`.
  */
 export async function getSalaryBook(args?: { from?: string; to?: string }): Promise<SalaryBook> {
   await getActorContext();
@@ -1222,33 +1242,84 @@ export async function getSalaryBook(args?: { from?: string; to?: string }): Prom
   if (args?.from) conds.push(sql`${salaryPayments.paidOn} >= ${args.from}`);
   if (args?.to) conds.push(sql`${salaryPayments.paidOn} <= ${args.to}`);
 
-  const rows = await db
+  // One row per (employee, month) — enough to assemble both the per-employee
+  // and per-month views without a second round-trip.
+  const grouped = await db
     .select({
       employeeId: salaryPayments.employeeId,
       employeeName: employees.fullName,
       employeeCode: employees.employeeCode,
+      month: sql<string>`to_char(${salaryPayments.paidOn}, 'YYYY-MM')`,
       total: sql<string>`sum(${salaryPayments.amountPaise})::text`,
       count: sql<string>`count(*)::text`,
-      last: sql<string | null>`max(${salaryPayments.paidOn})::text`,
+      last: sql<string>`max(${salaryPayments.paidOn})::text`,
     })
     .from(salaryPayments)
     .innerJoin(employees, eq(employees.id, salaryPayments.employeeId))
     .where(and(...conds))
-    .groupBy(salaryPayments.employeeId, employees.fullName, employees.employeeCode)
-    .orderBy(sql`sum(${salaryPayments.amountPaise}) desc`);
+    .groupBy(
+      salaryPayments.employeeId,
+      employees.fullName,
+      employees.employeeCode,
+      sql`to_char(${salaryPayments.paidOn}, 'YYYY-MM')`,
+    );
 
+  // Per-employee rollup.
+  const byEmp = new Map<string, SalaryBookRow>();
+  // Per-month rollup, each carrying its own per-employee map.
+  const byMonth = new Map<
+    string,
+    { totalPaise: bigint; count: number; employees: Map<string, SalaryMonthEmployee> }
+  >();
   let total = 0n;
-  const mapped = rows.map((r) => {
-    const totalPaise = BigInt(r.total);
-    total += totalPaise;
-    return {
-      employeeId: r.employeeId,
-      employeeName: r.employeeName,
-      employeeCode: r.employeeCode,
-      totalPaise,
-      count: Number(r.count),
-      lastPaidOn: r.last,
-    };
-  });
-  return { rows: mapped, totalPaise: total };
+
+  for (const g of grouped) {
+    const amt = BigInt(g.total);
+    const cnt = Number(g.count);
+    total += amt;
+
+    const emp = byEmp.get(g.employeeId);
+    if (emp) {
+      emp.totalPaise += amt;
+      emp.count += cnt;
+      if (!emp.lastPaidOn || g.last > emp.lastPaidOn) emp.lastPaidOn = g.last;
+    } else {
+      byEmp.set(g.employeeId, {
+        employeeId: g.employeeId,
+        employeeName: g.employeeName,
+        employeeCode: g.employeeCode,
+        totalPaise: amt,
+        count: cnt,
+        lastPaidOn: g.last,
+      });
+    }
+
+    let m = byMonth.get(g.month);
+    if (!m) {
+      m = { totalPaise: 0n, count: 0, employees: new Map() };
+      byMonth.set(g.month, m);
+    }
+    m.totalPaise += amt;
+    m.count += cnt;
+    m.employees.set(g.employeeId, {
+      employeeId: g.employeeId,
+      employeeName: g.employeeName,
+      employeeCode: g.employeeCode,
+      totalPaise: amt,
+      count: cnt,
+    });
+  }
+
+  const rows = [...byEmp.values()].sort((a, b) => (b.totalPaise > a.totalPaise ? 1 : -1));
+  const months: SalaryMonthRow[] = [...byMonth.entries()]
+    .sort((a, b) => (a[0] < b[0] ? 1 : -1)) // newest month first
+    .map(([month, m]) => ({
+      month,
+      totalPaise: m.totalPaise,
+      count: m.count,
+      employeeCount: m.employees.size,
+      employees: [...m.employees.values()].sort((a, b) => (b.totalPaise > a.totalPaise ? 1 : -1)),
+    }));
+
+  return { rows, byMonth: months, totalPaise: total };
 }
