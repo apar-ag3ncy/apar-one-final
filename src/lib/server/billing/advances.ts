@@ -53,7 +53,18 @@ import { advanceAllocations, invoices, refundVouchers } from '@/lib/db/schema';
 
 const RecordCustomerAdvanceInputSchema = z.object({
   clientId: z.string().uuid(),
-  bankAccountId: z.string().uuid(),
+  /** 'bank' → 1120 (needs bankAccountId); 'cash' → 1110. Back-compat default 'bank'. */
+  mode: z.enum(['bank', 'cash']).default('bank'),
+  /** Our agency bank account (bank_accounts.id) — required when mode='bank', null for cash. */
+  bankAccountId: z.string().uuid().nullish(),
+  /** How the money arrived (NEFT/RTGS/IMPS/UPI/cheque) — bank mode only. */
+  transferMethod: z.enum(['neft', 'rtgs', 'imps', 'upi', 'cheque']).nullish(),
+  /** Cheque capture (0064) — required when transferMethod='cheque'. */
+  chequeNumber: z.string().trim().max(40).nullish(),
+  chequeDate: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .nullish(),
   receiptDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   /** Advance net amount (paise). Tax is on top of this. */
   advancePaise: z.bigint().positive(),
@@ -76,11 +87,41 @@ const RecordCustomerAdvanceInputSchema = z.object({
     .refine((v) => !v || /^[0-9]{4,8}$/.test(v), { message: 'SAC must be 4 to 8 digits.' }),
   /** Free-text description of the planned service (rendered on the voucher). */
   description: z.string().trim().max(2000).nullish(),
-  method: z.enum(['bank_transfer', 'upi', 'cheque', 'card']).default('bank_transfer'),
+  /**
+   * Receipt method written to receipts.method. Normally DERIVED server-side
+   * from mode/transferMethod (see deriveReceiptMethod); this is only a
+   * back-compat fallback for legacy callers that pass method directly and
+   * omit mode/transferMethod.
+   */
+  method: z.enum(['bank_transfer', 'upi', 'cheque', 'card', 'cash']).default('bank_transfer'),
   notes: z.string().trim().max(2000).nullish(),
 });
 
 export type RecordCustomerAdvanceInput = z.input<typeof RecordCustomerAdvanceInputSchema>;
+
+type ReceiptMethod = 'bank_transfer' | 'upi' | 'cheque' | 'card' | 'cash';
+
+/**
+ * Derive the receipts.method enum value from the payment mode + transfer
+ * method — the receipts-table analogue of the Record-receipt path
+ * (client-receipts.ts derives the PDF method the same way). Cash → 'cash';
+ * cheque and UPI keep their dedicated enum members; NEFT/RTGS/IMPS collapse to
+ * 'bank_transfer' (the enum has no dedicated members for them). Falls back to
+ * `fallback` for a bank payment with no transfer method chosen.
+ */
+function deriveReceiptMethod(
+  mode: 'bank' | 'cash',
+  transferMethod: 'neft' | 'rtgs' | 'imps' | 'upi' | 'cheque' | null | undefined,
+  fallback: ReceiptMethod,
+): ReceiptMethod {
+  if (mode === 'cash') return 'cash';
+  if (transferMethod === 'cheque') return 'cheque';
+  if (transferMethod === 'upi') return 'upi';
+  if (transferMethod === 'neft' || transferMethod === 'rtgs' || transferMethod === 'imps') {
+    return 'bank_transfer';
+  }
+  return fallback;
+}
 
 export type RecordCustomerAdvanceResult = {
   advanceId: string;
@@ -98,6 +139,14 @@ export async function recordCustomerAdvance(
   requireCapability(ctx, 'receive_payment');
 
   const v = RecordCustomerAdvanceInputSchema.parse(input);
+  // Same guards as recordClientReceipt (client-receipts.ts:102-107): a bank
+  // advance needs the bank account; a cheque needs its number.
+  if (v.mode === 'bank' && !v.bankAccountId) {
+    throw new AppError('validation', 'Pick the bank account the money was received into.');
+  }
+  if (v.transferMethod === 'cheque' && !v.chequeNumber?.trim()) {
+    throw new AppError('validation', 'Enter the cheque number.');
+  }
   const settings = await loadBillingSettings();
   const fyStart = fyStartForDate(v.receiptDate, settings.fyStartMonth);
   const grossPaise = v.advancePaise + v.advanceTaxPaise;
@@ -159,6 +208,24 @@ async function insertAdvanceCore(
     tx,
   );
 
+  // Derive the mode-aware receipt fields (mirror recordClientReceipt).
+  const method = deriveReceiptMethod(v.mode, v.transferMethod, v.method);
+  const isCheque = v.transferMethod === 'cheque';
+  const chequeNumber = isCheque ? (v.chequeNumber?.trim() || null) : null;
+  const chequeDate = isCheque ? (v.chequeDate ?? null) : null;
+  // Cash advances hit 1110 (no bank sub-ledger) → no bankAccountId on the row.
+  const receiptBankAccountId = v.mode === 'cash' ? null : (v.bankAccountId ?? null);
+
+  // Cheque narration suffix — mirror client-receipts.ts:128-136. Appended to
+  // the receipt row's notes AND the receipt_vouchers notes so it surfaces on
+  // the Rule 50 voucher PDF (assembled from receipt_vouchers.notes).
+  const chequeSuffix =
+    isCheque && chequeNumber
+      ? `Cheque #${chequeNumber}${chequeDate ? ` dt ${chequeDate}` : ''}`
+      : null;
+  const withSuffix = (base: string | null): string | null =>
+    chequeSuffix ? (base?.trim() ? `${base.trim()} · ${chequeSuffix}` : chequeSuffix) : base;
+
   // a) receipts — total = gross (advance + tax) since that's what hit the bank.
   const [receiptRow] = await tx
     .insert(receipts)
@@ -167,10 +234,12 @@ async function insertAdvanceCore(
       receiptDate: v.receiptDate,
       financialYearStart: fyStart,
       clientId: v.clientId,
-      bankAccountId: v.bankAccountId,
+      bankAccountId: receiptBankAccountId,
       totalPaise: grossPaise,
-      method: v.method,
-      notes: v.notes ?? 'Customer advance (Rule 50 voucher generated).',
+      method,
+      chequeNumber,
+      chequeDate,
+      notes: withSuffix(v.notes ?? null) ?? 'Customer advance (Rule 50 voucher generated).',
       validationFlags: [],
       createdBy: ctx.userId,
       updatedBy: ctx.userId,
@@ -191,7 +260,7 @@ async function insertAdvanceCore(
       taxRateBps: v.advanceTaxRateBps,
       placeOfSupply: v.placeOfSupply ?? null,
       sacCode: v.sacCode ?? null,
-      notes: v.description ?? v.notes ?? null,
+      notes: withSuffix(v.description ?? v.notes ?? null),
       createdBy: ctx.userId,
       updatedBy: ctx.userId,
     })
@@ -223,7 +292,11 @@ async function insertAdvanceCore(
       kind: 'client_advance_received',
       input: {
         clientId: v.clientId,
-        bankAccountId: v.bankAccountId,
+        mode: v.mode,
+        transferMethod: v.transferMethod ?? null,
+        chequeNumber,
+        chequeDate,
+        bankAccountId: receiptBankAccountId,
         amountPaise: v.advancePaise,
         advanceTaxPaise: v.advanceTaxPaise,
         externalRef: `advance:${voucherNumber}`,
@@ -737,9 +810,14 @@ export async function issueRefundVoucher(args: {
     );
   }
   if (!originalReceipt.bankAccountId) {
+    // Cash advances now exist (mode='cash' → receipts.bankAccountId is null),
+    // and this refund path always credits 1120 Bank against the original bank
+    // account. We deliberately BLOCK cash-advance refunds here with a clear
+    // message rather than silently crediting 1110 — the follow-up (a proper
+    // 1110-credit cash-refund path) is out of scope for this change.
     throw new AppError(
       'validation',
-      'Original receipt has no bank account; cannot determine which bank to credit on refund.',
+      'This advance was received in cash, so there is no bank account to refund to. Refund cash advances manually (record a cash payment / journal entry). Bank, cheque and UPI advances can be refunded here.',
     );
   }
 
