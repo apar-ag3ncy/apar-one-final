@@ -101,8 +101,8 @@ export function AdminConsole() {
         {creating && (
           <NewUserForm
             onCancel={() => setCreating(false)}
-            onCreate={(input) => {
-              const result = createUser(input);
+            onCreate={async (input) => {
+              const result = await createUser(input);
               if (result.ok) {
                 setSelectedId(result.user.id);
                 setCreating(false);
@@ -155,14 +155,14 @@ export function AdminConsole() {
               <button
                 type="button"
                 className="btn"
-                onClick={() => resetAllPermissionsTo(selected.id, 'all')}
+                onClick={() => void resetAllPermissionsTo(selected.id, 'all')}
               >
                 <Icon name="check" size={13} /> Grant all
               </button>
               <button
                 type="button"
                 className="btn"
-                onClick={() => resetAllPermissionsTo(selected.id, 'none')}
+                onClick={() => void resetAllPermissionsTo(selected.id, 'none')}
               >
                 <Icon name="close" size={13} /> Revoke all
               </button>
@@ -172,7 +172,7 @@ export function AdminConsole() {
                 style={{ color: 'var(--apar-red)' }}
                 onClick={() => {
                   if (window.confirm(`Delete ${selected.fullName}? This cannot be undone.`)) {
-                    deleteUser(selected.id);
+                    void deleteUser(selected.id);
                   }
                 }}
               >
@@ -201,7 +201,7 @@ export function AdminConsole() {
                         [action]: value,
                       },
                     };
-                    setPermissions(selected.id, next);
+                    void setPermissions(selected.id, next);
                   }}
                 />
               </>
@@ -404,29 +404,38 @@ function OperatorIdentityCard({
   user: User;
   onSave: (
     patch: Partial<Pick<User, 'fullName' | 'username' | 'password'>>,
-  ) => { ok: true } | { ok: false; error: string };
+  ) => Promise<{ ok: true } | { ok: false; error: string }>;
 }) {
   const [editing, setEditing] = useState(false);
   const [fullName, setFullName] = useState(user.fullName);
   const [username, setUsername] = useState(user.username);
-  const [password, setPassword] = useState(user.password);
+  // Password is never sent to the client — leave blank to keep the current one.
+  const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
   const reset = () => {
     setFullName(user.fullName);
     setUsername(user.username);
-    setPassword(user.password);
+    setPassword('');
     setError(null);
   };
 
-  const save = () => {
-    const result = onSave({ fullName, username, password });
-    if (!result.ok) {
-      setError(result.error);
-      return;
+  const save = async () => {
+    if (saving) return;
+    setSaving(true);
+    try {
+      const result = await onSave({ fullName, username, ...(password ? { password } : {}) });
+      if (!result.ok) {
+        setError(result.error);
+        return;
+      }
+      setEditing(false);
+      setPassword('');
+      setError(null);
+    } finally {
+      setSaving(false);
     }
-    setEditing(false);
-    setError(null);
   };
 
   return (
@@ -457,8 +466,13 @@ function OperatorIdentityCard({
         </div>
         {editing ? (
           <div style={{ display: 'flex', gap: 6 }}>
-            <button type="button" className="btn primary" onClick={save}>
-              Save
+            <button
+              type="button"
+              className="btn primary"
+              onClick={() => void save()}
+              disabled={saving}
+            >
+              {saving ? 'Saving…' : 'Save'}
             </button>
             <button
               type="button"
@@ -512,6 +526,7 @@ function OperatorIdentityCard({
               type="text"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
+              placeholder="Leave blank to keep current"
               autoComplete="new-password"
             />
           </label>
@@ -542,15 +557,16 @@ function RegularIdentityCard({
   onSave,
 }: {
   user: User;
-  onSave: (patch: Partial<Pick<User, 'fullName' | 'password' | 'tone'>>) => void;
+  onSave: (patch: Partial<Pick<User, 'fullName' | 'password' | 'tone'>>) => Promise<void> | void;
 }) {
   const [editing, setEditing] = useState(false);
   const [fullName, setFullName] = useState(user.fullName);
-  const [password, setPassword] = useState(user.password);
+  // Password is never sent to the client — leave blank to keep the current one.
+  const [password, setPassword] = useState('');
 
   const reset = () => {
     setFullName(user.fullName);
-    setPassword(user.password);
+    setPassword('');
   };
 
   return (
@@ -585,7 +601,7 @@ function RegularIdentityCard({
               type="button"
               className="btn primary"
               onClick={() => {
-                onSave({ fullName, password });
+                void onSave({ fullName, ...(password ? { password } : {}) });
                 setEditing(false);
               }}
             >
@@ -633,6 +649,7 @@ function RegularIdentityCard({
               type="text"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
+              placeholder="Leave blank to keep current"
               autoComplete="new-password"
             />
           </label>
@@ -745,19 +762,32 @@ function NewUserForm({
   onCreate,
 }: {
   onCancel: () => void;
-  onCreate: (input: { username: string; fullName: string; password: string }) => string | null;
+  onCreate: (input: {
+    username: string;
+    fullName: string;
+    password: string;
+  }) => Promise<string | null>;
 }) {
   const [username, setUsername] = useState('');
   const [fullName, setFullName] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
 
   return (
     <form
       onSubmit={(e) => {
         e.preventDefault();
-        const err = onCreate({ username, fullName, password });
-        if (err) setError(err);
+        if (submitting) return;
+        setSubmitting(true);
+        void (async () => {
+          try {
+            const err = await onCreate({ username, fullName, password });
+            if (err) setError(err);
+          } finally {
+            setSubmitting(false);
+          }
+        })();
       }}
       style={{
         marginTop: 12,

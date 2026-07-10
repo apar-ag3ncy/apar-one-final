@@ -69,7 +69,7 @@ import { OfficeApp } from './apps/office-app';
 import type { AppDef, AppId, Client, CmdAction, DockBounds, Vendor } from './types';
 
 export function OsRoot() {
-  const { currentUser, signOut } = useAuth();
+  const { loading, currentUser, signOut } = useAuth();
   const pathname = usePathname();
   const router = useRouter();
 
@@ -128,6 +128,18 @@ export function OsRoot() {
     );
   }
 
+  // While the server-backed accounts hydrate, show a neutral splash rather than
+  // flashing the lock screen with a stale/empty user list.
+  if (loading) {
+    return (
+      <div className="os-root">
+        <div className="lock-screen">
+          <div aria-hidden className="lock-screen__noise" />
+        </div>
+      </div>
+    );
+  }
+
   // Gate the desktop behind sign-in.
   if (!currentUser) {
     return (
@@ -156,9 +168,9 @@ function Desktop({ signOut }: { signOut: () => void }) {
   const setDisplayName = useCallback(
     (fullName: string) => {
       if (user.id === SUPER_ADMIN_USER_ID) {
-        updateSuperAdmin({ fullName });
+        void updateSuperAdmin({ fullName });
       } else {
-        updateUser(user.id, { fullName });
+        void updateUser(user.id, { fullName });
       }
     },
     [user.id, updateSuperAdmin, updateUser],

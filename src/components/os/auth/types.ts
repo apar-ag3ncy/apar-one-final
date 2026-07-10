@@ -24,11 +24,12 @@ export type User = {
   username: string;
   fullName: string;
   /**
-   * Demo placeholder for the real credential. We deliberately call this
-   * `password` (not `passwordHash`) so nobody mistakes it for production-grade
-   * storage. Production swaps this whole module for Supabase Auth.
+   * Legacy field — passwords now live server-side (scrypt-hashed in the
+   * `os_users` table) and are never sent to the client, so this is only ever
+   * present transiently in edit forms. Kept optional so the identity-card
+   * `Pick<User, 'password'>` patch types keep working.
    */
-  password: string;
+  password?: string;
   role: Role;
   /** Avatar background colour. */
   tone: string;
