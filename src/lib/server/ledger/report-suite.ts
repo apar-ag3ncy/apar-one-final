@@ -642,6 +642,14 @@ function universalDocNumber(reference: string): string | null {
   }
 }
 
+/** One double-entry posting line of a transaction (for the journal view). */
+export type UniversalLedgerLeg = {
+  accountCode: string;
+  accountName: string;
+  side: 'debit' | 'credit';
+  amountPaise: bigint;
+};
+
 export type UniversalLedgerRow = {
   txnId: string;
   txnDate: string;
@@ -657,6 +665,9 @@ export type UniversalLedgerRow = {
   documentNumber: string | null;
   /** Transaction total = Σ debit-leg postings (debits equal credits). */
   amountPaise: bigint;
+  /** The transaction's posting legs — debits first, then credits — so the row
+   *  can render as a proper double-entry journal entry. */
+  legs: readonly UniversalLedgerLeg[];
 };
 
 export type UniversalLedgerPage = {
@@ -754,8 +765,47 @@ export async function getUniversalLedger(args: {
   `);
   const totalsRow = (Array.isArray(totals) ? totals : [])[0];
 
+  // Fetch the double-entry legs for just this page's transactions (2-3 each),
+  // so each row can render as a proper journal entry. Debits before credits,
+  // then by GL code, so the entry reads "Account Dr … / To Account".
+  const pageRows = Array.isArray(rows) ? rows : [];
+  const legsByTxn = new Map<string, UniversalLedgerLeg[]>();
+  if (pageRows.length > 0) {
+    const txnIds = sql.join(
+      pageRows.map((r) => sql`${r.txn_id}::uuid`),
+      sql`, `,
+    );
+    const legRows = await db.execute<{
+      txn_id: string;
+      account_code: string;
+      account_name: string;
+      side: 'debit' | 'credit';
+      amount: string;
+    }>(sql`
+      SELECT p.transaction_id::text AS txn_id, a.code AS account_code, a.name AS account_name,
+        p.side::text AS side, p.amount_paise::text AS amount
+      FROM postings p
+      JOIN accounts a ON a.id = p.account_id
+      WHERE p.transaction_id IN (${txnIds})
+      ORDER BY (p.side = 'debit') DESC, a.code
+    `);
+    for (const l of Array.isArray(legRows) ? legRows : []) {
+      let arr = legsByTxn.get(l.txn_id);
+      if (!arr) {
+        arr = [];
+        legsByTxn.set(l.txn_id, arr);
+      }
+      arr.push({
+        accountCode: l.account_code,
+        accountName: l.account_name,
+        side: l.side,
+        amountPaise: BigInt(l.amount),
+      });
+    }
+  }
+
   return {
-    rows: (Array.isArray(rows) ? rows : []).map((r) => ({
+    rows: pageRows.map((r) => ({
       txnId: r.txn_id,
       txnDate: r.txn_date,
       externalRef: r.external_ref,
@@ -765,6 +815,7 @@ export async function getUniversalLedger(args: {
       bankAccountLabel: r.bank_account_label,
       documentNumber: universalDocNumber(r.external_ref),
       amountPaise: BigInt(r.amount),
+      legs: legsByTxn.get(r.txn_id) ?? [],
     })),
     totalCount: Number(totalsRow?.total_count ?? 0),
     totalAmountPaise: BigInt(totalsRow?.total_amount ?? '0'),

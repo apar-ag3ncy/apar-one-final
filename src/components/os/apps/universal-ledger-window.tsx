@@ -5,11 +5,15 @@
 // with counterparty, doc number and total; rows click through to the
 // transaction window. Server-paged so the whole history stays browsable.
 
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 
 import { formatINR } from '@/components/shared/format-inr';
 import { paiseToRupees } from '@/lib/client/export-rows';
-import { getUniversalLedger, type UniversalLedgerPage } from '@/lib/server/ledger/report-suite';
+import {
+  getUniversalLedger,
+  type UniversalLedgerPage,
+  type UniversalLedgerRow,
+} from '@/lib/server/ledger/report-suite';
 import { navigateBesideFocused } from './navigate';
 import {
   DateField,
@@ -59,6 +63,15 @@ const controlInputStyle: React.CSSProperties = {
   color: 'var(--text)',
 };
 
+/** The "(Being … )"-style narration under each journal entry. */
+function narration(r: UniversalLedgerRow): string {
+  const parts = [r.kind.replace(/_/g, ' ')];
+  if (r.counterpartyName) parts.push(r.counterpartyName);
+  if (r.description) parts.push(r.description);
+  if (r.bankAccountLabel) parts.push(r.bankAccountLabel);
+  return parts.join(' · ');
+}
+
 export function UniversalLedgerWindow() {
   const fy = currentFyDefaults();
   const [fromDate, setFromDate] = useState(fy.fromDate);
@@ -91,15 +104,33 @@ export function UniversalLedgerWindow() {
 
   function handleExport(format: ExportFormat) {
     if (!data) return;
-    const headers = ['Date', 'Ref / Doc', 'Kind', 'Party', 'Narration', 'Amount'];
-    const rows: Record<string, string | number>[] = data.rows.map((r) => ({
-      Date: r.txnDate.slice(0, 10),
-      'Ref / Doc': r.documentNumber ?? r.externalRef,
-      Kind: r.kind.replace(/_/g, ' '),
-      Party: r.counterpartyName ?? '',
-      Narration: r.description ?? '',
-      Amount: paiseToRupees(r.amountPaise),
-    }));
+    // One row per posting leg, in journal form — debits then credits — so the
+    // exported sheet reconciles column by column (Σ Debit = Σ Credit).
+    const headers = ['Date', 'Particulars', 'Voucher', 'Debit', 'Credit'];
+    const rows: Record<string, string | number>[] = [];
+    for (const r of data.rows) {
+      const legs = [...r.legs].sort((a, b) => (a.side === b.side ? 0 : a.side === 'debit' ? -1 : 1));
+      legs.forEach((leg, i) => {
+        rows.push({
+          Date: i === 0 ? r.txnDate.slice(0, 10) : '',
+          Particulars:
+            leg.side === 'debit'
+              ? `${leg.accountName} A/c (${leg.accountCode})`
+              : `    To ${leg.accountName} A/c (${leg.accountCode})`,
+          Voucher: i === 0 ? (r.documentNumber ?? r.externalRef) : '',
+          Debit: leg.side === 'debit' ? paiseToRupees(leg.amountPaise) : '',
+          Credit: leg.side === 'credit' ? paiseToRupees(leg.amountPaise) : '',
+        });
+      });
+      // Narration line for the entry.
+      rows.push({
+        Date: '',
+        Particulars: `  (${narration(r)})`,
+        Voucher: '',
+        Debit: '',
+        Credit: '',
+      });
+    }
     exportRows(
       rows,
       headers,
@@ -112,7 +143,7 @@ export function UniversalLedgerWindow() {
   return (
     <ReportWindowFrame
       title="Universal Ledger"
-      subtitle="Every transaction across the company — clients, vendors, office, salaries — in one statement."
+      subtitle="Every transaction across the company in double-entry journal form — each entry shows its debits and credits (Dr = Cr)."
       error={error}
       loading={!data}
       isEmpty={!!data && data.rows.length === 0}
@@ -174,51 +205,79 @@ export function UniversalLedgerWindow() {
     >
       {data ? (
         <>
-          <table className="table">
+          <table className="table" style={{ fontVariantNumeric: 'tabular-nums' }}>
             <thead>
               <tr>
-                <th>Date</th>
-                <th>Ref / Doc</th>
-                <th>Kind</th>
-                <th>Party</th>
-                <th>Narration</th>
-                <th style={{ textAlign: 'right' }}>Amount</th>
+                <th style={{ whiteSpace: 'nowrap' }}>Date</th>
+                <th>Particulars</th>
+                <th>Voucher</th>
+                <th style={{ textAlign: 'right' }}>Debit</th>
+                <th style={{ textAlign: 'right' }}>Credit</th>
               </tr>
             </thead>
             <tbody>
-              {data.rows.map((r) => (
-                <tr
-                  key={r.txnId}
-                  style={{ cursor: 'pointer' }}
-                  onClick={() => navigateBesideFocused({ type: 'transaction', id: r.txnId })}
-                >
-                  <td style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
-                    {new Date(r.txnDate).toLocaleDateString('en-IN', {
-                      day: '2-digit',
-                      month: 'short',
-                      year: '2-digit',
-                    })}
-                  </td>
-                  <td>
-                    <div style={{ fontSize: 12 }}>{r.documentNumber ?? r.externalRef}</div>
-                    {r.bankAccountLabel ? (
-                      <div style={{ fontSize: 10.5, color: 'var(--text-muted)' }}>
-                        {r.bankAccountLabel}
-                      </div>
-                    ) : null}
-                  </td>
-                  <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-                    {r.kind.replace(/_/g, ' ')}
-                  </td>
-                  <td style={{ fontSize: 12 }}>{r.counterpartyName ?? '—'}</td>
-                  <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-                    {r.description ?? '—'}
-                  </td>
-                  <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
-                    {formatINR(r.amountPaise)}
-                  </td>
-                </tr>
-              ))}
+              {data.rows.map((r) => {
+                const legs = [...r.legs].sort((a, b) =>
+                  a.side === b.side ? 0 : a.side === 'debit' ? -1 : 1,
+                );
+                const open = () => navigateBesideFocused({ type: 'transaction', id: r.txnId });
+                return (
+                  <Fragment key={r.txnId}>
+                    {legs.map((leg, i) => (
+                      <tr
+                        key={`${r.txnId}-${i}`}
+                        style={{
+                          cursor: 'pointer',
+                          borderTop: i === 0 ? '2px solid var(--border)' : undefined,
+                        }}
+                        onClick={open}
+                      >
+                        <td style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                          {i === 0
+                            ? new Date(r.txnDate).toLocaleDateString('en-IN', {
+                                day: '2-digit',
+                                month: 'short',
+                                year: '2-digit',
+                              })
+                            : ''}
+                        </td>
+                        <td style={{ fontSize: 12.5 }}>
+                          <span style={{ paddingLeft: leg.side === 'credit' ? 22 : 0 }}>
+                            {leg.side === 'credit' ? 'To ' : ''}
+                            {leg.accountName} A/c
+                          </span>
+                          <span style={{ marginLeft: 6, fontSize: 10.5, color: 'var(--text-muted)' }}>
+                            {leg.accountCode}
+                          </span>
+                        </td>
+                        <td style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>
+                          {i === 0 ? (r.documentNumber ?? r.externalRef) : ''}
+                        </td>
+                        <td style={{ textAlign: 'right' }}>
+                          {leg.side === 'debit' ? formatINR(leg.amountPaise) : ''}
+                        </td>
+                        <td style={{ textAlign: 'right' }}>
+                          {leg.side === 'credit' ? formatINR(leg.amountPaise) : ''}
+                        </td>
+                      </tr>
+                    ))}
+                    <tr style={{ cursor: 'pointer' }} onClick={open}>
+                      <td />
+                      <td
+                        colSpan={4}
+                        style={{
+                          fontSize: 11,
+                          color: 'var(--text-muted)',
+                          fontStyle: 'italic',
+                          paddingBottom: 8,
+                        }}
+                      >
+                        ({narration(r)})
+                      </td>
+                    </tr>
+                  </Fragment>
+                );
+              })}
             </tbody>
           </table>
           <div
@@ -233,8 +292,8 @@ export function UniversalLedgerWindow() {
             }}
           >
             <span style={{ fontSize: 12, fontWeight: 600 }}>
-              Total (all matches): {formatINR(data.totalAmountPaise)} · {data.totalCount}{' '}
-              transactions
+              Debit = Credit = {formatINR(data.totalAmountPaise)} · {data.totalCount} entr
+              {data.totalCount === 1 ? 'y' : 'ies'}
             </span>
             <div style={{ flex: 1 }} />
             <button
