@@ -3039,13 +3039,23 @@ function ImportOfficeExpensesModal({
         result.categoriesCreated > 0
           ? ` (${result.categoriesCreated} new categor${result.categoriesCreated === 1 ? 'y' : 'ies'})`
           : '';
+      // Duplicates are skipped, not failed — always call them out so the count
+      // in the toast reconciles with the number of rows in the sheet.
+      const dupMsg =
+        result.duplicatesSkipped > 0
+          ? ` ${result.duplicatesSkipped} duplicate${result.duplicatesSkipped === 1 ? '' : 's'} skipped.`
+          : '';
       if (result.errors.length > 0) {
         const first = result.errors
           .slice(0, 3)
           .map((e) => `row ${e.row}: ${e.message}`)
           .join('; ');
         toast.warning(
-          `Imported ${result.inserted} expense${result.inserted === 1 ? '' : 's'}${catMsg}. ${result.errors.length} row${result.errors.length === 1 ? '' : 's'} failed — ${first}`,
+          `Imported ${result.inserted} expense${result.inserted === 1 ? '' : 's'}${catMsg}.${dupMsg} ${result.errors.length} row${result.errors.length === 1 ? '' : 's'} failed — ${first}`,
+        );
+      } else if (result.duplicatesSkipped > 0) {
+        toast.warning(
+          `Imported ${result.inserted} expense${result.inserted === 1 ? '' : 's'}${catMsg}.${dupMsg}`,
         );
       } else {
         toast.success(
