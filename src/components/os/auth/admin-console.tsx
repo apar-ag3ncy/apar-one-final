@@ -2,11 +2,7 @@
 
 import { useEffect, useMemo, useState, useTransition } from 'react';
 import { toast } from 'sonner';
-import {
-  changeVaultPassword,
-  getVaultStatus,
-  setupVault,
-} from '@/lib/server/settings/vault';
+import { changeVaultPassword, getVaultStatus, setupVault } from '@/lib/server/settings/vault';
 import { Icon } from '../icons';
 import { initials } from '../format';
 import { APPS } from '../data';
@@ -143,74 +139,74 @@ export function AdminConsole() {
           </div>
         </div>
       ) : (
-      <div className="main">
-        <div className="main-header">
-          <h2>Admin</h2>
-          <span className="sub">
-            {allUsers.length} {allUsers.length === 1 ? 'user' : 'users'}
-          </span>
-          <div className="grow" />
-          {selected && selected.role !== 'super_admin' ? (
-            <>
-              <button
-                type="button"
-                className="btn"
-                onClick={() => void resetAllPermissionsTo(selected.id, 'all')}
-              >
-                <Icon name="check" size={13} /> Grant all
-              </button>
-              <button
-                type="button"
-                className="btn"
-                onClick={() => void resetAllPermissionsTo(selected.id, 'none')}
-              >
-                <Icon name="close" size={13} /> Revoke all
-              </button>
-              <button
-                type="button"
-                className="btn"
-                style={{ color: 'var(--apar-red)' }}
-                onClick={() => {
-                  if (window.confirm(`Delete ${selected.fullName}? This cannot be undone.`)) {
-                    void deleteUser(selected.id);
-                  }
-                }}
-              >
-                <Icon name="trash" size={13} /> Delete user
-              </button>
-            </>
-          ) : null}
-        </div>
-        <div style={{ flex: 1, overflow: 'auto', padding: 20 }}>
-          {selected ? (
-            selected.role === 'super_admin' ? (
-              <OperatorIdentityCard user={selected} onSave={updateSuperAdmin} />
-            ) : (
+        <div className="main">
+          <div className="main-header">
+            <h2>Admin</h2>
+            <span className="sub">
+              {allUsers.length} {allUsers.length === 1 ? 'user' : 'users'}
+            </span>
+            <div className="grow" />
+            {selected && selected.role !== 'super_admin' ? (
               <>
-                <RegularIdentityCard
-                  user={selected}
-                  onSave={(patch) => updateUser(selected.id, patch)}
-                />
-                <PermissionGrid
-                  user={selected}
-                  onToggle={(appId, action, value) => {
-                    const next: Permissions = {
-                      ...selected.permissions,
-                      [appId]: {
-                        ...selected.permissions[appId],
-                        [action]: value,
-                      },
-                    };
-                    void setPermissions(selected.id, next);
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={() => void resetAllPermissionsTo(selected.id, 'all')}
+                >
+                  <Icon name="check" size={13} /> Grant all
+                </button>
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={() => void resetAllPermissionsTo(selected.id, 'none')}
+                >
+                  <Icon name="close" size={13} /> Revoke all
+                </button>
+                <button
+                  type="button"
+                  className="btn"
+                  style={{ color: 'var(--apar-red)' }}
+                  onClick={() => {
+                    if (window.confirm(`Delete ${selected.fullName}? This cannot be undone.`)) {
+                      void deleteUser(selected.id);
+                    }
                   }}
-                />
+                >
+                  <Icon name="trash" size={13} /> Delete user
+                </button>
               </>
-            )
-          ) : (
-            <div style={{ color: 'var(--text-muted)' }}>Pick a user from the left.</div>
-          )}
+            ) : null}
+          </div>
+          <div style={{ flex: 1, overflow: 'auto', padding: 20 }}>
+            {selected ? (
+              selected.role === 'super_admin' ? (
+                <OperatorIdentityCard user={selected} onSave={updateSuperAdmin} />
+              ) : (
+                <>
+                  <RegularIdentityCard
+                    user={selected}
+                    onSave={(patch) => updateUser(selected.id, patch)}
+                  />
+                  <PermissionGrid
+                    user={selected}
+                    onToggle={(appId, action, value) => {
+                      const next: Permissions = {
+                        ...selected.permissions,
+                        [appId]: {
+                          ...selected.permissions[appId],
+                          [action]: value,
+                        },
+                      };
+                      void setPermissions(selected.id, next);
+                    }}
+                  />
+                </>
+              )
+            ) : (
+              <div style={{ color: 'var(--text-muted)' }}>Pick a user from the left.</div>
+            )}
+          </div>
         </div>
-      </div>
       )}
     </>
   );
@@ -321,7 +317,9 @@ function VaultPasswordPane() {
   const creating = phase === 'create';
   return (
     <div style={{ maxWidth: 440 }}>
-      <p style={{ margin: '0 0 14px', fontSize: 12.5, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+      <p
+        style={{ margin: '0 0 14px', fontSize: 12.5, color: 'var(--text-muted)', lineHeight: 1.5 }}
+      >
         {creating
           ? 'The vault has no password yet. Pick one — everything stored in the vault is encrypted with it, and there is no recovery if it is lost.'
           : 'Changing the password re-encrypts every vault entry under a fresh key. The current password is required — without it the entries cannot be decrypted, so there is no recovery if it is lost.'}
@@ -344,7 +342,9 @@ function VaultPasswordPane() {
           </label>
         )}
         <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-          <span className="admin-field-label">{creating ? 'Vault password' : 'New vault password'}</span>
+          <span className="admin-field-label">
+            {creating ? 'Vault password' : 'New vault password'}
+          </span>
           <input
             className="admin-input"
             type="password"
@@ -358,7 +358,9 @@ function VaultPasswordPane() {
           />
         </label>
         <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-          <span className="admin-field-label">Confirm {creating ? 'password' : 'new password'}</span>
+          <span className="admin-field-label">
+            Confirm {creating ? 'password' : 'new password'}
+          </span>
           <input
             className="admin-input"
             type="password"

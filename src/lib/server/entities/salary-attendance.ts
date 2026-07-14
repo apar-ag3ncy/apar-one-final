@@ -3,12 +3,7 @@
 import { and, asc, eq, gte, isNull, lte, or } from 'drizzle-orm';
 
 import { db } from '@/lib/db/client';
-import {
-  attendanceRecords,
-  companyHolidays,
-  employees,
-  salaryStructures,
-} from '@/lib/db/schema';
+import { attendanceRecords, companyHolidays, employees, salaryStructures } from '@/lib/db/schema';
 import { isUndefinedTableError } from '@/lib/db/pg-errors';
 import { AppError } from '@/lib/errors';
 import { requireCapability } from '@/lib/rbac';
@@ -56,13 +51,18 @@ export type SalaryAttendancePreview = {
   lines: readonly SalaryAttendanceLine[];
 };
 
-function monthBounds(month: string): { year: number; monthIdx: number; from: string; to: string; lastDay: number } {
+function monthBounds(month: string): {
+  year: number;
+  monthIdx: number;
+  from: string;
+  to: string;
+  lastDay: number;
+} {
   const [y, m] = month.split('-').map(Number) as [number, number];
   const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate();
   const pad = (n: number) => String(n).padStart(2, '0');
   return { year: y, monthIdx: m - 1, from: `${month}-01`, to: `${month}-${pad(lastDay)}`, lastDay };
 }
-
 
 function sumAllowances(raw: unknown): bigint {
   if (!Array.isArray(raw)) return 0n;

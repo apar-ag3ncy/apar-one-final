@@ -2,7 +2,13 @@
 
 import { useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { UploadIcon, AlertCircleIcon, FileIcon, DownloadIcon, CheckCircle2Icon } from 'lucide-react';
+import {
+  UploadIcon,
+  AlertCircleIcon,
+  FileIcon,
+  DownloadIcon,
+  CheckCircle2Icon,
+} from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { toast } from 'sonner';
 
@@ -53,7 +59,10 @@ const COLUMNS = {
     label: 'Personal Email',
     aliases: ['personal_email', 'personalemail', 'private_email'],
   },
-  phone: { label: 'Phone', aliases: ['phone', 'mobile', 'contact', 'phone_number', 'mobile_number'] },
+  phone: {
+    label: 'Phone',
+    aliases: ['phone', 'mobile', 'contact', 'phone_number', 'mobile_number'],
+  },
   designation: { label: 'Designation', aliases: ['designation', 'title', 'role', 'job_title'] },
   department: { label: 'Department', aliases: ['department', 'dept', 'team'] },
   employmentType: {
@@ -123,8 +132,7 @@ export function ImportEmployeesDialog({ onImported }: { onImported?: () => void 
     try {
       const buf = await file.arrayBuffer();
       const wb = XLSX.read(new Uint8Array(buf), { type: 'array', cellDates: true });
-      const sheetName =
-        wb.SheetNames.find((n) => /employee/i.test(n)) ?? wb.SheetNames[0];
+      const sheetName = wb.SheetNames.find((n) => /employee/i.test(n)) ?? wb.SheetNames[0];
       if (!sheetName) throw new Error('The workbook has no sheets.');
       const ws = wb.Sheets[sheetName]!;
       const aoa = XLSX.utils.sheet_to_json<unknown[]>(ws, {
@@ -183,7 +191,9 @@ export function ImportEmployeesDialog({ onImported }: { onImported?: () => void 
       const result = await importEmployees(inputs);
       setOutcome({ ...result, total: inputs.length });
       if (result.errors.length === 0) {
-        toast.success(`Imported ${result.successCount} employee${result.successCount === 1 ? '' : 's'}.`);
+        toast.success(
+          `Imported ${result.successCount} employee${result.successCount === 1 ? '' : 's'}.`,
+        );
         router.refresh();
         onImported?.();
       } else {
@@ -239,7 +249,9 @@ export function ImportEmployeesDialog({ onImported }: { onImported?: () => void 
     const instructions = [
       ['Apar — Employee Import Template'],
       [''],
-      ['Fill the "Employees" sheet — one row per employee. Delete the two example rows before uploading.'],
+      [
+        'Fill the "Employees" sheet — one row per employee. Delete the two example rows before uploading.',
+      ],
       [''],
       ['Column', 'Required?', 'Notes'],
       ['Full Name', 'Yes', 'The only required field.'],
@@ -282,8 +294,8 @@ export function ImportEmployeesDialog({ onImported }: { onImported?: () => void 
         <DialogHeader>
           <DialogTitle>Import employees from Excel</DialogTitle>
           <DialogDescription>
-            Download the Excel template, fill one row per employee, then upload it here. Every row is
-            created with the same validation as the New-employee form.
+            Download the Excel template, fill one row per employee, then upload it here. Every row
+            is created with the same validation as the New-employee form.
           </DialogDescription>
         </DialogHeader>
 
@@ -319,7 +331,9 @@ export function ImportEmployeesDialog({ onImported }: { onImported?: () => void 
                       <p className="text-muted-foreground text-sm">
                         <span className="font-semibold">Click to upload</span> your filled file
                       </p>
-                      <p className="text-muted-foreground text-xs">.xlsx, .xls or .csv (max 5 MB)</p>
+                      <p className="text-muted-foreground text-xs">
+                        .xlsx, .xls or .csv (max 5 MB)
+                      </p>
                     </>
                   )}
                 </div>
@@ -376,7 +390,8 @@ function ImportResult({ outcome }: { outcome: ImportOutcome }) {
           <ul className="text-muted-foreground list-inside list-disc space-y-0.5">
             {outcome.errors.map((e) => (
               <li key={e.index}>
-                <span className="text-foreground">{e.name || `Row ${e.index + 2}`}</span>: {e.message}
+                <span className="text-foreground">{e.name || `Row ${e.index + 2}`}</span>:{' '}
+                {e.message}
               </li>
             ))}
           </ul>
@@ -387,7 +402,10 @@ function ImportResult({ outcome }: { outcome: ImportOutcome }) {
 }
 
 function normalizeHeader(value: string): string {
-  return value.trim().toLowerCase().replace(/[\s-]+/g, '_');
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, '_');
 }
 
 function firstHeaderIndex(headers: readonly string[], names: readonly string[]): number {
@@ -399,7 +417,10 @@ function firstHeaderIndex(headers: readonly string[], names: readonly string[]):
 }
 
 function normalizeEmploymentType(raw: string): CreateEmployeeInput['employmentType'] {
-  const v = raw.trim().toLowerCase().replace(/[\s-]+/g, '_');
+  const v = raw
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, '_');
   if (!v) return 'full_time';
   if (['full_time', 'fulltime', 'permanent', 'ft'].includes(v)) return 'full_time';
   if (['part_time', 'parttime', 'pt'].includes(v)) return 'part_time';
@@ -410,7 +431,10 @@ function normalizeEmploymentType(raw: string): CreateEmployeeInput['employmentTy
 }
 
 function normalizeStatus(raw: string): CreateEmployeeInput['status'] {
-  const v = raw.trim().toLowerCase().replace(/[\s-]+/g, '_');
+  const v = raw
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, '_');
   if (!v) return 'active';
   if ((STATUSES as readonly string[]).includes(v)) return v as CreateEmployeeInput['status'];
   if (['onleave', 'leave'].includes(v)) return 'on_leave';

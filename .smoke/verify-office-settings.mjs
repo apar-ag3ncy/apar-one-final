@@ -6,7 +6,8 @@ import fs from 'node:fs';
 
 const BASE = process.env.BASE;
 const PASSWORD = process.env.OS_PASSWORD || 'apar2026';
-const OUT = '/private/tmp/claude-501/-Users-swayamzinzuwadia-Documents-Code-apar-one-final/60c9eb94-94ae-48d7-978b-cdeb1ced03dc/scratchpad/verify-shots';
+const OUT =
+  '/private/tmp/claude-501/-Users-swayamzinzuwadia-Documents-Code-apar-one-final/60c9eb94-94ae-48d7-978b-cdeb1ced03dc/scratchpad/verify-shots';
 fs.mkdirSync(OUT, { recursive: true });
 
 const browser = await chromium.launch({ channel: 'chrome', args: ['--no-sandbox'] });
@@ -40,13 +41,23 @@ try {
   for (let i = 0; i < dockCount; i++) {
     await dockItems.nth(i).hover();
     await page.waitForTimeout(250);
-    dockNames.push(((await page.locator('.dock-tooltip').textContent().catch(() => '')) ?? '').trim());
+    dockNames.push(
+      (
+        (await page
+          .locator('.dock-tooltip')
+          .textContent()
+          .catch(() => '')) ?? ''
+      ).trim(),
+    );
   }
   const labels = dockNames.join('|');
   report(
     'dock is exactly Accounts/Office/Trash/Settings',
     dockCount === 4 &&
-      /Accounts/i.test(labels) && /Office/i.test(labels) && /Trash/i.test(labels) && /Settings/i.test(labels) &&
+      /Accounts/i.test(labels) &&
+      /Office/i.test(labels) &&
+      /Trash/i.test(labels) &&
+      /Settings/i.test(labels) &&
       !/Projects|Employees|Admin/i.test(labels),
     `${dockCount} items: ${labels}`,
   );
@@ -67,7 +78,10 @@ try {
   await shot('os-02-office-launcher');
 
   // 2a) Expenses tile → expense tracker (not "record no longer available")
-  await page.getByRole('button', { name: /Expenses/ }).first().click();
+  await page
+    .getByRole('button', { name: /Expenses/ })
+    .first()
+    .click();
   await page.waitForTimeout(2500);
   const expWin = (await page.locator('.window').last().textContent()) ?? '';
   report(
@@ -75,16 +89,26 @@ try {
     !/no longer available/i.test(expWin) && /(Office|expense|Add expense|total)/i.test(expWin),
     expWin.slice(0, 120),
   );
-  report('office launcher dismissed', (await page.locator('.window', { hasText: 'Pick where you' }).count()) === 0);
+  report(
+    'office launcher dismissed',
+    (await page.locator('.window', { hasText: 'Pick where you' }).count()) === 0,
+  );
   await shot('os-03-expenses');
 
   // 2b) Projects tile
   await cmdk('Close all apps');
   await cmdk('Open Office');
-  await page.getByRole('button', { name: /Projects/ }).first().click();
+  await page
+    .getByRole('button', { name: /Projects/ })
+    .first()
+    .click();
   await page.waitForTimeout(2500);
   const projWin = (await page.locator('.window').last().textContent()) ?? '';
-  report('Projects tile opens kanban', /(kanban|In progress|Backlog|New project|Projects)/i.test(projWin), projWin.slice(0, 100));
+  report(
+    'Projects tile opens kanban',
+    /(kanban|In progress|Backlog|New project|Projects)/i.test(projWin),
+    projWin.slice(0, 100),
+  );
   await shot('os-04-projects');
 
   // 2c) Team tile → directory grid; card uniformity
@@ -93,7 +117,11 @@ try {
   await page.getByRole('button', { name: /^Team/ }).first().click();
   await page.waitForTimeout(3000);
   const teamWin = (await page.locator('.window').last().textContent()) ?? '';
-  report('Team tile opens directory', /(Search|teammate|Active)/i.test(teamWin), teamWin.slice(0, 100));
+  report(
+    'Team tile opens directory',
+    /(Search|teammate|Active)/i.test(teamWin),
+    teamWin.slice(0, 100),
+  );
 
   // Card uniformity: all cards in the grid should share the same height per row
   const cardHeights = await page
@@ -105,17 +133,28 @@ try {
     const spread = Math.max(...cardHeights) - Math.min(...cardHeights);
     report('employee cards uniform height', spread <= 2, `heights=${cardHeights.join(',')}`);
   } else {
-    report('employee cards uniform height', true, `only ${cardHeights.length} measurable cards (skip)`);
+    report(
+      'employee cards uniform height',
+      true,
+      `only ${cardHeights.length} measurable cards (skip)`,
+    );
   }
   await shot('os-05-team-cards');
 
   // 2d) Attendance tile
   await cmdk('Close all apps');
   await cmdk('Open Office');
-  await page.getByRole('button', { name: /Attendance/ }).first().click();
+  await page
+    .getByRole('button', { name: /Attendance/ })
+    .first()
+    .click();
   await page.waitForTimeout(2500);
   const attWin = (await page.locator('.window').last().textContent()) ?? '';
-  report('Attendance tile opens matrix', /(attendance|Present|holiday|matrix|Mark)/i.test(attWin), attWin.slice(0, 100));
+  report(
+    'Attendance tile opens matrix',
+    /(attendance|Present|holiday|matrix|Mark)/i.test(attWin),
+    attWin.slice(0, 100),
+  );
   await shot('os-06-attendance');
 
   // 3) Settings: Users & Roles section with embedded admin console
@@ -123,7 +162,11 @@ try {
   await cmdk('Open Settings');
   const setWin = page.locator('.window').last();
   const sideText = (await setWin.locator('.sidebar').first().textContent()) ?? '';
-  report('Settings sidebar shows Users & Roles', /Users & Roles/.test(sideText), sideText.slice(0, 200));
+  report(
+    'Settings sidebar shows Users & Roles',
+    /Users & Roles/.test(sideText),
+    sideText.slice(0, 200),
+  );
   await setWin.locator('.side-item', { hasText: 'Users & Roles' }).first().click();
   await page.waitForTimeout(1500);
   const consoleText = (await setWin.textContent()) ?? '';
@@ -132,7 +175,10 @@ try {
     /New user/i.test(consoleText) && /Users/.test(consoleText),
     consoleText.slice(0, 150),
   );
-  report('no duplicated Trash inside console sidebar', !/Restore or dispose permanently/.test(consoleText));
+  report(
+    'no duplicated Trash inside console sidebar',
+    !/Restore or dispose permanently/.test(consoleText),
+  );
   await shot('os-07-users-roles');
 
   // 4) cmdk should NOT offer Open Projects / Open Employees / Admin Console
@@ -143,7 +189,9 @@ try {
   const palette = (await page.locator('.cmdk-list, [class*="cmdk"]').last().textContent()) ?? '';
   report(
     'palette hides Projects/Employees/Admin apps',
-    !/Open Projects/i.test(palette) && !/Open Employees/i.test(palette) && !/Admin Console/i.test(palette),
+    !/Open Projects/i.test(palette) &&
+      !/Open Employees/i.test(palette) &&
+      !/Admin Console/i.test(palette),
     palette.slice(0, 200),
   );
   await page.keyboard.press('Escape');

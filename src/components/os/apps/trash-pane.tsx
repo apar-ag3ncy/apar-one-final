@@ -158,9 +158,9 @@ export function TrashPane() {
         <div>
           <div className="label">Trash</div>
           <div className="desc">
-            Deleted clients, vendors, teammates, projects, office expenses and documents, grouped
-            by app. Restore brings an item back; permanent delete cannot be undone. Anything left
-            here for more than 30 days is disposed of automatically — only its log line remains.
+            Deleted clients, vendors, teammates, projects, office expenses and documents, grouped by
+            app. Restore brings an item back; permanent delete cannot be undone. Anything left here
+            for more than 30 days is disposed of automatically — only its log line remains.
           </div>
         </div>
       </div>
@@ -186,104 +186,108 @@ export function TrashPane() {
                 {SECTION_LABEL[sectionKind]} ({items.filter((i) => i.kind === sectionKind).length})
               </div>
               <table className="table">
-            <thead>
-              <tr>
-                <th style={{ width: 130 }}>Type</th>
-                <th>Item</th>
-                <th style={{ width: 90 }}>Reason</th>
-                <th style={{ width: 170 }}>Deleted</th>
-                <th style={{ width: 200 }} />
-              </tr>
-            </thead>
-            <tbody>
-              {items.filter((i) => i.kind === sectionKind).map((item) => {
-                const key = rowKey(item);
-                const busy = busyKey === key;
-                const confirming = confirmKey === key;
-                return (
-                  <tr key={key} className="row-clickable">
-                    <td>
-                      <span className={`pill ${item.reason === 'archived' ? 'amber' : ''}`}>
-                        {KIND_LABEL[item.kind]}
-                      </span>
-                    </td>
-                    <td>
-                      <div style={{ fontWeight: 600 }}>{item.label}</div>
-                      {item.sublabel ? (
-                        <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                          {item.sublabel}
-                        </div>
-                      ) : null}
-                    </td>
-                    <td style={{ color: 'var(--text-muted)', textTransform: 'capitalize' }}>
-                      {item.reason}
-                    </td>
-                    <td style={{ color: 'var(--text-muted)' }}>{formatWhen(item.deletedAt)}</td>
-                    <td style={{ textAlign: 'right' }}>
-                      {confirming ? (
-                        <div
-                          style={{
-                            display: 'flex',
-                            gap: 6,
-                            justifyContent: 'flex-end',
-                            alignItems: 'center',
-                          }}
-                        >
-                          <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Delete?</span>
-                          <button
-                            type="button"
-                            className="btn"
-                            style={{
-                              background: 'var(--apar-red-deep)',
-                              borderColor: 'transparent',
-                              color: '#fff',
-                            }}
-                            disabled={busy}
-                            onClick={() => void purge(item)}
-                          >
-                            Yes, delete
-                          </button>
-                          <button
-                            type="button"
-                            className="btn"
-                            disabled={busy}
-                            onClick={() => setConfirmKey(null)}
-                          >
-                            Cancel
-                          </button>
-                        </div>
-                      ) : (
-                        <div
-                          style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}
-                        >
-                          <button
-                            type="button"
-                            className="btn"
-                            disabled={busy}
-                            title="Restore this item"
-                            onClick={() => void restore(item)}
-                          >
-                            <RotateCcwIcon size={12} aria-hidden />
-                            Restore
-                          </button>
-                          <button
-                            type="button"
-                            className="btn"
-                            style={{ color: 'var(--apar-red)' }}
-                            disabled={busy}
-                            title="Permanently delete — cannot be undone"
-                            onClick={() => setConfirmKey(key)}
-                          >
-                            <Icon name="trash" size={12} />
-                            Delete
-                          </button>
-                        </div>
-                      )}
-                    </td>
+                <thead>
+                  <tr>
+                    <th style={{ width: 130 }}>Type</th>
+                    <th>Item</th>
+                    <th style={{ width: 90 }}>Reason</th>
+                    <th style={{ width: 170 }}>Deleted</th>
+                    <th style={{ width: 200 }} />
                   </tr>
-                );
-              })}
-            </tbody>
+                </thead>
+                <tbody>
+                  {items
+                    .filter((i) => i.kind === sectionKind)
+                    .map((item) => {
+                      const key = rowKey(item);
+                      const busy = busyKey === key;
+                      const confirming = confirmKey === key;
+                      return (
+                        <tr key={key} className="row-clickable">
+                          <td>
+                            <span className={`pill ${item.reason === 'archived' ? 'amber' : ''}`}>
+                              {KIND_LABEL[item.kind]}
+                            </span>
+                          </td>
+                          <td>
+                            <div style={{ fontWeight: 600 }}>{item.label}</div>
+                            {item.sublabel ? (
+                              <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                                {item.sublabel}
+                              </div>
+                            ) : null}
+                          </td>
+                          <td style={{ color: 'var(--text-muted)', textTransform: 'capitalize' }}>
+                            {item.reason}
+                          </td>
+                          <td style={{ color: 'var(--text-muted)' }}>
+                            {formatWhen(item.deletedAt)}
+                          </td>
+                          <td style={{ textAlign: 'right' }}>
+                            {confirming ? (
+                              <div
+                                style={{
+                                  display: 'flex',
+                                  gap: 6,
+                                  justifyContent: 'flex-end',
+                                  alignItems: 'center',
+                                }}
+                              >
+                                <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                                  Delete?
+                                </span>
+                                <button
+                                  type="button"
+                                  className="btn"
+                                  style={{
+                                    background: 'var(--apar-red-deep)',
+                                    borderColor: 'transparent',
+                                    color: '#fff',
+                                  }}
+                                  disabled={busy}
+                                  onClick={() => void purge(item)}
+                                >
+                                  Yes, delete
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn"
+                                  disabled={busy}
+                                  onClick={() => setConfirmKey(null)}
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            ) : (
+                              <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                                <button
+                                  type="button"
+                                  className="btn"
+                                  disabled={busy}
+                                  title="Restore this item"
+                                  onClick={() => void restore(item)}
+                                >
+                                  <RotateCcwIcon size={12} aria-hidden />
+                                  Restore
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn"
+                                  style={{ color: 'var(--apar-red)' }}
+                                  disabled={busy}
+                                  title="Permanently delete — cannot be undone"
+                                  onClick={() => setConfirmKey(key)}
+                                >
+                                  <Icon name="trash" size={12} />
+                                  Delete
+                                </button>
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                </tbody>
               </table>
             </div>
           ))
@@ -314,9 +318,7 @@ export function TrashPane() {
               }}
             >
               <div style={{ minWidth: 0, flex: 1, fontSize: 12.5 }}>{entry.summary}</div>
-              <div
-                style={{ fontSize: 11, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}
-              >
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
                 {entry.actorName ?? 'System'} · {formatWhen(entry.at)}
               </div>
             </div>

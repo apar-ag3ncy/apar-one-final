@@ -6,7 +6,8 @@ import fs from 'node:fs';
 
 const BASE = process.env.BASE || 'https://apar-one-final.vercel.app';
 const PASSWORD = process.env.OS_PASSWORD || 'apar2026';
-const OUT = '/private/tmp/claude-501/-Users-swayamzinzuwadia-Documents-Code-apar-one-final/60c9eb94-94ae-48d7-978b-cdeb1ced03dc/scratchpad/verify-shots';
+const OUT =
+  '/private/tmp/claude-501/-Users-swayamzinzuwadia-Documents-Code-apar-one-final/60c9eb94-94ae-48d7-978b-cdeb1ced03dc/scratchpad/verify-shots';
 fs.mkdirSync(OUT, { recursive: true });
 
 const browser = await chromium.launch({ channel: 'chrome', args: ['--no-sandbox'] });
@@ -58,13 +59,20 @@ try {
   // 2) Office → Expenses: Manage button in the chips strip
   await cmdk('Close all apps');
   await cmdk('Open Office');
-  await page.getByRole('button', { name: /Expenses/ }).first().click();
+  await page
+    .getByRole('button', { name: /Expenses/ })
+    .first()
+    .click();
   await page.waitForTimeout(4000);
   const ow = page.locator('.window').last();
   const hasManage = (await ow.getByRole('button', { name: /Manage/ }).count()) > 0;
   const hasCustomCats = /New Expense/.test((await ow.textContent()) ?? '');
   report('Office app loads', hasCustomCats);
-  report('Manage button present (or no custom categories yet)', hasManage || true, hasManage ? 'visible' : 'no custom categories — hidden by design');
+  report(
+    'Manage button present (or no custom categories yet)',
+    hasManage || true,
+    hasManage ? 'visible' : 'no custom categories — hidden by design',
+  );
   await shot('prod95-02-office');
 
   // 3) Trash renders with the payroll deletions surfaced (user's old deletes)

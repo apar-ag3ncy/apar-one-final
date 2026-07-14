@@ -1,11 +1,6 @@
 import 'server-only';
 
-import {
-  CAPABILITIES,
-  CAPABILITY_SET,
-  type Capability,
-  type Role,
-} from './capabilities';
+import { CAPABILITIES, CAPABILITY_SET, type Capability, type Role } from './capabilities';
 import { AppError } from './errors';
 import type { SupabaseServerClient } from './supabase/server';
 

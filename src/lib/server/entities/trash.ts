@@ -21,10 +21,7 @@ import {
 import { AppError } from '@/lib/errors';
 import { getActorContext } from '@/lib/server/actor';
 import { restoreClient, hardDeleteClient } from '@/lib/server/entities/clients';
-import {
-  restoreDocument,
-  permanentlyDeleteDocument,
-} from '@/lib/server/entities/entity-documents';
+import { restoreDocument, permanentlyDeleteDocument } from '@/lib/server/entities/entity-documents';
 import { restoreEmployee, hardDeleteEmployee } from '@/lib/server/entities/employees';
 import {
   restoreOfficeExpense,

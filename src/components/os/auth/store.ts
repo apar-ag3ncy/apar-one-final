@@ -137,8 +137,7 @@ export function useAuth(): AuthApi {
     void ensureBootstrap();
   }, []);
 
-  const currentUser: User | null =
-    snap.users.find((u) => u.id === snap.currentUserId) ?? null;
+  const currentUser: User | null = snap.users.find((u) => u.id === snap.currentUserId) ?? null;
   const allUsers: readonly User[] = snap.users;
 
   const signIn = useCallback(async (username: string, password: string): Promise<boolean> => {
@@ -220,21 +219,18 @@ export function useAuth(): AuthApi {
     });
   }, []);
 
-  const resetAllPermissionsTo = useCallback<AuthApi['resetAllPermissionsTo']>(
-    async (id, mode) => {
-      const next = mode === 'all' ? fullPermissions() : emptyPermissions();
-      // Admin Console stays super-admin-only; never granted to a regular admin.
-      next.admin_console = { view: false, edit: false, delete: false };
-      setState({
-        ...state,
-        users: state.users.map((u) => (u.id === id ? { ...u, permissions: next } : u)),
-      });
-      await setOsPermissions(id, next).catch(() => {
-        /* best-effort */
-      });
-    },
-    [],
-  );
+  const resetAllPermissionsTo = useCallback<AuthApi['resetAllPermissionsTo']>(async (id, mode) => {
+    const next = mode === 'all' ? fullPermissions() : emptyPermissions();
+    // Admin Console stays super-admin-only; never granted to a regular admin.
+    next.admin_console = { view: false, edit: false, delete: false };
+    setState({
+      ...state,
+      users: state.users.map((u) => (u.id === id ? { ...u, permissions: next } : u)),
+    });
+    await setOsPermissions(id, next).catch(() => {
+      /* best-effort */
+    });
+  }, []);
 
   return {
     loading: snap.loading,

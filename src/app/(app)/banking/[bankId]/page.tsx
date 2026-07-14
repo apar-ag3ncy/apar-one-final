@@ -73,7 +73,7 @@ export default async function BankBookPage({ params, searchParams }: Props) {
               </thead>
               <tbody>
                 {from ? (
-                  <tr className="text-muted-foreground border-b bg-muted/30">
+                  <tr className="text-muted-foreground bg-muted/30 border-b">
                     <td className="px-4 py-2" colSpan={4}>
                       Brought forward (before {from})
                     </td>
@@ -84,10 +84,7 @@ export default async function BankBookPage({ params, searchParams }: Props) {
                 ) : null}
                 {book.lines.length === 0 ? (
                   <tr>
-                    <td
-                      className="text-muted-foreground px-4 py-10 text-center"
-                      colSpan={5}
-                    >
+                    <td className="text-muted-foreground px-4 py-10 text-center" colSpan={5}>
                       No postings yet. Recorded receipts and payments to this account will appear
                       here.
                     </td>
@@ -95,7 +92,7 @@ export default async function BankBookPage({ params, searchParams }: Props) {
                 ) : (
                   book.lines.map((l) => (
                     <tr key={l.postingId} className="border-b last:border-0">
-                      <td className="whitespace-nowrap px-4 py-2 tabular-nums">{l.txnDate}</td>
+                      <td className="px-4 py-2 whitespace-nowrap tabular-nums">{l.txnDate}</td>
                       <td className="px-4 py-2">
                         <div className="font-medium">{l.description ?? l.kind}</div>
                         <div className="text-muted-foreground text-xs">
@@ -103,10 +100,10 @@ export default async function BankBookPage({ params, searchParams }: Props) {
                           {l.status !== 'posted' ? ` · ${l.status}` : ''}
                         </div>
                       </td>
-                      <td className="px-4 py-2 text-right tabular-nums text-emerald-600">
+                      <td className="px-4 py-2 text-right text-emerald-600 tabular-nums">
                         {l.side === 'debit' ? formatINR(l.amountPaise) : ''}
                       </td>
-                      <td className="px-4 py-2 text-right tabular-nums text-rose-600">
+                      <td className="px-4 py-2 text-right text-rose-600 tabular-nums">
                         {l.side === 'credit' ? formatINR(l.amountPaise) : ''}
                       </td>
                       <td className="px-4 py-2 text-right font-medium tabular-nums">

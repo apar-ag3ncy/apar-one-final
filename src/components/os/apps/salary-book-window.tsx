@@ -90,7 +90,13 @@ export function SalaryBookWindow() {
           Total: paiseToRupees(e.totalPaise),
         })),
       );
-      exportRows(rows, headers, `salary-by-month-${fromDate}_to_${toDate}`, format, 'Salary by month');
+      exportRows(
+        rows,
+        headers,
+        `salary-by-month-${fromDate}_to_${toDate}`,
+        format,
+        'Salary by month',
+      );
       return;
     }
     const headers = ['Employee', 'Code', 'Payments', 'Last paid', 'Total'];
@@ -293,7 +299,9 @@ export function SalaryBookWindow() {
                             <td style={td} />
                             <td style={{ ...td, paddingLeft: 18 }}>
                               {e.employeeName}
-                              <span style={{ marginLeft: 8, color: 'var(--text-muted)', fontSize: 11 }}>
+                              <span
+                                style={{ marginLeft: 8, color: 'var(--text-muted)', fontSize: 11 }}
+                              >
                                 {e.employeeCode}
                               </span>
                             </td>

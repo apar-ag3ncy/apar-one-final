@@ -87,14 +87,7 @@ function toSummary(t: InvoiceTheme): InvoiceThemeSummary {
 // Built-in react-pdf families + the four embedded faces (see
 // server/billing/pdf/fonts). Kept local: a 'use server' module may only EXPORT
 // async functions, so the client copy lives in `@/lib/billing/invoice-fonts`.
-const INVOICE_FONTS = [
-  'Helvetica',
-  'Times-Roman',
-  'Courier',
-  'Rubik',
-  'Inter',
-  'Lato',
-] as const;
+const INVOICE_FONTS = ['Helvetica', 'Times-Roman', 'Courier', 'Rubik', 'Inter', 'Lato'] as const;
 type InvoiceFont = (typeof INVOICE_FONTS)[number];
 
 const HEX_RE = /^#[0-9a-fA-F]{6}$/;

@@ -1583,9 +1583,7 @@ function TasksBody({
               onClick={() => setPickerFor(t.id)}
               disabled={busy}
               title={
-                t.assignees.length > 0
-                  ? t.assignees.map((a) => a.name).join(', ')
-                  : 'Assign people'
+                t.assignees.length > 0 ? t.assignees.map((a) => a.name).join(', ') : 'Assign people'
               }
               style={{ fontSize: 12 }}
             >
@@ -1606,9 +1604,7 @@ function TasksBody({
                 </option>
               ))}
               {t.categoryId && !categories.some((c) => c.id === t.categoryId) ? (
-                <option value={t.categoryId}>
-                  {t.categoryName ?? 'Archived category'}
-                </option>
+                <option value={t.categoryId}>{t.categoryName ?? 'Archived category'}</option>
               ) : null}
             </select>
             <select
@@ -1701,7 +1697,9 @@ function TasksBody({
             >
               {targets.map((tg) => (
                 <option key={tg.id} value={tg.id}>
-                  {tg.id === projectId ? `${tg.name} (parent)` : `${tg.code ? tg.code + ' · ' : ''}${tg.name}`}
+                  {tg.id === projectId
+                    ? `${tg.name} (parent)`
+                    : `${tg.code ? tg.code + ' · ' : ''}${tg.name}`}
                 </option>
               ))}
             </select>

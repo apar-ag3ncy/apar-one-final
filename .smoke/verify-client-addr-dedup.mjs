@@ -6,7 +6,8 @@ import fs from 'node:fs';
 
 const BASE = process.env.BASE;
 const PASSWORD = process.env.OS_PASSWORD || 'apar2026';
-const OUT = '/private/tmp/claude-501/-Users-swayamzinzuwadia-Documents-Code-apar-one-final/60c9eb94-94ae-48d7-978b-cdeb1ced03dc/scratchpad/verify-shots';
+const OUT =
+  '/private/tmp/claude-501/-Users-swayamzinzuwadia-Documents-Code-apar-one-final/60c9eb94-94ae-48d7-978b-cdeb1ced03dc/scratchpad/verify-shots';
 fs.mkdirSync(OUT, { recursive: true });
 
 const browser = await chromium.launch({ channel: 'chrome', args: ['--no-sandbox'] });
@@ -33,7 +34,10 @@ try {
   await page.waitForTimeout(1200);
 
   await cmdk('Open Accounts');
-  await page.getByRole('button', { name: /Clients/ }).first().click();
+  await page
+    .getByRole('button', { name: /Clients/ })
+    .first()
+    .click();
   await page.waitForTimeout(2500);
 
   // Open the first REAL client row (wait out the demo-seed race by waiting
@@ -46,7 +50,11 @@ try {
 
   const cw = page.locator('.window').last();
   const tabs = (await cw.textContent()) ?? '';
-  report('client window opened with tabs', /Addresses/.test(tabs) && /Settings/.test(tabs), tabs.slice(0, 120));
+  report(
+    'client window opened with tabs',
+    /Addresses/.test(tabs) && /Settings/.test(tabs),
+    tabs.slice(0, 120),
+  );
 
   // Addresses tab still renders the section
   await cw.getByText('Addresses', { exact: true }).first().click();

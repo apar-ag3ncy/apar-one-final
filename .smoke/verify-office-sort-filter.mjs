@@ -7,8 +7,10 @@ import fs from 'node:fs';
 
 const BASE = process.env.BASE;
 const PASSWORD = process.env.OS_PASSWORD || 'apar2026';
-const OUT = '/private/tmp/claude-501/-Users-swayamzinzuwadia-Documents-Code-apar-one-final/60c9eb94-94ae-48d7-978b-cdeb1ced03dc/scratchpad/verify-shots';
-const TMP = '/private/tmp/claude-501/-Users-swayamzinzuwadia-Documents-Code-apar-one-final/60c9eb94-94ae-48d7-978b-cdeb1ced03dc/scratchpad';
+const OUT =
+  '/private/tmp/claude-501/-Users-swayamzinzuwadia-Documents-Code-apar-one-final/60c9eb94-94ae-48d7-978b-cdeb1ced03dc/scratchpad/verify-shots';
+const TMP =
+  '/private/tmp/claude-501/-Users-swayamzinzuwadia-Documents-Code-apar-one-final/60c9eb94-94ae-48d7-978b-cdeb1ced03dc/scratchpad';
 fs.mkdirSync(OUT, { recursive: true });
 
 // single-sheet workbook WITH a Category column, to prove it's ignored
@@ -48,7 +50,10 @@ try {
   await page.waitForTimeout(1200);
 
   await cmdk('Open Office');
-  await page.getByRole('button', { name: /Expenses/ }).first().click();
+  await page
+    .getByRole('button', { name: /Expenses/ })
+    .first()
+    .click();
   await page.waitForTimeout(3500);
   const ow = page.locator('.window').last();
   await ow.locator('table tbody tr').first().waitFor({ timeout: 20000 });
@@ -62,16 +67,26 @@ try {
   await dateTh.click(); // desc -> asc
   await page.waitForTimeout(600);
   const asc1 = await firstRowText();
-  report('Date sort flips ascending (order changes)', asc1 !== desc0, `desc0=${desc0.slice(0,18)} asc1=${asc1.slice(0,18)}`);
+  report(
+    'Date sort flips ascending (order changes)',
+    asc1 !== desc0,
+    `desc0=${desc0.slice(0, 18)} asc1=${asc1.slice(0, 18)}`,
+  );
   report('active Date header shows ▲ when ascending', /▲/.test((await dateTh.textContent()) ?? ''));
   await dateTh.click(); // asc -> desc
   await page.waitForTimeout(600);
-  report('active Date header shows ▼ when descending', /▼/.test((await dateTh.textContent()) ?? ''));
+  report(
+    'active Date header shows ▼ when descending',
+    /▼/.test((await dateTh.textContent()) ?? ''),
+  );
   // amount sort
   const amtTh = ow.locator('th', { hasText: 'Amount' }).first();
   await amtTh.click();
   await page.waitForTimeout(600);
-  report('Amount header becomes the active sort', /[▲▼]/.test((await amtTh.textContent()) ?? '') && /↕/.test((await dateTh.textContent()) ?? ''));
+  report(
+    'Amount header becomes the active sort',
+    /[▲▼]/.test((await amtTh.textContent()) ?? '') && /↕/.test((await dateTh.textContent()) ?? ''),
+  );
   await shot('osf-01-sort');
 
   // --- DATE FILTER -----------------------------------------------------------
@@ -81,7 +96,10 @@ try {
   await page.waitForTimeout(500);
   const fromInput = ow.locator('input[aria-label="From date"]');
   const toInput = ow.locator('input[aria-label="To date"]');
-  report('custom range shows from/to date inputs', (await fromInput.count()) === 1 && (await toInput.count()) === 1);
+  report(
+    'custom range shows from/to date inputs',
+    (await fromInput.count()) === 1 && (await toInput.count()) === 1,
+  );
   await fromInput.fill('2019-01-01');
   await toInput.fill('2019-01-02');
   await page.waitForTimeout(800);
@@ -96,15 +114,27 @@ try {
   report('wide range returns rows', rowsWide > 0, `rows=${rowsWide}`);
   // preset dropdown has the expected options
   const presetText = (await dateSelect.textContent()) ?? '';
-  report('presets include week/month/quarter/FY', /This week/.test(presetText) && /This month/.test(presetText) && /This quarter/.test(presetText) && /financial year/.test(presetText));
+  report(
+    'presets include week/month/quarter/FY',
+    /This week/.test(presetText) &&
+      /This month/.test(presetText) &&
+      /This quarter/.test(presetText) &&
+      /financial year/.test(presetText),
+  );
   await dateSelect.selectOption('all');
   await page.waitForTimeout(500);
 
   // --- IMPORT → Others -------------------------------------------------------
-  await ow.getByRole('button', { name: /Import/ }).first().click();
+  await ow
+    .getByRole('button', { name: /Import/ })
+    .first()
+    .click();
   await page.waitForTimeout(1000);
   const modal = page.locator('.os-modal').last();
-  report('import modal says imports go under Others', /filed\s+under\s+Others/i.test((await modal.textContent()) ?? ''));
+  report(
+    'import modal says imports go under Others',
+    /filed\s+under\s+Others/i.test((await modal.textContent()) ?? ''),
+  );
   await modal.locator('input[type="file"]').setInputFiles(catFile);
   await page.waitForTimeout(2500);
   const previewCats = await modal.locator('table tbody tr td:nth-child(3)').allTextContents();

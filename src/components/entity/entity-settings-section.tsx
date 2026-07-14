@@ -151,9 +151,8 @@ export function EntitySettingsSection({
       <Card title="Lifecycle">
         <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0, lineHeight: 1.5 }}>
           Delete moves this {kind} to the Trash — recoverable for 30 days, then disposed of
-          automatically. Restore brings it back.
-          Permanent delete removes the row entirely and refuses if any non-reversed transactions
-          still reference it.
+          automatically. Restore brings it back. Permanent delete removes the row entirely and
+          refuses if any non-reversed transactions still reference it.
         </p>
         <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
           {isArchived ? (

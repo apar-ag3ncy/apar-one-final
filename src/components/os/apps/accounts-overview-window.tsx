@@ -306,7 +306,10 @@ export function AccountsOverviewWindow() {
                 })
               }
             />
-            <SubLink label="ageing by client →" onClick={() => openReport('ar-aging', 'AR Aging')} />
+            <SubLink
+              label="ageing by client →"
+              onClick={() => openReport('ar-aging', 'AR Aging')}
+            />
             <Line
               label="Income this month"
               value={incomeMonth}
@@ -360,7 +363,10 @@ export function AccountsOverviewWindow() {
                 })
               }
             />
-            <SubLink label="ageing by vendor →" onClick={() => openReport('ap-aging', 'AP Aging')} />
+            <SubLink
+              label="ageing by vendor →"
+              onClick={() => openReport('ap-aging', 'AP Aging')}
+            />
             <Line
               label="Direct costs this month"
               value={directCostMonth}

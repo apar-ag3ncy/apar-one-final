@@ -10,12 +10,32 @@ import * as React from 'react';
 
 const WEEKDAYS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'] as const;
 const MONTHS_SHORT = [
-  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'May',
+  'Jun',
+  'Jul',
+  'Aug',
+  'Sep',
+  'Oct',
+  'Nov',
+  'Dec',
 ] as const;
 const MONTHS_LONG = [
-  'January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December',
+  'January',
+  'February',
+  'March',
+  'April',
+  'May',
+  'June',
+  'July',
+  'August',
+  'September',
+  'October',
+  'November',
+  'December',
 ] as const;
 
 const ACCENT = 'var(--calendar-accent, #e63a1f)';
@@ -26,7 +46,13 @@ function startOfDay(d: Date): Date {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate());
 }
 function sameDay(a: Date | null | undefined, b: Date | null | undefined): boolean {
-  return !!a && !!b && a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+  return (
+    !!a &&
+    !!b &&
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate()
+  );
 }
 
 export type IosCalendarProps = {
@@ -43,7 +69,9 @@ export function IosCalendar({ value, onSelect, min, max, defaultMonth }: IosCale
   const today = React.useMemo(() => startOfDay(new Date()), []);
   const initial = value ?? defaultMonth ?? today;
   // The displayed month (any day within it).
-  const [view, setView] = React.useState<Date>(new Date(initial.getFullYear(), initial.getMonth(), 1));
+  const [view, setView] = React.useState<Date>(
+    new Date(initial.getFullYear(), initial.getMonth(), 1),
+  );
   // Open at the MONTHS level: pick a month → days, or tap the year → years.
   const [mode, setMode] = React.useState<'days' | 'months' | 'years'>('months');
   // The popover remounts this component every time it opens, so `view`'s
@@ -63,7 +91,10 @@ export function IosCalendar({ value, onSelect, min, max, defaultMonth }: IosCale
   const cells = React.useMemo(() => {
     const first = new Date(year, month, 1);
     const gridStart = new Date(year, month, 1 - first.getDay());
-    return Array.from({ length: 42 }, (_, i) => new Date(gridStart.getFullYear(), gridStart.getMonth(), gridStart.getDate() + i));
+    return Array.from(
+      { length: 42 },
+      (_, i) => new Date(gridStart.getFullYear(), gridStart.getMonth(), gridStart.getDate() + i),
+    );
   }, [year, month]);
 
   const shiftMonth = (delta: number) => setView(new Date(year, month + delta, 1));
@@ -74,9 +105,19 @@ export function IosCalendar({ value, onSelect, min, max, defaultMonth }: IosCale
   const years = Array.from({ length: 12 }, (_, i) => yearPageStart + i);
 
   const navBtn: React.CSSProperties = {
-    width: 30, height: 30, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-    borderRadius: 8, border: 'none', background: 'transparent', color: 'inherit', cursor: 'pointer',
-    fontSize: 17, lineHeight: 1, padding: 0,
+    width: 30,
+    height: 30,
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 8,
+    border: 'none',
+    background: 'transparent',
+    color: 'inherit',
+    cursor: 'pointer',
+    fontSize: 17,
+    lineHeight: 1,
+    padding: 0,
   };
 
   return (
@@ -89,9 +130,19 @@ export function IosCalendar({ value, onSelect, min, max, defaultMonth }: IosCale
           // years → back to months.
           onClick={() => setMode(mode === 'months' ? 'years' : 'months')}
           style={{
-            flex: 1, textAlign: 'left', background: 'transparent', border: 'none', color: 'inherit',
-            cursor: 'pointer', fontSize: 15, fontWeight: 600, padding: '4px 6px', borderRadius: 8,
-            display: 'inline-flex', alignItems: 'center', gap: 4,
+            flex: 1,
+            textAlign: 'left',
+            background: 'transparent',
+            border: 'none',
+            color: 'inherit',
+            cursor: 'pointer',
+            fontSize: 15,
+            fontWeight: 600,
+            padding: '4px 6px',
+            borderRadius: 8,
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 4,
           }}
           aria-label="Switch month or year"
         >
@@ -106,7 +157,13 @@ export function IosCalendar({ value, onSelect, min, max, defaultMonth }: IosCale
           type="button"
           style={navBtn}
           aria-label="Previous"
-          onClick={() => (mode === 'days' ? shiftMonth(-1) : mode === 'months' ? shiftYear(-1) : setView(new Date(year - 12, month, 1)))}
+          onClick={() =>
+            mode === 'days'
+              ? shiftMonth(-1)
+              : mode === 'months'
+                ? shiftYear(-1)
+                : setView(new Date(year - 12, month, 1))
+          }
         >
           ‹
         </button>
@@ -114,7 +171,13 @@ export function IosCalendar({ value, onSelect, min, max, defaultMonth }: IosCale
           type="button"
           style={navBtn}
           aria-label="Next"
-          onClick={() => (mode === 'days' ? shiftMonth(1) : mode === 'months' ? shiftYear(1) : setView(new Date(year + 12, month, 1)))}
+          onClick={() =>
+            mode === 'days'
+              ? shiftMonth(1)
+              : mode === 'months'
+                ? shiftYear(1)
+                : setView(new Date(year + 12, month, 1))
+          }
         >
           ›
         </button>
@@ -125,7 +188,16 @@ export function IosCalendar({ value, onSelect, min, max, defaultMonth }: IosCale
           {/* Weekday header */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', marginBottom: 4 }}>
             {WEEKDAYS.map((w, i) => (
-              <div key={i} style={{ textAlign: 'center', fontSize: 11, fontWeight: 600, color: MUTED, padding: '2px 0' }}>
+              <div
+                key={i}
+                style={{
+                  textAlign: 'center',
+                  fontSize: 11,
+                  fontWeight: 600,
+                  color: MUTED,
+                  padding: '2px 0',
+                }}
+              >
                 {w}
               </div>
             ))}
@@ -147,8 +219,11 @@ export function IosCalendar({ value, onSelect, min, max, defaultMonth }: IosCale
                   onClick={() => onSelect(startOfDay(d))}
                   style={{
                     aspectRatio: '1 / 1',
-                    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                    border: isToday && !isSelected ? `1px solid ${ACCENT}` : '1px solid transparent',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    border:
+                      isToday && !isSelected ? `1px solid ${ACCENT}` : '1px solid transparent',
                     borderRadius: 9999,
                     background: isSelected ? ACCENT : 'transparent',
                     color: isSelected ? ACCENT_FG : isToday ? ACCENT : inMonth ? 'inherit' : MUTED,
@@ -160,7 +235,9 @@ export function IosCalendar({ value, onSelect, min, max, defaultMonth }: IosCale
                     transition: 'background 120ms ease',
                   }}
                   onMouseEnter={(e) => {
-                    if (!isSelected && !disabled) e.currentTarget.style.background = 'color-mix(in oklab, currentColor 10%, transparent)';
+                    if (!isSelected && !disabled)
+                      e.currentTarget.style.background =
+                        'color-mix(in oklab, currentColor 10%, transparent)';
                   }}
                   onMouseLeave={(e) => {
                     if (!isSelected) e.currentTarget.style.background = 'transparent';
@@ -175,18 +252,33 @@ export function IosCalendar({ value, onSelect, min, max, defaultMonth }: IosCale
       )}
 
       {mode === 'months' && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6, padding: '4px 0' }}>
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(3, 1fr)',
+            gap: 6,
+            padding: '4px 0',
+          }}
+        >
           {MONTHS_SHORT.map((m, i) => {
             const isSel = i === month && year === view.getFullYear();
             return (
               <button
                 key={m}
                 type="button"
-                onClick={() => { setView(new Date(year, i, 1)); setMode('days'); }}
+                onClick={() => {
+                  setView(new Date(year, i, 1));
+                  setMode('days');
+                }}
                 style={{
-                  padding: '10px 0', borderRadius: 10, border: '1px solid transparent',
-                  background: isSel ? ACCENT : 'transparent', color: isSel ? ACCENT_FG : 'inherit',
-                  fontSize: 13, fontWeight: isSel ? 600 : 400, cursor: 'pointer',
+                  padding: '10px 0',
+                  borderRadius: 10,
+                  border: '1px solid transparent',
+                  background: isSel ? ACCENT : 'transparent',
+                  color: isSel ? ACCENT_FG : 'inherit',
+                  fontSize: 13,
+                  fontWeight: isSel ? 600 : 400,
+                  cursor: 'pointer',
                 }}
               >
                 {m}
@@ -197,18 +289,33 @@ export function IosCalendar({ value, onSelect, min, max, defaultMonth }: IosCale
       )}
 
       {mode === 'years' && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6, padding: '4px 0' }}>
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(3, 1fr)',
+            gap: 6,
+            padding: '4px 0',
+          }}
+        >
           {years.map((y) => {
             const isSel = y === year;
             return (
               <button
                 key={y}
                 type="button"
-                onClick={() => { setView(new Date(y, month, 1)); setMode('months'); }}
+                onClick={() => {
+                  setView(new Date(y, month, 1));
+                  setMode('months');
+                }}
                 style={{
-                  padding: '10px 0', borderRadius: 10, border: '1px solid transparent',
-                  background: isSel ? ACCENT : 'transparent', color: isSel ? ACCENT_FG : 'inherit',
-                  fontSize: 13, fontWeight: isSel ? 600 : 400, cursor: 'pointer',
+                  padding: '10px 0',
+                  borderRadius: 10,
+                  border: '1px solid transparent',
+                  background: isSel ? ACCENT : 'transparent',
+                  color: isSel ? ACCENT_FG : 'inherit',
+                  fontSize: 13,
+                  fontWeight: isSel ? 600 : 400,
+                  cursor: 'pointer',
                 }}
               >
                 {y}

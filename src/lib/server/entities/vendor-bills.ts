@@ -4,7 +4,14 @@ import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { db } from '@/lib/db/client';
-import { accounts, documents, entityDocuments, postings, projects, transactions } from '@/lib/db/schema';
+import {
+  accounts,
+  documents,
+  entityDocuments,
+  postings,
+  projects,
+  transactions,
+} from '@/lib/db/schema';
 import { AppError } from '@/lib/errors';
 import { getActorContext } from '@/lib/server/actor';
 import { createDraftTransaction } from '@/lib/server/ledger/transactions';
@@ -532,9 +539,7 @@ export type DraftVendorBillFormShape = {
  * back from the net-debit posting's `metadata.line_items` stash (written by
  * the vendorBill template); older drafts fall back to a single aggregated line.
  */
-export async function getDraftVendorBill(
-  transactionId: string,
-): Promise<DraftVendorBillFormShape> {
+export async function getDraftVendorBill(transactionId: string): Promise<DraftVendorBillFormShape> {
   await getActorContext();
 
   const [txn] = await db
@@ -607,13 +612,17 @@ export async function getDraftVendorBill(
     amount_paise?: string;
     gst_amount_paise_captured?: string;
   };
-  const stashed = Array.isArray(netMeta['line_items']) ? (netMeta['line_items'] as LineMeta[]) : null;
+  const stashed = Array.isArray(netMeta['line_items'])
+    ? (netMeta['line_items'] as LineMeta[])
+    : null;
   let lineItems: DraftVendorBillFormShape['lineItems'];
   if (stashed && stashed.length > 0) {
     lineItems = stashed.map((l) => ({
       description: typeof l.description === 'string' ? l.description : '',
       amountPaise: l.amount_paise ? BigInt(l.amount_paise) : 0n,
-      gstAmountPaiseCaptured: l.gst_amount_paise_captured ? BigInt(l.gst_amount_paise_captured) : 0n,
+      gstAmountPaiseCaptured: l.gst_amount_paise_captured
+        ? BigInt(l.gst_amount_paise_captured)
+        : 0n,
     }));
   } else {
     lineItems = [

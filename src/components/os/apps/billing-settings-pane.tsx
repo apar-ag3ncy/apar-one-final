@@ -46,8 +46,8 @@ export function BillingSettingsPane() {
   return (
     <div className="p-5">
       <p className="text-muted-foreground mb-3 text-xs">
-        Apar&apos;s own accounts. The primary account prints on every invoice&apos;s payment
-        block. Edit how invoices look under Settings → Invoice format.
+        Apar&apos;s own accounts. The primary account prints on every invoice&apos;s payment block.
+        Edit how invoices look under Settings → Invoice format.
       </p>
       <BillingSettingsClient accounts={accounts} onChanged={load} />
     </div>

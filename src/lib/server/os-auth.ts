@@ -104,8 +104,7 @@ function sanitize(row: OsUserRow): SanitizedOsUser {
     role: row.role,
     tone: row.tone,
     permissions: (row.permissions ?? {}) as PermissionMap,
-    createdAt:
-      row.createdAt instanceof Date ? row.createdAt.toISOString() : String(row.createdAt),
+    createdAt: row.createdAt instanceof Date ? row.createdAt.toISOString() : String(row.createdAt),
   };
 }
 
@@ -252,8 +251,7 @@ export async function updateOsUser(
   // exposes it), and must stay unique.
   if (patch.username !== undefined && id === SUPER_ADMIN_ID) {
     const username = patch.username.trim();
-    if (username.length < 3)
-      return { ok: false, error: 'Username must be at least 3 characters.' };
+    if (username.length < 3) return { ok: false, error: 'Username must be at least 3 characters.' };
     if (rows.some((u) => u.id !== id && u.username.toLowerCase() === username.toLowerCase())) {
       return { ok: false, error: `Username "${username}" is already taken.` };
     }

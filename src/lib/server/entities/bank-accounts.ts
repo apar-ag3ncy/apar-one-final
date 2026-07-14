@@ -148,9 +148,7 @@ export async function listBankAccounts(args: {
     .orderBy(desc(entityBankAccounts.isPrimary), entityBankAccounts.bankName);
   // Bank accounts display fully revealed — pull each number from the vault
   // alongside the row (few rows per entity; reads run in parallel).
-  return Promise.all(
-    rows.map(async (r) => rowToBank(r, await readBankNumber(r.vaultObjectKey))),
-  );
+  return Promise.all(rows.map(async (r) => rowToBank(r, await readBankNumber(r.vaultObjectKey))));
 }
 
 /* -------------------------------------------------------------------------- */

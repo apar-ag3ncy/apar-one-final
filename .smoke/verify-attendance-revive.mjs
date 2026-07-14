@@ -8,7 +8,8 @@ import fs from 'node:fs';
 
 const BASE = process.env.BASE;
 const PASSWORD = process.env.OS_PASSWORD || 'apar2026';
-const OUT = '/private/tmp/claude-501/-Users-swayamzinzuwadia-Documents-Code-apar-one-final/60c9eb94-94ae-48d7-978b-cdeb1ced03dc/scratchpad/verify-shots';
+const OUT =
+  '/private/tmp/claude-501/-Users-swayamzinzuwadia-Documents-Code-apar-one-final/60c9eb94-94ae-48d7-978b-cdeb1ced03dc/scratchpad/verify-shots';
 fs.mkdirSync(OUT, { recursive: true });
 
 const browser = await chromium.launch({ channel: 'chrome', args: ['--no-sandbox'] });
@@ -43,7 +44,11 @@ async function markRita(dayIndex, dayLabel) {
   await picker.locator('.row.live', { hasText: 'WFH' }).first().click();
   await page.waitForTimeout(3500);
   const errToast = await page.getByText(/Could not mark|error occurred|500/i).count();
-  report(`mark Rita ${dayLabel} WFH — no error`, errToast === 0 && serverErrors.length === 0, serverErrors.join('; '));
+  report(
+    `mark Rita ${dayLabel} WFH — no error`,
+    errToast === 0 && serverErrors.length === 0,
+    serverErrors.join('; '),
+  );
 }
 
 try {
@@ -55,7 +60,10 @@ try {
   await page.waitForTimeout(1200);
 
   await cmdk('Open Office');
-  await page.getByRole('button', { name: /Attendance/ }).first().click();
+  await page
+    .getByRole('button', { name: /Attendance/ })
+    .first()
+    .click();
   await page.waitForTimeout(3500);
   // month defaults to July 2026 (today). day 7 → att-cell index 6; day 6 → 5.
   await markRita(6, '07-07 (today)');

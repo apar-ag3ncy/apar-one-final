@@ -6,7 +6,8 @@ import fs from 'node:fs';
 
 const BASE = process.env.BASE;
 const PASSWORD = process.env.OS_PASSWORD || 'apar2026';
-const OUT = '/private/tmp/claude-501/-Users-swayamzinzuwadia-Documents-Code-apar-one-final/60c9eb94-94ae-48d7-978b-cdeb1ced03dc/scratchpad/verify-shots';
+const OUT =
+  '/private/tmp/claude-501/-Users-swayamzinzuwadia-Documents-Code-apar-one-final/60c9eb94-94ae-48d7-978b-cdeb1ced03dc/scratchpad/verify-shots';
 fs.mkdirSync(OUT, { recursive: true });
 
 const browser = await chromium.launch({ channel: 'chrome', args: ['--no-sandbox'] });
@@ -57,7 +58,11 @@ try {
   const win = page.locator('.window').last();
   const target = win.locator('.emp-card', { hasText: who }).first();
   const badge = ((await target.textContent()) ?? '').trim();
-  report('deactivated badge says Inactive', /Inactive/.test(badge) && !/On leave/i.test(badge), badge.slice(0, 120));
+  report(
+    'deactivated badge says Inactive',
+    /Inactive/.test(badge) && !/On leave/i.test(badge),
+    badge.slice(0, 120),
+  );
 
   // Restore: reactivate the same card
   await target.hover();
@@ -68,8 +73,14 @@ try {
     await target.locator('[title*="ctivate"]').first().click();
   }
   await page.waitForTimeout(3000);
-  const after = ((await win.locator('.emp-card', { hasText: who }).first().textContent()) ?? '').trim();
-  report('reactivated back to Active', /Active/.test(after) && !/Inactive/.test(after), after.slice(0, 120));
+  const after = (
+    (await win.locator('.emp-card', { hasText: who }).first().textContent()) ?? ''
+  ).trim();
+  report(
+    'reactivated back to Active',
+    /Active/.test(after) && !/Inactive/.test(after),
+    after.slice(0, 120),
+  );
   await shot('inact-02-restored');
 } catch (e) {
   results.push(`ERROR ${e.message}`);
