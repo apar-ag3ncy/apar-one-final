@@ -835,16 +835,23 @@ export function VendorsApp({
         <table className="table">
           <thead>
             <tr>
-              <th>Vendor</th>
-              <th>Category</th>
-              <th>GSTIN</th>
-              <th>Last billed</th>
-              <th style={{ textAlign: 'right' }}>Outstanding</th>
+              <SortHeader label="Vendor" sortKey="name" sort={sort} onSort={toggle} />
+              <SortHeader label="Category" sortKey="cat" sort={sort} onSort={toggle} />
+              <SortHeader label="GSTIN" sortKey="gstin" sort={sort} onSort={toggle} />
+              <SortHeader label="Last billed" sortKey="last" sort={sort} onSort={toggle} />
+              <SortHeader
+                label="Outstanding"
+                sortKey="outstanding"
+                sort={sort}
+                onSort={toggle}
+                align="right"
+                style={{ textAlign: 'right' }}
+              />
               <th />
             </tr>
           </thead>
           <tbody>
-            {filtered.map((v) => (
+            {sortedVendors.map((v) => (
               <tr
                 key={v.id}
                 className="row-clickable row-with-actions"
