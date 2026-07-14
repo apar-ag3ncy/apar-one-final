@@ -8,7 +8,7 @@
 
 **Apār One** — the internal operations platform for Apār LLP, a Mumbai digital marketing & branding agency (clients in jewellery and real estate). Five domains: Clients, Vendors, Projects, Employees, Office & Finance. Core philosophy: **capture, don't calculate** — financial documents are uploaded and AI-extracted, a human verifies, the ledger records. The system never computes GST/TDS/payroll for filing.
 
-## State of this repo (updated 2026-07-11)
+## State of this repo (updated 2026-07-14)
 
 The system is **built and in production**. It is deployed on Vercel at `apar-one-final.vercel.app`; every deploy (including per-commit preview builds) runs `drizzle-kit migrate && next build`, so migrations apply against the production database. Do not treat this repo as a playground.
 

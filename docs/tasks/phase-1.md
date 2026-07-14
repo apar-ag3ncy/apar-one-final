@@ -5,7 +5,7 @@
 > The original `docs/tasks/phase-1.md` — the Phase-1 task ledger, tasks
 > P1.01–P1.21, referenced by `src/components/os/Handover.md` — was deleted or
 > lost before this repository's surviving history begins. This replacement was
-> mined on 2026-07-11 from git history, `STATUS.md`, `BILL-STATUS.md`,
+> mined on 2026-07-14 from git history, `STATUS.md`, `BILL-STATUS.md`,
 > `src/components/os/Handover.md` (untracked, present in the working tree at
 > reconstruction time), and the surviving code and migrations. **The original
 > task titles and numbering are mostly unrecoverable** — only three P1.xx

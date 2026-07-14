@@ -2,7 +2,7 @@
 
 > **RECONSTRUCTION.** The original `docs/changes/CHANGES-01.md` was lost before the
 > repository history begins; the founder's original prose is unrecoverable and has
-> **not** been re-invented here. This file was rebuilt on 2026-07-11 from the surviving
+> **not** been re-invented here. This file was rebuilt on 2026-07-14 from the surviving
 > references to it (chiefly `src/components/os/Handover.md`) plus direct inspection of
 > the codebase. The decision dispositions in §4 were verified against the code on
 > 2026-07-14 (`main` @ `ce87a8d5`). Nothing below claims to be the original text.
