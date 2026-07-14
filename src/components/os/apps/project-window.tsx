@@ -79,6 +79,7 @@ import { colToDbStatus, dbStatusToCol } from '@/lib/project-status';
 import { toast } from 'sonner';
 import { osActions } from '@/lib/os/store';
 import { navigateBesideFocused } from './navigate';
+import { openInvoiceById, openTransactionOrInvoice } from './open-invoice';
 import { Modal } from './os-modal-kit';
 import { ProjectFormModal, type ProjectFormSubmit } from './project-form-modal';
 
@@ -746,6 +747,9 @@ function TransactionsBody({
         transactions={feed.transactions}
         entityName={project.code || project.name}
         onNavigate={navigateBesideFocused}
+        // Invoice rows open the invoice itself; other kinds open the plain
+        // transaction window (postings + source document).
+        onSelectTransaction={(t) => openTransactionOrInvoice(t.id, t.kind, t.reference)}
       />
     </div>
   );
@@ -793,6 +797,8 @@ function InvoicesBody({
   // Composer plumbing (themes / bank accounts / client readiness) — same
   // loads client-invoices-section does, scoped to this project's client.
   const [composerOpen, setComposerOpen] = useState(false);
+  // Set when a DRAFT row is clicked — the composer opens it for edit/preview.
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [themes, setThemes] = useState<InvoiceThemeSummary[]>([]);
   const [bankAccounts, setBankAccounts] = useState<CompanyBankAccountOption[]>([]);
   const [clientStateCode, setClientStateCode] = useState<string | null>(null);
@@ -861,6 +867,7 @@ function InvoicesBody({
                 );
                 return;
               }
+              setEditingId(null);
               setComposerOpen(true);
             }}
           >
@@ -903,6 +910,22 @@ function InvoicesBody({
                 borderRadius: 8,
                 border: '1px solid var(--border)',
                 fontSize: 13,
+                cursor: 'pointer',
+              }}
+              title={
+                inv.state === 'draft' && canEdit
+                  ? `Open draft ${inv.documentNumber} in the composer`
+                  : `Open invoice ${inv.documentNumber}`
+              }
+              onClick={() => {
+                // Drafts open in the composer (edit/preview); finalized
+                // invoices resolve to their stored PDF beside this window.
+                if (inv.state === 'draft' && canEdit) {
+                  setEditingId(inv.id);
+                  setComposerOpen(true);
+                  return;
+                }
+                void openInvoiceById(inv.id, inv.documentNumber);
               }}
             >
               <span style={{ fontFamily: 'var(--os-font)', fontVariantNumeric: 'tabular-nums' }}>
@@ -972,7 +995,10 @@ function InvoicesBody({
       {canEdit ? (
         <InvoiceComposerDialog
           open={composerOpen}
-          onOpenChange={setComposerOpen}
+          onOpenChange={(open) => {
+            setComposerOpen(open);
+            if (!open) setEditingId(null);
+          }}
           clientId={project.clientId}
           clientName={project.clientName}
           clientStateCode={clientStateCode}
@@ -980,6 +1006,7 @@ function InvoicesBody({
           defaultThemeId={themes.find((t) => t.isDefault)?.id ?? null}
           bankAccounts={bankAccounts}
           defaultProjectId={project.id}
+          existingInvoiceId={editingId}
           onFinalized={refresh}
         />
       ) : null}

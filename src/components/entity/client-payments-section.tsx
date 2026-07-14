@@ -52,9 +52,17 @@ type DueState = {
 export function ClientPaymentsSection({
   clientId,
   clientName,
+  onOpenInvoice,
 }: {
   clientId: string;
   clientName: string;
+  /**
+   * Optional opener for an invoice reference. Receives the invoice's posted
+   * ledger transaction id + document number. OS windows pass a handler that
+   * resolves the stored PDF into a documents window; the dashboard leaves it
+   * unset (references render as plain text there, unchanged).
+   */
+  onOpenInvoice?: (invoiceTxnId: string, documentNumber: string) => void;
 }) {
   const [receipts, setReceipts] = useState<readonly ClientReceiptRow[] | null>(null);
   const [due, setDue] = useState<DueState | null>(null);
@@ -194,7 +202,20 @@ export function ClientPaymentsSection({
                         <ul className="text-muted-foreground flex flex-col gap-0.5 text-xs">
                           {r.allocations.map((a) => (
                             <li key={a.invoiceId} className="flex flex-wrap items-center gap-1.5">
-                              <span className="font-mono">{a.invoiceDocumentNumber}</span>
+                              {onOpenInvoice ? (
+                                <button
+                                  type="button"
+                                  className="cursor-pointer font-mono underline-offset-2 hover:underline"
+                                  title={`Open invoice ${a.invoiceDocumentNumber}`}
+                                  onClick={() =>
+                                    onOpenInvoice(a.invoiceId, a.invoiceDocumentNumber)
+                                  }
+                                >
+                                  {a.invoiceDocumentNumber}
+                                </button>
+                              ) : (
+                                <span className="font-mono">{a.invoiceDocumentNumber}</span>
+                              )}
                               <span>·</span>
                               <span>{a.projectName ?? 'No project'}</span>
                               <span>·</span>
@@ -251,7 +272,7 @@ export function ClientPaymentsSection({
         </CardContent>
       </Card>
 
-      <InvoiceDuesCard invoices={invoices} />
+      <InvoiceDuesCard invoices={invoices} onOpenInvoice={onOpenInvoice} />
 
       <RecordReceiptDialog
         open={formOpen}
@@ -362,7 +383,13 @@ function DueToCollectCard({ due }: { due: DueState }) {
 
 /** Per-invoice remaining dues — each open invoice with how much is still due
  * (captured total minus what's been received/adjusted). */
-function InvoiceDuesCard({ invoices }: { invoices: readonly OpenInvoiceRow[] }) {
+function InvoiceDuesCard({
+  invoices,
+  onOpenInvoice,
+}: {
+  invoices: readonly OpenInvoiceRow[];
+  onOpenInvoice?: (invoiceTxnId: string, documentNumber: string) => void;
+}) {
   const totalDue = invoices.reduce((acc, i) => acc + i.outstandingPaise, 0n);
   return (
     <Card>
@@ -388,7 +415,15 @@ function InvoiceDuesCard({ invoices }: { invoices: readonly OpenInvoiceRow[] }) 
               return (
                 <li
                   key={inv.invoiceId}
-                  className="flex items-center justify-between gap-3 px-4 py-3"
+                  className={`flex items-center justify-between gap-3 px-4 py-3 ${
+                    onOpenInvoice ? 'hover:bg-muted/30 cursor-pointer' : ''
+                  }`}
+                  title={onOpenInvoice ? `Open invoice ${inv.documentNumber}` : undefined}
+                  onClick={
+                    onOpenInvoice
+                      ? () => onOpenInvoice(inv.invoiceTxnId, inv.documentNumber)
+                      : undefined
+                  }
                 >
                   <div className="flex min-w-0 flex-1 flex-col gap-0.5">
                     <div className="flex flex-wrap items-center gap-2">

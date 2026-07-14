@@ -12,7 +12,7 @@ import { useEffect, useState } from 'react';
 import { StatementOfAccount } from '@/components/entity/statement-of-account';
 import { DateField as SharedDateField } from '@/components/shared/date-field';
 import { getAccountStatement, type Statement } from '@/lib/server/ledger/statements';
-import { osActions } from '@/lib/os/store';
+import { openTransactionOrInvoice } from './open-invoice';
 
 export type AccountStatementWindowProps = {
   codes: readonly string[];
@@ -103,14 +103,9 @@ export function AccountStatementWindow({
             fromDate || toDate ? `${fromDate || 'start'} → ${toDate || 'today'}` : 'all time'
           }
           exportName={`account-${codes.join('-')}`}
-          onSelectTransaction={(txnId) =>
-            osActions.openWindow({
-              app: 'transactions',
-              entityId: txnId,
-              title: 'Transaction',
-              position: 'beside-focused',
-            })
-          }
+          // Invoice lines open the invoice PDF itself; everything else opens
+          // the plain transaction window.
+          onSelectTransaction={(txnId, kind) => openTransactionOrInvoice(txnId, kind)}
         />
       )}
     </div>

@@ -18,6 +18,7 @@ import { getClient } from '@/lib/server-stub/entity-actions';
 import { getAgingReport } from '@/lib/server-stub/ledger-actions';
 import type { AgingBucket, AgingRow } from '@/lib/server-stub/ledger-types';
 import { osActions } from '@/lib/os/store';
+import { openTransactionOrInvoice } from './open-invoice';
 
 const AGING_BUCKETS: readonly AgingBucket[] = ['0-30', '31-60', '61-90', '90+'];
 
@@ -193,14 +194,9 @@ export function ClientLedgerWindow({ clientId }: { clientId: string }) {
           balanceMeaning="Positive = client owes us (Trade Receivables 1200); negative (green) = client credit balance held with us"
           rangeLabel={`${fromDate} → ${toDate}`}
           exportName={`client-ledger-${exportSlug(clientName || clientId)}-${fromDate}_to_${toDate}`}
-          onSelectTransaction={(txnId) =>
-            osActions.openWindow({
-              app: 'transactions',
-              entityId: txnId,
-              title: 'Transaction',
-              position: 'beside-focused',
-            })
-          }
+          // Invoice lines open the invoice PDF itself; everything else opens
+          // the plain transaction window.
+          onSelectTransaction={(txnId, kind) => openTransactionOrInvoice(txnId, kind)}
         />
       )}
     </div>

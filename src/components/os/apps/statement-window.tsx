@@ -15,8 +15,8 @@ import {
   type Statement,
 } from '@/lib/server/ledger/statements';
 import { listClients, listVendors } from '@/lib/server-stub/entity-actions';
-import { osActions } from '@/lib/os/store';
 import { exportSlug } from '@/lib/client/export-rows';
+import { openTransactionOrInvoice } from './open-invoice';
 import { currentFyDefaults, DateField, useReportData } from './report-window-kit';
 
 type Party = { id: string; name: string };
@@ -160,14 +160,9 @@ export function StatementWindow() {
           balanceMeaning={balanceMeaning}
           rangeLabel={`${fromDate} → ${toDate}`}
           exportName={`statement-${side}-${exportSlug(entityName || selectedId)}-${fromDate}_to_${toDate}`}
-          onSelectTransaction={(txnId) =>
-            osActions.openWindow({
-              app: 'transactions',
-              entityId: txnId,
-              title: 'Transaction',
-              position: 'beside-focused',
-            })
-          }
+          // Invoice lines open the invoice PDF itself; everything else opens
+          // the plain transaction window.
+          onSelectTransaction={(txnId, kind) => openTransactionOrInvoice(txnId, kind)}
         />
       )}
     </div>
