@@ -63,6 +63,7 @@ import { Icon } from '../icons';
 import { osActions } from '@/lib/os/store';
 import { exportRows, paiseToRupees, type ExportFormat } from '@/lib/client/export-rows';
 import { OsExportButtons } from './report-window-kit';
+import { sortRows, type SortValue } from './table-sort';
 import { DateField } from '@/components/shared/date-field';
 
 type EmployeeOption = { id: string; name: string };
@@ -264,6 +265,42 @@ function effectiveCategoryColor(r: OfficeExpenseRow): string {
   return r.customCategoryColor ?? CATEGORY_INDEX[r.category].color;
 }
 
+/** Every clickable column in the expense table. Drives the existing
+ *  sortKey/sortDir state — headers and the shared `sortRows` share one state. */
+type OfficeSortKey =
+  | 'date'
+  | 'category'
+  | 'description'
+  | 'party'
+  | 'payment'
+  | 'status'
+  | 'amount'
+  | 'gst'
+  | 'total';
+
+/** Raw value each column contributes to the sort (paise as bigint, ISO dates,
+ *  the same label strings shown in the cell). */
+const OFFICE_SORT_ACCESSORS: Record<OfficeSortKey, (r: OfficeExpenseRow) => SortValue> = {
+  date: (r) => r.expenseDate,
+  category: (r) => effectiveCategoryLabel(r),
+  description: (r) => r.description,
+  party: (r) => (r.category === 'reimbursement' ? r.employeeName : r.vendorName),
+  payment: (r) => PAYMENT_LABEL[r.paymentMethod],
+  status: (r) => STATUS_LABEL[r.status],
+  amount: (r) => r.amountPaise,
+  gst: (r) => r.gstPaise,
+  total: (r) => r.totalPaise,
+};
+
+/** Columns whose first click should sort high→low (money, dates); the rest
+ *  (text) default to A→Z on first click. */
+const OFFICE_DESC_FIRST: ReadonlySet<OfficeSortKey> = new Set<OfficeSortKey>([
+  'date',
+  'amount',
+  'gst',
+  'total',
+]);
+
 /** Preset swatches offered in the inline "create category" form. */
 const CATEGORY_SWATCHES: readonly string[] = [
   '#5B6677',
@@ -306,7 +343,7 @@ export function OfficeApp({
   const [customFrom, setCustomFrom] = useState('');
   const [customTo, setCustomTo] = useState('');
   // Sort — click a column header to sort by it; click again to flip direction.
-  const [sortKey, setSortKey] = useState<'date' | 'amount' | 'total'>('date');
+  const [sortKey, setSortKey] = useState<OfficeSortKey>('date');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [showNew, setShowNew] = useState(false);
   const [showImport, setShowImport] = useState(false);
@@ -458,12 +495,13 @@ export function OfficeApp({
     [datePreset, customFrom, customTo],
   );
 
-  function toggleSort(key: 'date' | 'amount' | 'total') {
+  function toggleSort(key: OfficeSortKey) {
     if (sortKey === key) {
       setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
     } else {
       setSortKey(key);
-      setSortDir('desc');
+      // Money/date columns read best high→low first; text columns A→Z first.
+      setSortDir(OFFICE_DESC_FIRST.has(key) ? 'desc' : 'asc');
     }
   }
 
@@ -495,19 +533,9 @@ export function OfficeApp({
         (r.referenceNumber ?? '').toLowerCase().includes(q)
       );
     });
-    // Sort is stable, so equal keys keep the server's order (newest insert last).
-    arr.sort((a, b) => {
-      let cmp: number;
-      if (sortKey === 'date') {
-        cmp = a.expenseDate < b.expenseDate ? -1 : a.expenseDate > b.expenseDate ? 1 : 0;
-      } else {
-        const av = sortKey === 'amount' ? a.amountPaise : a.totalPaise;
-        const bv = sortKey === 'amount' ? b.amountPaise : b.totalPaise;
-        cmp = av < bv ? -1 : av > bv ? 1 : 0;
-      }
-      return sortDir === 'asc' ? cmp : -cmp;
-    });
-    return arr;
+    // Shared, stable sort over the existing sortKey/sortDir state — equal keys
+    // keep the server's order (newest insert last); nulls sort last.
+    return sortRows(arr, { key: sortKey, dir: sortDir }, OFFICE_SORT_ACCESSORS);
   }, [rows, activeCategory, statusFilter, search, dateRange, sortKey, sortDir]);
 
   const topCategory = useMemo(() => {
@@ -1216,11 +1244,36 @@ export function OfficeApp({
                   dir={sortDir}
                   onClick={() => toggleSort('date')}
                 />
-                <th>Category</th>
-                <th>Description</th>
-                <th>Vendor / Employee</th>
-                <th>Payment</th>
-                <th>Status</th>
+                <SortableTh
+                  label="Category"
+                  active={sortKey === 'category'}
+                  dir={sortDir}
+                  onClick={() => toggleSort('category')}
+                />
+                <SortableTh
+                  label="Description"
+                  active={sortKey === 'description'}
+                  dir={sortDir}
+                  onClick={() => toggleSort('description')}
+                />
+                <SortableTh
+                  label="Vendor / Employee"
+                  active={sortKey === 'party'}
+                  dir={sortDir}
+                  onClick={() => toggleSort('party')}
+                />
+                <SortableTh
+                  label="Payment"
+                  active={sortKey === 'payment'}
+                  dir={sortDir}
+                  onClick={() => toggleSort('payment')}
+                />
+                <SortableTh
+                  label="Status"
+                  active={sortKey === 'status'}
+                  dir={sortDir}
+                  onClick={() => toggleSort('status')}
+                />
                 <SortableTh
                   label="Amount"
                   align="right"
@@ -1228,7 +1281,13 @@ export function OfficeApp({
                   dir={sortDir}
                   onClick={() => toggleSort('amount')}
                 />
-                <th style={{ textAlign: 'right' }}>GST</th>
+                <SortableTh
+                  label="GST"
+                  align="right"
+                  active={sortKey === 'gst'}
+                  dir={sortDir}
+                  onClick={() => toggleSort('gst')}
+                />
                 <SortableTh
                   label="Total"
                   align="right"
