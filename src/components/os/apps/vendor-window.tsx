@@ -147,7 +147,9 @@ export function VendorWindow({ vendorId, onClose }: VendorWindowProps) {
         ))}
       </div>
       <div style={{ flex: 1, overflow: 'auto', padding: 20 }}>
-        {tab === 'overview' ? <OverviewBody vendor={vendor} contacts={contacts} /> : null}
+        {tab === 'overview' ? (
+          <OverviewBody vendor={vendor} contacts={contacts} onOpenTab={setTab} />
+        ) : null}
         {tab === 'stats' ? <StatsBody vendorId={vendor.id} /> : null}
         {tab === 'contacts' ? (
           <ContactsSection
@@ -254,12 +256,81 @@ function Header({ vendor, actions }: { vendor: Vendor; actions?: ReactNode }) {
   );
 }
 
-function OverviewBody({ vendor, contacts }: { vendor: Vendor; contacts: readonly ContactRow[] }) {
+function OverviewBody({
+  vendor,
+  contacts,
+  onOpenTab,
+}: {
+  vendor: Vendor;
+  contacts: readonly ContactRow[];
+  onOpenTab: (tab: VendorTab) => void;
+}) {
+  const [stats, setStats] = useState<VendorStats | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    getVendorStats(vendor.id)
+      .then((s) => {
+        if (!cancelled) setStats(s);
+      })
+      .catch(() => {
+        /* leave financial tiles as "—" */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [vendor.id]);
+  const money = (p: bigint | undefined) => (p === undefined ? '—' : formatINR(p));
+
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
-      <Kpi label="Contacts" value={String(contacts.length)} />
-      <Kpi label="Documents" value={String(vendor.documentsCount)} />
-      <Kpi label="Contracts" value={String(vendor.contractsCount)} />
+      <div
+        style={{
+          gridColumn: 'span 3',
+          display: 'grid',
+          gridTemplateColumns: 'repeat(3, 1fr)',
+          gap: 12,
+        }}
+      >
+        <Kpi
+          label="Active projects"
+          value={stats ? String(stats.projectsAssigned - stats.projectsCompleted) : '—'}
+          trend={
+            stats
+              ? `${stats.projectsCompleted} completed · ${stats.projectsTotal} total`
+              : undefined
+          }
+          onClick={() => onOpenTab('stats')}
+        />
+        <Kpi
+          label="To pay"
+          value={money(stats?.payablePaise)}
+          accent={stats && stats.payablePaise > 0n ? 'var(--apar-red, #c33)' : undefined}
+          trend="outstanding payable"
+          onClick={() => onOpenTab('stats')}
+        />
+        <Kpi
+          label="Pending bills"
+          value={stats ? String(stats.pendingBillCount) : '—'}
+          trend={stats ? `${stats.billCount} bills total` : undefined}
+          onClick={() => onOpenTab('stats')}
+        />
+        <Kpi
+          label="Billed"
+          value={money(stats?.billsTotalPaise)}
+          onClick={() => onOpenTab('stats')}
+        />
+        <Kpi
+          label="Paid"
+          value={money(stats?.paidTotalPaise)}
+          accent={stats && stats.paidTotalPaise > 0n ? 'var(--apar-green, #2E8F5A)' : undefined}
+          onClick={() => onOpenTab('stats')}
+        />
+        <Kpi
+          label="Contacts"
+          value={String(contacts.length)}
+          onClick={() => onOpenTab('contacts')}
+        />
+      </div>
       <OsCard title="Profile">
         <DetailGrid
           items={[
@@ -437,14 +508,29 @@ function StatsBody({ vendorId }: { vendorId: string }) {
   );
 }
 
-function Kpi({ label, value, trend }: { label: string; value: string; trend?: string }) {
+function Kpi({
+  label,
+  value,
+  trend,
+  accent,
+  onClick,
+}: {
+  label: string;
+  value: string;
+  trend?: string;
+  accent?: string;
+  onClick?: () => void;
+}) {
   return (
     <div
+      onClick={onClick}
+      title={onClick ? 'Open' : undefined}
       style={{
         background: 'var(--content-2)',
         border: '1px solid var(--border)',
         borderRadius: 10,
         padding: 14,
+        cursor: onClick ? 'pointer' : undefined,
       }}
     >
       <div
@@ -458,7 +544,7 @@ function Kpi({ label, value, trend }: { label: string; value: string; trend?: st
       >
         {label}
       </div>
-      <div className="font-display" style={{ fontSize: 26, marginTop: 4 }}>
+      <div className="font-display" style={{ fontSize: 26, marginTop: 4, color: accent }}>
         {value}
       </div>
       {trend ? (
