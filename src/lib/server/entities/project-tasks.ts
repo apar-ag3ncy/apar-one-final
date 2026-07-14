@@ -190,7 +190,15 @@ export async function removeProjectMember(input: { id: string }): Promise<void> 
 
 export type ProjectTaskStatus = 'todo' | 'in_progress' | 'done';
 
+/** Eisenhower priority tag (0070). null = no priority set. */
+export type ProjectTaskPriority = 'urgent_important' | 'urgent' | 'important' | 'nice';
+
+/** Who the deliverable came from (0070). null on legacy rows. */
+export type ProjectTaskSource = 'apar' | 'vendor';
+
 const ProjectTaskStatusSchema = z.enum(['todo', 'in_progress', 'done']);
+const ProjectTaskPrioritySchema = z.enum(['urgent_important', 'urgent', 'important', 'nice']);
+const ProjectTaskSourceSchema = z.enum(['apar', 'vendor']);
 const ProjectTaskIdSchema = z.string().uuid();
 
 export type ProjectTaskAssignee = {
@@ -204,6 +212,8 @@ export type ProjectTaskRow = {
   title: string;
   description: string | null;
   status: ProjectTaskStatus;
+  priority: ProjectTaskPriority | null;
+  source: ProjectTaskSource | null;
   /** Multi-assignee (0061) — every employee working this deliverable. */
   assignees: readonly ProjectTaskAssignee[];
   categoryId: string | null;
@@ -226,6 +236,8 @@ export async function listProjectTasks(projectId: string): Promise<readonly Proj
       title: projectTasks.title,
       description: projectTasks.description,
       status: projectTasks.status,
+      priority: projectTasks.priority,
+      source: projectTasks.source,
       categoryId: projectTasks.categoryId,
       categoryName: deliverableCategories.name,
       categoryColor: deliverableCategories.color,
@@ -249,6 +261,8 @@ const CreateProjectTaskSchema = z.object({
   description: z.string().max(4000).nullable().optional(),
   assigneeEmployeeIds: z.array(z.string().uuid()).max(50).optional(),
   categoryId: z.string().uuid().nullable().optional(),
+  priority: ProjectTaskPrioritySchema.nullable().optional(),
+  source: ProjectTaskSourceSchema.nullable().optional(),
   dueOn: z.string().nullable().optional(),
   status: ProjectTaskStatusSchema.optional(),
 });
@@ -259,6 +273,8 @@ export async function createProjectTask(input: {
   description?: string | null;
   assigneeEmployeeIds?: string[];
   categoryId?: string | null;
+  priority?: ProjectTaskPriority | null;
+  source?: ProjectTaskSource | null;
   dueOn?: string | null;
   status?: ProjectTaskStatus;
 }): Promise<ProjectTaskRow> {
@@ -276,6 +292,9 @@ export async function createProjectTask(input: {
       description: parsed.description ?? null,
       status,
       categoryId: parsed.categoryId ?? null,
+      priority: parsed.priority ?? null,
+      // New deliverables default to 'apar' unless the caller says otherwise.
+      source: parsed.source === undefined ? 'apar' : parsed.source,
       dueOn: parsed.dueOn ?? null,
       completedAt: status === 'done' ? new Date() : null,
       createdBy: ctx.userId,
@@ -319,6 +338,8 @@ const UpdateProjectTaskSchema = z.object({
   description: z.string().max(4000).nullable().optional(),
   assigneeEmployeeIds: z.array(z.string().uuid()).max(50).optional(),
   categoryId: z.string().uuid().nullable().optional(),
+  priority: ProjectTaskPrioritySchema.nullable().optional(),
+  source: ProjectTaskSourceSchema.nullable().optional(),
   dueOn: z.string().nullable().optional(),
   status: ProjectTaskStatusSchema.optional(),
 });
@@ -329,6 +350,8 @@ export async function updateProjectTask(input: {
   description?: string | null;
   assigneeEmployeeIds?: string[];
   categoryId?: string | null;
+  priority?: ProjectTaskPriority | null;
+  source?: ProjectTaskSource | null;
   dueOn?: string | null;
   status?: ProjectTaskStatus;
 }): Promise<ProjectTaskRow> {
@@ -362,6 +385,8 @@ export async function updateProjectTask(input: {
       ...(parsed.title !== undefined ? { title: parsed.title } : {}),
       ...(parsed.description !== undefined ? { description: parsed.description } : {}),
       ...(parsed.categoryId !== undefined ? { categoryId: parsed.categoryId } : {}),
+      ...(parsed.priority !== undefined ? { priority: parsed.priority } : {}),
+      ...(parsed.source !== undefined ? { source: parsed.source } : {}),
       ...(parsed.dueOn !== undefined ? { dueOn: parsed.dueOn } : {}),
       ...(parsed.status !== undefined ? { status: parsed.status } : {}),
       ...completedAtPatch,
@@ -493,6 +518,8 @@ export type EmployeeProjectTaskRow = {
   taskId: string;
   title: string;
   status: ProjectTaskStatus;
+  priority: ProjectTaskPriority | null;
+  source: ProjectTaskSource | null;
   projectId: string;
   projectName: string;
   projectCode: string | null;
@@ -515,6 +542,8 @@ export async function listEmployeeProjectTasks(
       taskId: projectTasks.id,
       title: projectTasks.title,
       status: projectTasks.status,
+      priority: projectTasks.priority,
+      source: projectTasks.source,
       projectId: projectTasks.projectId,
       projectName: projects.name,
       projectCode: projects.code,
@@ -540,6 +569,8 @@ export async function listEmployeeProjectTasks(
       taskId: r.taskId,
       title: r.title,
       status: r.status as ProjectTaskStatus,
+      priority: (r.priority as ProjectTaskPriority | null) ?? null,
+      source: (r.source as ProjectTaskSource | null) ?? null,
       projectId: r.projectId,
       projectName: r.projectName,
       projectCode: r.projectCode,
@@ -559,6 +590,8 @@ type TaskSelectRow = {
   title: string;
   description: string | null;
   status: string;
+  priority: string | null;
+  source: string | null;
   categoryId: string | null;
   categoryName: string | null;
   categoryColor: string | null;
@@ -575,6 +608,8 @@ function mapTaskRow(r: TaskSelectRow, assignees: readonly ProjectTaskAssignee[])
     title: r.title,
     description: r.description,
     status: r.status as ProjectTaskStatus,
+    priority: (r.priority as ProjectTaskPriority | null) ?? null,
+    source: (r.source as ProjectTaskSource | null) ?? null,
     assignees,
     categoryId: r.categoryId,
     categoryName: r.categoryName,
@@ -618,6 +653,8 @@ async function getTaskRow(id: string): Promise<ProjectTaskRow> {
       title: projectTasks.title,
       description: projectTasks.description,
       status: projectTasks.status,
+      priority: projectTasks.priority,
+      source: projectTasks.source,
       categoryId: projectTasks.categoryId,
       categoryName: deliverableCategories.name,
       categoryColor: deliverableCategories.color,

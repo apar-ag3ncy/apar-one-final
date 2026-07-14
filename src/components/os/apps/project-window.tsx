@@ -39,7 +39,9 @@ import {
   deleteProjectTask,
   type ProjectMemberRow,
   type ProjectTaskAssignee,
+  type ProjectTaskPriority,
   type ProjectTaskRow,
+  type ProjectTaskSource,
   type ProjectTaskStatus,
 } from '@/lib/server/entities/project-tasks';
 import {
@@ -1334,6 +1336,42 @@ const TASK_STATUSES: ReadonlyArray<{ value: ProjectTaskStatus; label: string }> 
   { value: 'done', label: 'Done' },
 ];
 
+// Eisenhower priority tags (0070). Chip colour doubles as the select label
+// colour cue: red → orange → blue → gray, hottest first.
+const TASK_PRIORITIES: ReadonlyArray<{
+  value: ProjectTaskPriority;
+  label: string;
+  color: string;
+}> = [
+  { value: 'urgent_important', label: 'Urgent & Important', color: '#e5484d' },
+  { value: 'urgent', label: 'Urgent', color: '#f76b15' },
+  { value: 'important', label: 'Important', color: '#3b82f6' },
+  { value: 'nice', label: 'Nice / Not right now', color: '#8b8d98' },
+];
+
+const TASK_SOURCES: ReadonlyArray<{ value: ProjectTaskSource; label: string; short: string }> = [
+  { value: 'apar', label: 'From Apar', short: 'Apar' },
+  { value: 'vendor', label: 'From Vendor', short: 'Vendor' },
+];
+
+// Display order within a group: urgent_important → urgent → important →
+// no priority → nice, then the existing position order (sort is stable, so
+// equal ranks keep the server's position/createdAt ordering).
+const TASK_PRIORITY_RANK: Record<ProjectTaskPriority, number> = {
+  urgent_important: 0,
+  urgent: 1,
+  important: 2,
+  nice: 4,
+};
+
+function taskPriorityRank(priority: ProjectTaskPriority | null): number {
+  return priority ? TASK_PRIORITY_RANK[priority] : 3;
+}
+
+function compareTasks(a: ProjectTaskRow, b: ProjectTaskRow): number {
+  return taskPriorityRank(a.priority) - taskPriorityRank(b.priority) || a.position - b.position;
+}
+
 function TasksBody({
   projectId,
   canEdit,
@@ -1361,6 +1399,8 @@ function TasksBody({
   const [title, setTitle] = useState('');
   const [draftAssignees, setDraftAssignees] = useState<readonly string[]>([]);
   const [draftCategoryId, setDraftCategoryId] = useState('');
+  const [draftPriority, setDraftPriority] = useState(''); // '' = no priority
+  const [draftSource, setDraftSource] = useState<ProjectTaskSource>('apar');
   const [dueOn, setDueOn] = useState(todayISODate());
   const [pickerFor, setPickerFor] = useState<'draft' | string | null>(null);
 
@@ -1440,12 +1480,16 @@ function TasksBody({
         title: t,
         assigneeEmployeeIds: [...draftAssignees],
         categoryId: draftCategoryId || null,
+        priority: draftPriority ? (draftPriority as ProjectTaskPriority) : null,
+        source: draftSource,
         dueOn: dueOn || null,
       });
       setTasks((prev) => [...prev, row]);
       setTitle('');
       setDraftAssignees([]);
       setDraftCategoryId('');
+      setDraftPriority('');
+      setDraftSource('apar');
       setDueOn(todayISODate());
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Failed to add deliverable');
@@ -1493,6 +1537,38 @@ function TasksBody({
     }
   }
 
+  async function changePriority(id: string, priority: string) {
+    setBusy(true);
+    setError(null);
+    try {
+      const row = await updateProjectTask({
+        id,
+        priority: priority ? (priority as ProjectTaskPriority) : null,
+      });
+      replaceTask(row);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Failed to update deliverable');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function changeSource(id: string, source: string) {
+    setBusy(true);
+    setError(null);
+    try {
+      const row = await updateProjectTask({
+        id,
+        source: source ? (source as ProjectTaskSource) : null,
+      });
+      replaceTask(row);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Failed to update deliverable');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function remove(id: string) {
     if (busy) return;
     setBusy(true);
@@ -1526,6 +1602,8 @@ function TasksBody({
 
   const renderTask = (t: ProjectTaskRow) => {
     const done = t.status === 'done';
+    const priority = t.priority ? TASK_PRIORITIES.find((p) => p.value === t.priority) : undefined;
+    const source = t.source ? TASK_SOURCES.find((s) => s.value === t.source) : undefined;
     return (
       <li
         key={t.id}
@@ -1549,6 +1627,22 @@ function TasksBody({
           }}
         >
           {t.title}
+          {priority ? (
+            <span
+              style={{
+                marginLeft: 8,
+                fontSize: 10,
+                fontWeight: 600,
+                padding: '1px 7px',
+                borderRadius: 999,
+                border: `1px solid ${priority.color}`,
+                color: priority.color,
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {priority.label}
+            </span>
+          ) : null}
           {t.categoryName ? (
             <span
               style={{
@@ -1563,6 +1657,23 @@ function TasksBody({
               }}
             >
               {t.categoryName}
+            </span>
+          ) : null}
+          {source ? (
+            <span
+              title={source.label}
+              style={{
+                marginLeft: 8,
+                fontSize: 10,
+                fontWeight: 600,
+                padding: '1px 7px',
+                borderRadius: 999,
+                border: '1px solid var(--border)',
+                color: 'var(--text-muted)',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {source.short}
             </span>
           ) : null}
           {t.dueOn ? (
@@ -1606,6 +1717,34 @@ function TasksBody({
               {t.categoryId && !categories.some((c) => c.id === t.categoryId) ? (
                 <option value={t.categoryId}>{t.categoryName ?? 'Archived category'}</option>
               ) : null}
+            </select>
+            <select
+              className="input"
+              value={t.priority ?? ''}
+              onChange={(e) => void changePriority(t.id, e.target.value)}
+              disabled={busy}
+              title="Priority (Eisenhower)"
+            >
+              <option value="">No priority</option>
+              {TASK_PRIORITIES.map((p) => (
+                <option key={p.value} value={p.value}>
+                  {p.label}
+                </option>
+              ))}
+            </select>
+            <select
+              className="input"
+              value={t.source ?? ''}
+              onChange={(e) => void changeSource(t.id, e.target.value)}
+              disabled={busy}
+              title="Source — who this deliverable comes from"
+            >
+              <option value="">No source</option>
+              {TASK_SOURCES.map((s) => (
+                <option key={s.value} value={s.value}>
+                  {s.label}
+                </option>
+              ))}
             </select>
             <select
               className="input"
@@ -1732,6 +1871,31 @@ function TasksBody({
               </option>
             ))}
           </select>
+          <select
+            className="input"
+            value={draftPriority}
+            onChange={(e) => setDraftPriority(e.target.value)}
+            title="Priority (Eisenhower — optional)"
+          >
+            <option value="">No priority</option>
+            {TASK_PRIORITIES.map((p) => (
+              <option key={p.value} value={p.value}>
+                {p.label}
+              </option>
+            ))}
+          </select>
+          <select
+            className="input"
+            value={draftSource}
+            onChange={(e) => setDraftSource(e.target.value as ProjectTaskSource)}
+            title="Source — who this deliverable comes from"
+          >
+            {TASK_SOURCES.map((s) => (
+              <option key={s.value} value={s.value}>
+                {s.label}
+              </option>
+            ))}
+          </select>
           <DateField
             value={dueOn}
             onChange={(next) => setDueOn(next)}
@@ -1768,7 +1932,7 @@ function TasksBody({
             const groupTasks = tasks
               .filter((t) => t.projectId === tg.id)
               .slice()
-              .sort((a, b) => a.position - b.position);
+              .sort(compareTasks);
             return (
               <div key={tg.id} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                 <div
@@ -1824,7 +1988,7 @@ function TasksBody({
             margin: 0,
           }}
         >
-          {tasks.map(renderTask)}
+          {tasks.slice().sort(compareTasks).map(renderTask)}
         </ul>
       )}
 
