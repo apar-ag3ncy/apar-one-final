@@ -183,8 +183,7 @@ async function postOpeningJv(
   },
   client: DbClient,
 ): Promise<void> {
-  const abs =
-    args.openingBalancePaise < 0n ? -args.openingBalancePaise : args.openingBalancePaise;
+  const abs = args.openingBalancePaise < 0n ? -args.openingBalancePaise : args.openingBalancePaise;
   if (abs === 0n) return;
   const bankDebit = args.openingBalancePaise > 0n;
   const draft = await createDraftTransaction(

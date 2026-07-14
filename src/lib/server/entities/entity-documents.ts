@@ -611,7 +611,10 @@ export async function restoreDocument(entityDocumentId: string): Promise<void> {
   const row = await loadEntityDocForTrash(entityDocumentId);
   if (!row) throw new AppError('not_found', `Document ${entityDocumentId} not found`);
   if (row.status !== 'soft_deleted') {
-    throw new AppError('conflict', `Only items in Trash can be restored (this one is ${row.status}).`);
+    throw new AppError(
+      'conflict',
+      `Only items in Trash can be restored (this one is ${row.status}).`,
+    );
   }
   await db
     .update(entityDocuments)

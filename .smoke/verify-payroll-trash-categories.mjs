@@ -11,7 +11,8 @@ import fs from 'node:fs';
 
 const BASE = process.env.BASE;
 const PASSWORD = process.env.OS_PASSWORD || 'apar2026';
-const OUT = '/private/tmp/claude-501/-Users-swayamzinzuwadia-Documents-Code-apar-one-final/60c9eb94-94ae-48d7-978b-cdeb1ced03dc/scratchpad/verify-shots';
+const OUT =
+  '/private/tmp/claude-501/-Users-swayamzinzuwadia-Documents-Code-apar-one-final/60c9eb94-94ae-48d7-978b-cdeb1ced03dc/scratchpad/verify-shots';
 fs.mkdirSync(OUT, { recursive: true });
 
 const browser = await chromium.launch({ channel: 'chrome', args: ['--no-sandbox'] });
@@ -111,15 +112,9 @@ try {
   await ew.getByRole('button', { name: 'Record payment', exact: true }).click();
   const payRow = ew.locator('li', { hasText: 'Remove this payment' });
   const payRowByBtn = ew.locator('li:has(button[title="Remove this payment"])');
-  report(
-    '₹1 salary payment recorded',
-    await waitCount(payRowByBtn, (n) => n > 0, 25000),
-  );
+  report('₹1 salary payment recorded', await waitCount(payRowByBtn, (n) => n > 0, 25000));
   await payRowByBtn.first().locator('button[title="Remove this payment"]').click();
-  report(
-    'payment delete leaves list',
-    await waitCount(payRowByBtn, (n) => n === 0, 25000),
-  );
+  report('payment delete leaves list', await waitCount(payRowByBtn, (n) => n === 0, 25000));
   await shot('pt-03-payment-deleted');
 
   /* ---- Trash: three payroll sections + restore/dispose ----------------- */
@@ -134,10 +129,15 @@ try {
   await shot('pt-04-trash-sections');
 
   // restore the bonus, verify it disappears from Trash
-  const bonusTrashRow = tw.locator('[class*="row"], li, tr', { hasText: 'Smoke bonus (test)' }).first();
+  const bonusTrashRow = tw
+    .locator('[class*="row"], li, tr', { hasText: 'Smoke bonus (test)' })
+    .first();
   await bonusTrashRow.getByRole('button', { name: 'Restore' }).click();
   await page.waitForTimeout(3000);
-  report('bonus restored out of Trash', !((await tw.textContent()) ?? '').includes('Smoke bonus (test)'));
+  report(
+    'bonus restored out of Trash',
+    !((await tw.textContent()) ?? '').includes('Smoke bonus (test)'),
+  );
 
   // dispose payment + structure permanently (accept confirm dialogs if any)
   page.on('dialog', (d) => void d.accept());
@@ -171,16 +171,24 @@ try {
   await cmdk('Open Trash');
   await page.waitForTimeout(2500);
   const tw2 = page.locator('.window').last();
-  const bonusAgain = tw2.locator('[class*="row"], li, tr', { hasText: 'Smoke bonus (test)' }).first();
+  const bonusAgain = tw2
+    .locator('[class*="row"], li, tr', { hasText: 'Smoke bonus (test)' })
+    .first();
   if ((await bonusAgain.count()) > 0) {
-    await bonusAgain.getByRole('button', { name: /Delete|Dispose|forever/i }).last().click();
+    await bonusAgain
+      .getByRole('button', { name: /Delete|Dispose|forever/i })
+      .last()
+      .click();
     await page.waitForTimeout(2500);
   }
 
   /* ---- D. category: create → move → delete ----------------------------- */
   await cmdk('Close all apps');
   await cmdk('Open Office');
-  await page.getByRole('button', { name: /Expenses/ }).first().click();
+  await page
+    .getByRole('button', { name: /Expenses/ })
+    .first()
+    .click();
   await page.waitForTimeout(3500);
   const ow = page.locator('.window').last();
   await ow.getByRole('button', { name: 'New Expense' }).click();
@@ -195,7 +203,10 @@ try {
   await modal.locator('input[placeholder*="Subscriptions"]').first().fill('Smoke Test Cat');
   await modal.getByRole('button', { name: 'Create category' }).click();
   await page.waitForTimeout(2500);
-  await modal.getByRole('button', { name: /Save expense|^Save$|Add expense|Log expense/i }).last().click();
+  await modal
+    .getByRole('button', { name: /Save expense|^Save$|Add expense|Log expense/i })
+    .last()
+    .click();
   await page.waitForTimeout(5000);
   const chips = (await ow.textContent()) ?? '';
   report('custom category chip appears', /Smoke Test Cat/.test(chips));
@@ -212,9 +223,22 @@ try {
   await page.waitForTimeout(6000);
   const afterMove = (await mm.textContent()) ?? '';
   report('entries moved (0 left)', /0 entries/.test(afterMove), afterMove.slice(0, 150));
-  await mm.locator('div', { hasText: 'Smoke Test Cat' }).last().getByRole('button', { name: /Delete/ }).click();
+  await mm
+    .locator('div', { hasText: 'Smoke Test Cat' })
+    .last()
+    .getByRole('button', { name: /Delete/ })
+    .click();
   await page.waitForTimeout(3000);
-  report('category deleted from manage modal', !/Smoke Test Cat/.test((await page.locator('.os-modal').last().textContent().catch(() => '')) ?? ''));
+  report(
+    'category deleted from manage modal',
+    !/Smoke Test Cat/.test(
+      (await page
+        .locator('.os-modal')
+        .last()
+        .textContent()
+        .catch(() => '')) ?? '',
+    ),
+  );
   await page.keyboard.press('Escape');
   await page.waitForTimeout(1000);
   await shot('pt-07-category-deleted');
@@ -226,10 +250,16 @@ try {
     await expRow.locator('button[title*="Delete" i], button[title*="Remove" i]').last().click();
     await page.waitForTimeout(1200);
     const confirm = page.locator('.os-modal').last();
-    await confirm.getByRole('button', { name: /Delete/i }).last().click();
+    await confirm
+      .getByRole('button', { name: /Delete/i })
+      .last()
+      .click();
     await page.waitForTimeout(4000);
   }
-  report('smoke expense cleaned up', (await ow.locator('tr', { hasText: 'Smoke cat entry (test)' }).count()) === 0);
+  report(
+    'smoke expense cleaned up',
+    (await ow.locator('tr', { hasText: 'Smoke cat entry (test)' }).count()) === 0,
+  );
 
   // dispose the category from Trash
   await cmdk('Close all apps');
@@ -238,10 +268,16 @@ try {
   const tw3 = page.locator('.window').last();
   const catTrash = tw3.locator('[class*="row"], li, tr', { hasText: 'Smoke Test Cat' }).first();
   if ((await catTrash.count()) > 0) {
-    await catTrash.getByRole('button', { name: /Delete|Dispose|forever/i }).last().click();
+    await catTrash
+      .getByRole('button', { name: /Delete|Dispose|forever/i })
+      .last()
+      .click();
     await page.waitForTimeout(2500);
   }
-  report('category disposed from Trash', !((await tw3.textContent()) ?? '').includes('Smoke Test Cat'));
+  report(
+    'category disposed from Trash',
+    !((await tw3.textContent()) ?? '').includes('Smoke Test Cat'),
+  );
   await shot('pt-08-final-trash');
 } catch (e) {
   results.push(`ERROR ${e.message}`);

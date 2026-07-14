@@ -289,7 +289,9 @@ export function EmployeeEditDialog({ employee }: { employee: Employee }) {
                 aria-invalid={form.formState.errors.workEmail ? true : undefined}
               />
               {form.formState.errors.workEmail ? (
-                <p className="text-destructive text-xs">{form.formState.errors.workEmail.message}</p>
+                <p className="text-destructive text-xs">
+                  {form.formState.errors.workEmail.message}
+                </p>
               ) : null}
             </div>
             <div className="grid gap-1.5">
@@ -302,7 +304,9 @@ export function EmployeeEditDialog({ employee }: { employee: Employee }) {
                 aria-invalid={form.formState.errors.personalEmail ? true : undefined}
               />
               {form.formState.errors.personalEmail ? (
-                <p className="text-destructive text-xs">{form.formState.errors.personalEmail.message}</p>
+                <p className="text-destructive text-xs">
+                  {form.formState.errors.personalEmail.message}
+                </p>
               ) : null}
             </div>
           </div>
@@ -316,7 +320,9 @@ export function EmployeeEditDialog({ employee }: { employee: Employee }) {
               aria-invalid={form.formState.errors.noticePeriodDays ? true : undefined}
             />
             {form.formState.errors.noticePeriodDays ? (
-              <p className="text-destructive text-xs">{form.formState.errors.noticePeriodDays.message}</p>
+              <p className="text-destructive text-xs">
+                {form.formState.errors.noticePeriodDays.message}
+              </p>
             ) : null}
           </div>
 

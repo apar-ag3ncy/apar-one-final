@@ -8,7 +8,8 @@ import fs from 'node:fs';
 
 const BASE = process.env.BASE;
 const PASSWORD = process.env.OS_PASSWORD || 'apar2026';
-const OUT = '/private/tmp/claude-501/-Users-swayamzinzuwadia-Documents-Code-apar-one-final/60c9eb94-94ae-48d7-978b-cdeb1ced03dc/scratchpad/verify-shots';
+const OUT =
+  '/private/tmp/claude-501/-Users-swayamzinzuwadia-Documents-Code-apar-one-final/60c9eb94-94ae-48d7-978b-cdeb1ced03dc/scratchpad/verify-shots';
 fs.mkdirSync(OUT, { recursive: true });
 const INV = `SMOKE-TDS-${Date.now()}`;
 const DOC_ID = '4ac95a1f-e086-4227-807d-47a08ebb6561'; // Chitra Vaibhav Press existing doc
@@ -51,7 +52,10 @@ try {
   const vw = page.locator('.window').last();
   await vw.getByText('Bills', { exact: true }).first().click();
   await page.waitForTimeout(1500);
-  await vw.getByRole('button', { name: /New bill/i }).first().click();
+  await vw
+    .getByRole('button', { name: /New bill/i })
+    .first()
+    .click();
   await page.waitForTimeout(1200);
   const modal = page.locator('.os-modal').last();
   await modal.waitFor({ timeout: 5000 });
@@ -74,9 +78,15 @@ try {
 
   const bodyText = (await page.locator('body').textContent()) ?? '';
   const savedToast = /draft saved|Saved with \d+ flag/i.test(bodyText);
-  const failToast = /Could not save|error occurred in the Server|s\.code|does not exist/i.test(bodyText);
+  const failToast = /Could not save|error occurred in the Server|s\.code|does not exist/i.test(
+    bodyText,
+  );
   report('no 5xx during vendor bill save', serverErrors.length === 0, serverErrors.join('; '));
-  report('vendor bill draft saved (TDS validation ran, no crash)', savedToast && !failToast, savedToast ? 'saved toast seen' : `no saved toast; fail=${failToast}`);
+  report(
+    'vendor bill draft saved (TDS validation ran, no crash)',
+    savedToast && !failToast,
+    savedToast ? 'saved toast seen' : `no saved toast; fail=${failToast}`,
+  );
   await shot('vb-02-after-save');
 } catch (e) {
   results.push(`ERROR ${e.message}`);

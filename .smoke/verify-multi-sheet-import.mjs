@@ -9,13 +9,19 @@ import fs from 'node:fs';
 
 const BASE = process.env.BASE;
 const PASSWORD = process.env.OS_PASSWORD || 'apar2026';
-const OUT = '/private/tmp/claude-501/-Users-swayamzinzuwadia-Documents-Code-apar-one-final/60c9eb94-94ae-48d7-978b-cdeb1ced03dc/scratchpad/verify-shots';
-const TMP = '/private/tmp/claude-501/-Users-swayamzinzuwadia-Documents-Code-apar-one-final/60c9eb94-94ae-48d7-978b-cdeb1ced03dc/scratchpad';
+const OUT =
+  '/private/tmp/claude-501/-Users-swayamzinzuwadia-Documents-Code-apar-one-final/60c9eb94-94ae-48d7-978b-cdeb1ced03dc/scratchpad/verify-shots';
+const TMP =
+  '/private/tmp/claude-501/-Users-swayamzinzuwadia-Documents-Code-apar-one-final/60c9eb94-94ae-48d7-978b-cdeb1ced03dc/scratchpad';
 fs.mkdirSync(OUT, { recursive: true });
 
 // --- build a 3-sheet workbook -------------------------------------------------
 const header = ['Date', 'Name', 'Total', 'Category', 'Payment Mode'];
-const jan = [header, ['05.01.26', 'SMOKE Jan pens', '₹100', 'Stationery', 'Cash'], ['06.01.26', 'SMOKE Jan chair', '₹5000', 'Asset', 'Bank']];
+const jan = [
+  header,
+  ['05.01.26', 'SMOKE Jan pens', '₹100', 'Stationery', 'Cash'],
+  ['06.01.26', 'SMOKE Jan chair', '₹5000', 'Asset', 'Bank'],
+];
 const feb = [header, ['10.02.26', 'SMOKE Feb coffee', '₹250', 'Pantry', 'Cash']];
 const summary = [['Summary'], ['nothing to import here']]; // no Name/Total → skipped
 const wb = XLSX.utils.book_new();
@@ -50,10 +56,16 @@ try {
 
   // Office → Expenses → Import
   await cmdk('Open Office');
-  await page.getByRole('button', { name: /Expenses/ }).first().click();
+  await page
+    .getByRole('button', { name: /Expenses/ })
+    .first()
+    .click();
   await page.waitForTimeout(3500);
   const ow = page.locator('.window').last();
-  await ow.getByRole('button', { name: /Import/ }).first().click();
+  await ow
+    .getByRole('button', { name: /Import/ })
+    .first()
+    .click();
   await page.waitForTimeout(1000);
   const modal = page.locator('.os-modal').last();
 
@@ -65,13 +77,22 @@ try {
   // 1) picker appears with both data sheets + the invalid one
   const t1 = await mText();
   report('sheet picker shown', /Which sheets should be imported/.test(t1));
-  report('lists January / February / Summary', /January/.test(t1) && /February/.test(t1) && /Summary/.test(t1), t1.slice(0, 160));
+  report(
+    'lists January / February / Summary',
+    /January/.test(t1) && /February/.test(t1) && /Summary/.test(t1),
+    t1.slice(0, 160),
+  );
   report('per-sheet row counts (2 rows / 1 row)', /2 rows/.test(t1) && /1 row(?![a-z])/.test(t1));
   report("invalid sheet flagged can't import", /can’t import|no “Name”/.test(t1));
   await shot('ms-01-picker');
 
   // 2) combined preview = 3 rows from 2 sheets by default
-  report('combined preview = 3 rows from 2 sheets', /3\s*<?\/?strong>?\s*rows ready to import/.test(t1.replace(/\s+/g, ' ')) || /from 2 sheets/.test(t1), t1.replace(/\s+/g, ' ').match(/\d+ rows ready to import[^·]*·?[^·]*/)?.[0] ?? '');
+  report(
+    'combined preview = 3 rows from 2 sheets',
+    /3\s*<?\/?strong>?\s*rows ready to import/.test(t1.replace(/\s+/g, ' ')) ||
+      /from 2 sheets/.test(t1),
+    t1.replace(/\s+/g, ' ').match(/\d+ rows ready to import[^·]*·?[^·]*/)?.[0] ?? '',
+  );
   // more robust: count preview table body rows
   const previewRows = () => modal.locator('table tbody tr').count();
   const initialRows = await previewRows();

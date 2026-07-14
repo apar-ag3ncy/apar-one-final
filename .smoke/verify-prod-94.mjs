@@ -6,7 +6,8 @@ import fs from 'node:fs';
 
 const BASE = process.env.BASE || 'https://apar-one-final.vercel.app';
 const PASSWORD = process.env.OS_PASSWORD || 'apar2026';
-const OUT = '/private/tmp/claude-501/-Users-swayamzinzuwadia-Documents-Code-apar-one-final/60c9eb94-94ae-48d7-978b-cdeb1ced03dc/scratchpad/verify-shots';
+const OUT =
+  '/private/tmp/claude-501/-Users-swayamzinzuwadia-Documents-Code-apar-one-final/60c9eb94-94ae-48d7-978b-cdeb1ced03dc/scratchpad/verify-shots';
 fs.mkdirSync(OUT, { recursive: true });
 
 const browser = await chromium.launch({ channel: 'chrome', args: ['--no-sandbox'] });
@@ -50,7 +51,10 @@ try {
   // 2) Client window: Addresses only in its own tab
   await cmdk('Close all apps');
   await cmdk('Open Accounts');
-  await page.getByRole('button', { name: /Clients/ }).first().click();
+  await page
+    .getByRole('button', { name: /Clients/ })
+    .first()
+    .click();
   await page.waitForTimeout(2500);
   const list = page.locator('.window').last();
   // Wait for a real DB row (demo seed swaps out async), then click its name
@@ -71,7 +75,10 @@ try {
   );
   await cw.getByText('Addresses', { exact: true }).first().click();
   await page.waitForTimeout(2500);
-  report('Addresses tab still renders', /Add address|No addresses/i.test((await cw.textContent()) ?? ''));
+  report(
+    'Addresses tab still renders',
+    /Add address|No addresses/i.test((await cw.textContent()) ?? ''),
+  );
   await shot('prod94-02-client');
 } catch (e) {
   results.push(`ERROR ${e.message}`);

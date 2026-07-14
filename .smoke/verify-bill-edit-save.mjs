@@ -7,7 +7,8 @@ import fs from 'node:fs';
 
 const BASE = process.env.BASE || 'https://apar-one-final.vercel.app';
 const PASSWORD = process.env.OS_PASSWORD || 'apar2026';
-const OUT = '/private/tmp/claude-501/-Users-swayamzinzuwadia-Documents-Code-apar-one-final/60c9eb94-94ae-48d7-978b-cdeb1ced03dc/scratchpad/verify-shots';
+const OUT =
+  '/private/tmp/claude-501/-Users-swayamzinzuwadia-Documents-Code-apar-one-final/60c9eb94-94ae-48d7-978b-cdeb1ced03dc/scratchpad/verify-shots';
 fs.mkdirSync(OUT, { recursive: true });
 
 const browser = await chromium.launch({ channel: 'chrome', args: ['--no-sandbox'] });
@@ -17,16 +18,28 @@ const fails = [];
 page.on('response', async (r) => {
   if (r.status() >= 500) {
     let body = '';
-    try { body = (await r.text()).slice(0, 1500); } catch {}
+    try {
+      body = (await r.text()).slice(0, 1500);
+    } catch {}
     const h = r.headers();
     const digest = h['x-nextjs-error-digest'] || h['x-vercel-error'] || '';
-    fails.push(`${r.status()} ${r.statusText()} ${r.request().method()} ${r.url().split('?')[0]}\n   DIGEST: ${digest}\n   CT: ${h['content-type']||''}\n   BODY: ${body.replace(/\n/g,' ')}`);
+    fails.push(
+      `${r.status()} ${r.statusText()} ${r.request().method()} ${r.url().split('?')[0]}\n   DIGEST: ${digest}\n   CT: ${h['content-type'] || ''}\n   BODY: ${body.replace(/\n/g, ' ')}`,
+    );
   }
 });
 const consoleErrs = [];
-page.on('console', (m) => { if (m.type() === 'error') consoleErrs.push(m.text().slice(0, 200)); });
+page.on('console', (m) => {
+  if (m.type() === 'error') consoleErrs.push(m.text().slice(0, 200));
+});
 const dbgHits = [];
-page.on('response', async (r) => { try { const t = await r.text(); if (t.includes('DBGERR')) dbgHits.push(t.match(/DBGERR::[^"\\]{0,400}/)?.[0] || t.slice(0,400)); } catch {} });
+page.on('response', async (r) => {
+  try {
+    const t = await r.text();
+    if (t.includes('DBGERR'))
+      dbgHits.push(t.match(/DBGERR::[^"\\]{0,400}/)?.[0] || t.slice(0, 400));
+  } catch {}
+});
 
 async function cmdk(text) {
   await page.keyboard.press('Meta+k');
@@ -64,13 +77,19 @@ try {
   await page.waitForTimeout(5000);
   await shot('repro-02-edit-open');
 
-  const toast = await page.locator('[data-sonner-toast], .toast, [role="status"]').allTextContents().catch(() => []);
+  const toast = await page
+    .locator('[data-sonner-toast], .toast, [role="status"]')
+    .allTextContents()
+    .catch(() => []);
   console.log('EDIT_500_COUNT=' + fails.length);
   console.log('FAILS:\n' + fails.join('\n'));
   console.log('TOASTS=' + JSON.stringify(toast));
   console.log('CONSOLE_ERRS=' + JSON.stringify(consoleErrs.slice(-8)));
   // did the form populate? check the invoice-number field value
-  const invVal = await page.locator('#vb-num').inputValue().catch(() => '(no field)');
+  const invVal = await page
+    .locator('#vb-num')
+    .inputValue()
+    .catch(() => '(no field)');
   console.log('FORM_INV_VALUE=' + invVal);
 
   // Now test the SAVE path (re-save the same draft — functionally idempotent).
@@ -78,7 +97,10 @@ try {
   const modal = page.locator('.os-modal').last();
   await modal.getByRole('button', { name: /Save changes|Save draft/i }).click();
   await page.waitForTimeout(6000);
-  const saveToasts = await page.locator('[data-sonner-toast], [role="status"]').allTextContents().catch(() => []);
+  const saveToasts = await page
+    .locator('[data-sonner-toast], [role="status"]')
+    .allTextContents()
+    .catch(() => []);
   console.log('SAVE_500_COUNT=' + fails.length);
   console.log('SAVE_FAILS:\n' + fails.join('\n'));
   console.log('SAVE_TOASTS=' + JSON.stringify(saveToasts));

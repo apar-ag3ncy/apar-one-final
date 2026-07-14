@@ -6,7 +6,8 @@ import fs from 'node:fs';
 
 const BASE = process.env.BASE;
 const PASSWORD = process.env.OS_PASSWORD || 'apar2026';
-const OUT = '/private/tmp/claude-501/-Users-swayamzinzuwadia-Documents-Code-apar-one-final/60c9eb94-94ae-48d7-978b-cdeb1ced03dc/scratchpad/verify-shots';
+const OUT =
+  '/private/tmp/claude-501/-Users-swayamzinzuwadia-Documents-Code-apar-one-final/60c9eb94-94ae-48d7-978b-cdeb1ced03dc/scratchpad/verify-shots';
 fs.mkdirSync(OUT, { recursive: true });
 
 const browser = await chromium.launch({ channel: 'chrome', args: ['--no-sandbox'] });
@@ -16,7 +17,9 @@ const results = [];
 const report = (name, ok, detail = '') =>
   results.push(`${ok ? 'PASS' : 'FAIL'} ${name}${detail ? ' — ' + detail : ''}`);
 const errs = [];
-page.on('console', (m) => { if (m.type() === 'error') errs.push(m.text().slice(0, 160)); });
+page.on('console', (m) => {
+  if (m.type() === 'error') errs.push(m.text().slice(0, 160));
+});
 page.on('pageerror', (e) => errs.push('PAGEERR: ' + (e.message || '').slice(0, 160)));
 
 async function cmdk(text) {
@@ -28,7 +31,12 @@ async function cmdk(text) {
 }
 
 const dateBtn = () => page.locator('.os-modal button:has(svg.lucide-calendar)').first();
-const fieldText = async () => (await dateBtn().innerText().catch(() => '')).trim();
+const fieldText = async () =>
+  (
+    await dateBtn()
+      .innerText()
+      .catch(() => '')
+  ).trim();
 
 try {
   await page.goto(`${BASE}/os`, { waitUntil: 'networkidle' });
@@ -39,7 +47,10 @@ try {
   await page.waitForTimeout(1200);
 
   await cmdk('Open Office');
-  await page.getByRole('button', { name: /Expenses/ }).first().click();
+  await page
+    .getByRole('button', { name: /Expenses/ })
+    .first()
+    .click();
   await page.waitForTimeout(3500);
   const ow = page.locator('.window').last();
   await ow.getByRole('button', { name: 'New Expense' }).click();
@@ -52,8 +63,17 @@ try {
   report('iOS calendar opens', (await cal.count()) > 0);
   const monthBtns0 = await cal.getByRole('button', { name: 'Jul', exact: true }).count();
   const dayBtns0 = await cal.locator('button[data-day]').count();
-  report('opens at MONTHS view (months shown, no day grid yet)', monthBtns0 > 0 && dayBtns0 === 0, `monthBtns=${monthBtns0} dayBtns=${dayBtns0}`);
-  const headerText = (await cal.locator('button[aria-label="Switch month or year"]').innerText().catch(() => '')).trim();
+  report(
+    'opens at MONTHS view (months shown, no day grid yet)',
+    monthBtns0 > 0 && dayBtns0 === 0,
+    `monthBtns=${monthBtns0} dayBtns=${dayBtns0}`,
+  );
+  const headerText = (
+    await cal
+      .locator('button[aria-label="Switch month or year"]')
+      .innerText()
+      .catch(() => '')
+  ).trim();
   report('months-view header shows the year', /20\d\d/.test(headerText), headerText);
   await shot('ios-01-open');
 
@@ -66,7 +86,10 @@ try {
   const after = await fieldText();
   console.log('FIELD_AFTER_CLICK=' + JSON.stringify(after));
   report('month → day picks a date', /20 Jul 2026/.test(after), `${before} -> ${after}`);
-  report('popover closed after pick', (await page.locator('[data-slot="popover-content"]').count()) === 0);
+  report(
+    'popover closed after pick',
+    (await page.locator('[data-slot="popover-content"]').count()) === 0,
+  );
   await shot('ios-02-picked');
 
   // 3) persistence
@@ -84,7 +107,10 @@ try {
   report('tapping the year opens the YEARS view', yearsShown >= 6, `yearBtns=${yearsShown}`);
   let found1990 = false;
   for (let i = 0; i < 12; i++) {
-    if ((await cal2.getByRole('button', { name: '1990', exact: true }).count()) > 0) { found1990 = true; break; }
+    if ((await cal2.getByRole('button', { name: '1990', exact: true }).count()) > 0) {
+      found1990 = true;
+      break;
+    }
     await cal2.locator('button[aria-label="Previous"]').click();
     await page.waitForTimeout(250);
   }
@@ -92,7 +118,7 @@ try {
   if (found1990) {
     await cal2.getByRole('button', { name: '1990', exact: true }).click(); // → months (1990)
     await page.waitForTimeout(300);
-    await cal2.getByRole('button', { name: 'Jun', exact: true }).click();  // → days
+    await cal2.getByRole('button', { name: 'Jun', exact: true }).click(); // → days
     await page.waitForTimeout(300);
     await cal2.locator('button[data-day="1990-06-15"]').click();
     await page.waitForTimeout(900);

@@ -211,7 +211,7 @@ async function insertAdvanceCore(
   // Derive the mode-aware receipt fields (mirror recordClientReceipt).
   const method = deriveReceiptMethod(v.mode, v.transferMethod, v.method);
   const isCheque = v.transferMethod === 'cheque';
-  const chequeNumber = isCheque ? (v.chequeNumber?.trim() || null) : null;
+  const chequeNumber = isCheque ? v.chequeNumber?.trim() || null : null;
   const chequeDate = isCheque ? (v.chequeDate ?? null) : null;
   // Cash advances hit 1110 (no bank sub-ledger) → no bankAccountId on the row.
   const receiptBankAccountId = v.mode === 'cash' ? null : (v.bankAccountId ?? null);

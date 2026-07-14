@@ -109,7 +109,9 @@ export function UniversalLedgerWindow() {
     const headers = ['Date', 'Particulars', 'Voucher', 'Debit', 'Credit'];
     const rows: Record<string, string | number>[] = [];
     for (const r of data.rows) {
-      const legs = [...r.legs].sort((a, b) => (a.side === b.side ? 0 : a.side === 'debit' ? -1 : 1));
+      const legs = [...r.legs].sort((a, b) =>
+        a.side === b.side ? 0 : a.side === 'debit' ? -1 : 1,
+      );
       legs.forEach((leg, i) => {
         rows.push({
           Date: i === 0 ? r.txnDate.slice(0, 10) : '',
@@ -246,7 +248,9 @@ export function UniversalLedgerWindow() {
                             {leg.side === 'credit' ? 'To ' : ''}
                             {leg.accountName} A/c
                           </span>
-                          <span style={{ marginLeft: 6, fontSize: 10.5, color: 'var(--text-muted)' }}>
+                          <span
+                            style={{ marginLeft: 6, fontSize: 10.5, color: 'var(--text-muted)' }}
+                          >
                             {leg.accountCode}
                           </span>
                         </td>

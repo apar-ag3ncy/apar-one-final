@@ -20,13 +20,18 @@ const OUT = path.resolve('./.screenshots-verify');
 fs.mkdirSync(OUT, { recursive: true });
 
 const browser = await chromium.launch({ channel: 'chrome', args: ['--no-sandbox'] });
-const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1 });
+const ctx = await browser.newContext({
+  viewport: { width: 1440, height: 900 },
+  deviceScaleFactor: 1,
+});
 const page = await ctx.newPage();
 
 const events = [];
 page.on('pageerror', (e) => events.push(`pageerror: ${e.message}`));
 page.on('console', (m) => m.type() === 'error' && events.push(`console.error: ${m.text()}`));
-page.on('requestfailed', (r) => events.push(`requestfailed: ${r.url()} — ${r.failure()?.errorText ?? ''}`));
+page.on('requestfailed', (r) =>
+  events.push(`requestfailed: ${r.url()} — ${r.failure()?.errorText ?? ''}`),
+);
 page.on('response', (r) => {
   if (r.status() >= 500) events.push(`http${r.status()}: ${r.url()}`);
 });

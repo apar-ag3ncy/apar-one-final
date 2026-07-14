@@ -483,7 +483,11 @@ export function AttendanceApp({ canEdit = false }: { canEdit?: boolean }) {
                   return (
                     <th
                       key={d}
-                      className={['att-col-head', isToday && 'is-today', isSelected && 'is-selected']
+                      className={[
+                        'att-col-head',
+                        isToday && 'is-today',
+                        isSelected && 'is-selected',
+                      ]
                         .filter(Boolean)
                         .join(' ')}
                       style={{

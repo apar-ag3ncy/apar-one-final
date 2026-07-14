@@ -140,14 +140,16 @@ export function StatementOfAccount({
               <div style={{ display: 'flex', gap: 6 }}>
                 <button
                   type="button"
-                  className="btn"                  onClick={() => handleExport('pdf')}
+                  className="btn"
+                  onClick={() => handleExport('pdf')}
                   title="Download these ledger entries as a PDF file"
                 >
                   Export PDF
                 </button>
                 <button
                   type="button"
-                  className="btn"                  onClick={() => handleExport('xlsx')}
+                  className="btn"
+                  onClick={() => handleExport('xlsx')}
                   title="Download these ledger entries as an Excel (.xlsx) file"
                 >
                   Export Excel

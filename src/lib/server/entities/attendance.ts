@@ -220,12 +220,7 @@ export async function getAttendanceForDate(input: {
   const overrideRows = await db
     .select({ employeeId: attendanceRecords.employeeId, status: attendanceRecords.status })
     .from(attendanceRecords)
-    .where(
-      and(
-        eq(attendanceRecords.date, date),
-        isNull(attendanceRecords.deletedAt),
-      ),
-    );
+    .where(and(eq(attendanceRecords.date, date), isNull(attendanceRecords.deletedAt)));
 
   const overrideByEmployee = new Map<string, AttendanceStatus>();
   for (const r of overrideRows) overrideByEmployee.set(r.employeeId, r.status);

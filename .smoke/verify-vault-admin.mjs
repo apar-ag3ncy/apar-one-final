@@ -9,7 +9,8 @@ const BASE = process.env.BASE;
 const PASSWORD = process.env.OS_PASSWORD || 'apar2026';
 const PW1 = 'smoke-vault-pass-1';
 const PW2 = 'smoke-vault-pass-2';
-const OUT = '/private/tmp/claude-501/-Users-swayamzinzuwadia-Documents-Code-apar-one-final/60c9eb94-94ae-48d7-978b-cdeb1ced03dc/scratchpad/verify-shots';
+const OUT =
+  '/private/tmp/claude-501/-Users-swayamzinzuwadia-Documents-Code-apar-one-final/60c9eb94-94ae-48d7-978b-cdeb1ced03dc/scratchpad/verify-shots';
 fs.mkdirSync(OUT, { recursive: true });
 
 const browser = await chromium.launch({ channel: 'chrome', args: ['--no-sandbox'] });
@@ -94,7 +95,8 @@ try {
   await page.waitForTimeout(6000);
   const afterChange = (await win.textContent()) ?? '';
   // Success clears the fields and shows no inline error
-  const fieldsCleared = (await ch.nth(0).inputValue()) === '' && (await ch.nth(1).inputValue()) === '';
+  const fieldsCleared =
+    (await ch.nth(0).inputValue()) === '' && (await ch.nth(1).inputValue()) === '';
   report(
     'correct current password changes it',
     fieldsCleared && !/wrong/i.test(afterChange),
@@ -106,7 +108,11 @@ try {
   await win.locator('.side-item', { hasText: 'Vault' }).first().click();
   await page.waitForTimeout(2500);
   const vaultPane = (await win.textContent()) ?? '';
-  report('Settings Vault pane sees configured vault', /unlock/i.test(vaultPane), vaultPane.slice(0, 140));
+  report(
+    'Settings Vault pane sees configured vault',
+    /unlock/i.test(vaultPane),
+    vaultPane.slice(0, 140),
+  );
   await shot('vault-05-vault-pane');
 } catch (e) {
   results.push(`ERROR ${e.message}`);

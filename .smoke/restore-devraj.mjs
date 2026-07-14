@@ -5,7 +5,8 @@ import fs from 'node:fs';
 
 const BASE = process.env.BASE;
 const PASSWORD = process.env.OS_PASSWORD || 'apar2026';
-const OUT = '/private/tmp/claude-501/-Users-swayamzinzuwadia-Documents-Code-apar-one-final/60c9eb94-94ae-48d7-978b-cdeb1ced03dc/scratchpad/verify-shots';
+const OUT =
+  '/private/tmp/claude-501/-Users-swayamzinzuwadia-Documents-Code-apar-one-final/60c9eb94-94ae-48d7-978b-cdeb1ced03dc/scratchpad/verify-shots';
 fs.mkdirSync(OUT, { recursive: true });
 
 const browser = await chromium.launch({ channel: 'chrome', args: ['--no-sandbox'] });
@@ -46,7 +47,11 @@ try {
   const target = win.locator('.emp-card', { hasText: 'Devraj Pillay' }).first();
   await target.waitFor({ timeout: 10000 });
   const badge = ((await target.textContent()) ?? '').trim();
-  report('badge says Inactive (not On leave)', /Inactive/.test(badge) && !/On leave/i.test(badge), badge.slice(0, 140));
+  report(
+    'badge says Inactive (not On leave)',
+    /Inactive/.test(badge) && !/On leave/i.test(badge),
+    badge.slice(0, 140),
+  );
 
   // Reactivate via the card's status toggle
   await target.hover();
@@ -54,13 +59,22 @@ try {
   if ((await toggle.count()) > 0) {
     await toggle.click();
   } else {
-    await target.locator('button', { hasText: /activate/i }).first().click();
+    await target
+      .locator('button', { hasText: /activate/i })
+      .first()
+      .click();
   }
   await page.waitForTimeout(3000);
   await shot('restore-02-after-reactivate');
 
-  const after = ((await win.locator('.emp-card', { hasText: 'Devraj Pillay' }).first().textContent()) ?? '').trim();
-  report('Devraj restored to Active', /Active/.test(after) && !/Inactive/.test(after), after.slice(0, 140));
+  const after = (
+    (await win.locator('.emp-card', { hasText: 'Devraj Pillay' }).first().textContent()) ?? ''
+  ).trim();
+  report(
+    'Devraj restored to Active',
+    /Active/.test(after) && !/Inactive/.test(after),
+    after.slice(0, 140),
+  );
 } catch (e) {
   results.push(`ERROR ${e.message}`);
   await shot('restore-99-error');

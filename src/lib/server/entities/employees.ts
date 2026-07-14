@@ -664,11 +664,7 @@ const UpdateEmployeeSchema = z.object({
   // Lifecycle dates. joinedOn is NOT NULL in the DB, so it can be corrected
   // but not cleared; confirmedOn / separatedOn are nullable.
   joinedOn: z.string().regex(ISO_DATE, 'Joining date must be YYYY-MM-DD').optional(),
-  dateOfBirth: z
-    .string()
-    .regex(ISO_DATE, 'Date of birth must be YYYY-MM-DD')
-    .nullable()
-    .optional(),
+  dateOfBirth: z.string().regex(ISO_DATE, 'Date of birth must be YYYY-MM-DD').nullable().optional(),
   confirmedOn: z
     .string()
     .regex(ISO_DATE, 'Confirmation date must be YYYY-MM-DD')
