@@ -19,6 +19,7 @@ import {
   useReportData,
   type ExportFormat,
 } from './report-window-kit';
+import { SortHeader, useSortedRows, useTableSort } from './table-sort';
 
 export function TrialBalanceWindow() {
   const [asOfDate, setAsOfDate] = useState<string>(todayIso());
@@ -28,6 +29,13 @@ export function TrialBalanceWindow() {
     () => getTrialBalance({ asOfDate, includeReversed }),
     [asOfDate, includeReversed],
   );
+
+  const { sort, toggle } = useTableSort<'account' | 'debit' | 'credit'>();
+  const sortedRows = useSortedRows(rows ?? [], sort, {
+    account: (r) => r.accountCode,
+    debit: (r) => r.debitPaise,
+    credit: (r) => r.creditPaise,
+  });
 
   const totals = useMemo(() => {
     if (!rows) return null;
@@ -91,13 +99,27 @@ export function TrialBalanceWindow() {
         <table className="table">
           <thead>
             <tr>
-              <th>Account</th>
-              <th style={{ textAlign: 'right' }}>Debit</th>
-              <th style={{ textAlign: 'right' }}>Credit</th>
+              <SortHeader label="Account" sortKey="account" sort={sort} onSort={toggle} />
+              <SortHeader
+                label="Debit"
+                sortKey="debit"
+                sort={sort}
+                onSort={toggle}
+                align="right"
+                style={{ textAlign: 'right' }}
+              />
+              <SortHeader
+                label="Credit"
+                sortKey="credit"
+                sort={sort}
+                onSort={toggle}
+                align="right"
+                style={{ textAlign: 'right' }}
+              />
             </tr>
           </thead>
           <tbody>
-            {rows.map((r) => (
+            {sortedRows.map((r) => (
               <tr key={r.accountCode}>
                 <td>
                   <span
