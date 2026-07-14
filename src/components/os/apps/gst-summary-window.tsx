@@ -17,6 +17,9 @@ import {
   useReportData,
   type ExportFormat,
 } from './report-window-kit';
+import { SortHeader, useSortedRows, useTableSort } from './table-sort';
+
+type GstSortKey = 'month' | 'output' | 'input' | 'net';
 
 function monthLabel(m: string): string {
   const [y, mo] = m.split('-');
@@ -33,6 +36,14 @@ export function GstSummaryWindow() {
     () => getGstSummary({ from: fromDate, to: toDate }),
     [fromDate, toDate],
   );
+
+  const { sort, toggle } = useTableSort<GstSortKey>();
+  const sortedRows = useSortedRows(data?.rows ?? [], sort, {
+    month: (r) => r.month,
+    output: (r) => r.outputPaise,
+    input: (r) => r.inputPaise,
+    net: (r) => r.netPayablePaise,
+  });
 
   function handleExport(format: ExportFormat) {
     if (!data) return;
@@ -82,14 +93,35 @@ export function GstSummaryWindow() {
           <table className="table">
             <thead>
               <tr>
-                <th>Month</th>
-                <th style={{ textAlign: 'right' }}>Output GST</th>
-                <th style={{ textAlign: 'right' }}>Input GST</th>
-                <th style={{ textAlign: 'right' }}>Net payable</th>
+                <SortHeader label="Month" sortKey="month" sort={sort} onSort={toggle} />
+                <SortHeader
+                  label="Output GST"
+                  sortKey="output"
+                  sort={sort}
+                  onSort={toggle}
+                  align="right"
+                  style={{ textAlign: 'right' }}
+                />
+                <SortHeader
+                  label="Input GST"
+                  sortKey="input"
+                  sort={sort}
+                  onSort={toggle}
+                  align="right"
+                  style={{ textAlign: 'right' }}
+                />
+                <SortHeader
+                  label="Net payable"
+                  sortKey="net"
+                  sort={sort}
+                  onSort={toggle}
+                  align="right"
+                  style={{ textAlign: 'right' }}
+                />
               </tr>
             </thead>
             <tbody>
-              {data.rows.map((r) => (
+              {sortedRows.map((r) => (
                 <tr key={r.month}>
                   <td>{monthLabel(r.month)}</td>
                   <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>

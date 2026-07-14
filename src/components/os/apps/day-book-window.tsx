@@ -18,6 +18,9 @@ import {
   useReportData,
   type ExportFormat,
 } from './report-window-kit';
+import { SortHeader, useSortedRows, useTableSort } from './table-sort';
+
+type DayBookSortKey = 'date' | 'particulars' | 'account' | 'debit' | 'credit';
 
 export function DayBookWindow() {
   const fy = currentFyDefaults();
@@ -28,6 +31,15 @@ export function DayBookWindow() {
     () => getDayBook({ from: fromDate, to: toDate }),
     [fromDate, toDate],
   );
+
+  const { sort, toggle } = useTableSort<DayBookSortKey>();
+  const sortedRows = useSortedRows(data?.rows ?? [], sort, {
+    date: (r) => r.txnDate,
+    particulars: (r) => r.description ?? r.reference,
+    account: (r) => r.accountName,
+    debit: (r) => r.debitPaise,
+    credit: (r) => r.creditPaise,
+  });
 
   function handleExport(format: ExportFormat) {
     if (!data) return;
@@ -69,15 +81,29 @@ export function DayBookWindow() {
           <table className="table">
             <thead>
               <tr>
-                <th>Date</th>
-                <th>Particulars</th>
-                <th>Account</th>
-                <th style={{ textAlign: 'right' }}>Debit</th>
-                <th style={{ textAlign: 'right' }}>Credit</th>
+                <SortHeader label="Date" sortKey="date" sort={sort} onSort={toggle} />
+                <SortHeader label="Particulars" sortKey="particulars" sort={sort} onSort={toggle} />
+                <SortHeader label="Account" sortKey="account" sort={sort} onSort={toggle} />
+                <SortHeader
+                  label="Debit"
+                  sortKey="debit"
+                  sort={sort}
+                  onSort={toggle}
+                  align="right"
+                  style={{ textAlign: 'right' }}
+                />
+                <SortHeader
+                  label="Credit"
+                  sortKey="credit"
+                  sort={sort}
+                  onSort={toggle}
+                  align="right"
+                  style={{ textAlign: 'right' }}
+                />
               </tr>
             </thead>
             <tbody>
-              {data.rows.map((r, i) => (
+              {sortedRows.map((r, i) => (
                 <tr
                   key={`${r.txnId}-${i}`}
                   style={{ cursor: 'pointer' }}
