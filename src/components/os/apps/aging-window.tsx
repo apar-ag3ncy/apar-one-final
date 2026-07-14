@@ -21,8 +21,11 @@ import {
   useReportData,
   type ExportFormat,
 } from './report-window-kit';
+import { SortHeader, useSortedRows, useTableSort } from './table-sort';
 
 const BUCKETS = ['0-30', '31-60', '61-90', '90+'] as const;
+
+type AgingSortKey = 'entity' | (typeof BUCKETS)[number] | 'total';
 
 export function AgingWindow({ side }: { side: 'receivable' | 'payable' }) {
   const [asOfDate, setAsOfDate] = useState<string>(todayIso());
@@ -33,6 +36,16 @@ export function AgingWindow({ side }: { side: 'receivable' | 'payable' }) {
     () => getAgingReport({ side, asOfDate }),
     [side, asOfDate],
   );
+
+  const { sort, toggle } = useTableSort<AgingSortKey>();
+  const sortedRows = useSortedRows(rows ?? [], sort, {
+    entity: (r) => r.entityName,
+    '0-30': (r) => r.byBucket['0-30'],
+    '31-60': (r) => r.byBucket['31-60'],
+    '61-90': (r) => r.byBucket['61-90'],
+    '90+': (r) => r.byBucket['90+'],
+    total: (r) => r.totalPaise,
+  });
 
   const totals = useMemo(() => {
     if (!rows) return null;
@@ -107,17 +120,30 @@ export function AgingWindow({ side }: { side: 'receivable' | 'payable' }) {
         <table className="table">
           <thead>
             <tr>
-              <th>{entityLabel}</th>
+              <SortHeader label={entityLabel} sortKey="entity" sort={sort} onSort={toggle} />
               {BUCKETS.map((b) => (
-                <th key={b} style={{ textAlign: 'right' }}>
-                  {b} d
-                </th>
+                <SortHeader
+                  key={b}
+                  label={`${b} d`}
+                  sortKey={b}
+                  sort={sort}
+                  onSort={toggle}
+                  align="right"
+                  style={{ textAlign: 'right' }}
+                />
               ))}
-              <th style={{ textAlign: 'right' }}>Total</th>
+              <SortHeader
+                label="Total"
+                sortKey="total"
+                sort={sort}
+                onSort={toggle}
+                align="right"
+                style={{ textAlign: 'right' }}
+              />
             </tr>
           </thead>
           <tbody>
-            {rows.map((r) => (
+            {sortedRows.map((r) => (
               <tr
                 key={r.entityId}
                 className="row-clickable"

@@ -18,6 +18,9 @@ import {
   useReportData,
   type ExportFormat,
 } from './report-window-kit';
+import { SortHeader, useSortedRows, useTableSort } from './table-sort';
+
+type ProjectPnlSortKey = 'project' | 'billed' | 'received' | 'cost' | 'paid' | 'margin';
 
 export function ProjectPnlWindow() {
   const fy = currentFyDefaults();
@@ -28,6 +31,16 @@ export function ProjectPnlWindow() {
     () => getProjectPnlAll({ from: fromDate, to: toDate }),
     [fromDate, toDate],
   );
+
+  const { sort, toggle } = useTableSort<ProjectPnlSortKey>();
+  const sortedRows = useSortedRows(data?.rows ?? [], sort, {
+    project: (r) => r.projectName,
+    billed: (r) => r.billedPaise,
+    received: (r) => r.receivedPaise,
+    cost: (r) => r.costedPaise,
+    paid: (r) => r.paidPaise,
+    margin: (r) => r.marginPaise,
+  });
 
   function handleExport(format: ExportFormat) {
     if (!data) return;
@@ -77,16 +90,51 @@ export function ProjectPnlWindow() {
         <table className="table">
           <thead>
             <tr>
-              <th>Project</th>
-              <th style={{ textAlign: 'right' }}>Billed</th>
-              <th style={{ textAlign: 'right' }}>Received</th>
-              <th style={{ textAlign: 'right' }}>Vendor cost</th>
-              <th style={{ textAlign: 'right' }}>Paid</th>
-              <th style={{ textAlign: 'right' }}>Margin</th>
+              <SortHeader label="Project" sortKey="project" sort={sort} onSort={toggle} />
+              <SortHeader
+                label="Billed"
+                sortKey="billed"
+                sort={sort}
+                onSort={toggle}
+                align="right"
+                style={{ textAlign: 'right' }}
+              />
+              <SortHeader
+                label="Received"
+                sortKey="received"
+                sort={sort}
+                onSort={toggle}
+                align="right"
+                style={{ textAlign: 'right' }}
+              />
+              <SortHeader
+                label="Vendor cost"
+                sortKey="cost"
+                sort={sort}
+                onSort={toggle}
+                align="right"
+                style={{ textAlign: 'right' }}
+              />
+              <SortHeader
+                label="Paid"
+                sortKey="paid"
+                sort={sort}
+                onSort={toggle}
+                align="right"
+                style={{ textAlign: 'right' }}
+              />
+              <SortHeader
+                label="Margin"
+                sortKey="margin"
+                sort={sort}
+                onSort={toggle}
+                align="right"
+                style={{ textAlign: 'right' }}
+              />
             </tr>
           </thead>
           <tbody>
-            {data.rows.map((r) => (
+            {sortedRows.map((r) => (
               <tr
                 key={r.projectId}
                 style={{ cursor: 'pointer' }}
