@@ -18,6 +18,7 @@ import {
   type EmployeeAttendanceMatrixRow,
 } from '@/lib/server/entities/attendance';
 import { defaultStatusForDate } from '@/lib/attendance-defaults';
+import { todayIST } from '@/lib/ist-date';
 import { osActions } from '@/lib/os/store';
 import { ExportAttendanceDialog } from '@/components/attendance/export-attendance-dialog';
 import { ImportAttendanceDialog } from '@/components/attendance/import-attendance-dialog';
@@ -95,14 +96,12 @@ type PickerState = {
 };
 
 export function AttendanceApp({ canEdit = false }: { canEdit?: boolean }) {
-  const today = new Date();
-  const todayIso = useMemo(
-    () => `${today.getFullYear()}-${pad2(today.getMonth() + 1)}-${pad2(today.getDate())}`,
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [],
-  );
-  const [year, setYear] = useState(today.getFullYear());
-  const [month, setMonth] = useState(today.getMonth() + 1); // 1-12
+  // "Today" resolved in Asia/Kolkata so the matrix, the Team cards' chip and
+  // the per-employee section all agree on which day is current — regardless
+  // of the device or server timezone.
+  const todayIso = useMemo(() => todayIST(), []);
+  const [year, setYear] = useState(() => Number(todayIso.slice(0, 4)));
+  const [month, setMonth] = useState(() => Number(todayIso.slice(5, 7))); // 1-12
   const [rows, setRows] = useState<readonly EmployeeAttendanceMatrixRow[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [picker, setPicker] = useState<PickerState | null>(null);
@@ -344,8 +343,8 @@ export function AttendanceApp({ canEdit = false }: { canEdit?: boolean }) {
             type="button"
             className="btn"
             onClick={() => {
-              setYear(today.getFullYear());
-              setMonth(today.getMonth() + 1);
+              setYear(Number(todayIso.slice(0, 4)));
+              setMonth(Number(todayIso.slice(5, 7)));
             }}
             disabled={busy}
           >

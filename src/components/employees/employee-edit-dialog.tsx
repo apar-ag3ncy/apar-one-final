@@ -21,15 +21,18 @@ import { Label } from '@/components/ui/label';
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { updateEmployee, type UpdateEmployeeInput } from '@/lib/server/entities/employees';
 import { listDepartments } from '@/lib/server-stub/entity-actions';
-import { departmentLabel } from '@/components/employees/types';
-import type { Employee, EmploymentType } from '@/components/employees/types';
+import { DESIGNATION_SUGGESTIONS } from '@/lib/employee-badges';
+import { PAYROLL_GRADE_GROUPS, departmentLabel } from '@/components/employees/types';
+import type { Employee, EmploymentType, PayrollGrade } from '@/components/employees/types';
 
 const EMPLOYMENT_TYPES: readonly EmploymentType[] = [
   'full_time',
@@ -54,12 +57,18 @@ const UI_TO_DB_EMPLOYMENT: Record<EmploymentType, UpdateEmployeeInput['employmen
   intern: 'intern',
 };
 
+// Radix Select items can't carry an empty-string value — 'none' is the
+// "no grade" sentinel, mapped to NULL on save.
+const NO_GRADE = 'none';
+
 const formSchema = z.object({
   fullName: z.string().min(1, 'Full name is required').max(200),
   designation: z.string().max(160).optional(),
   // Free-text: pick an existing department or type a new one.
   department: z.string().max(120).optional(),
   employmentType: z.enum(['full_time', 'part_time', 'contractor', 'intern']),
+  // Salary grade level ('EA+', …) or the 'none' sentinel.
+  payrollGrade: z.string().optional(),
   workEmail: z.string().max(200).optional(),
   personalEmail: z.string().max(200).optional(),
   phone: z.string().max(40).optional(),
@@ -75,6 +84,7 @@ function toDefaults(employee: Employee): FormValues {
     designation: employee.designation ?? '',
     department: employee.department ? departmentLabel(employee.department) : '',
     employmentType: employee.employmentType,
+    payrollGrade: employee.payrollGrade ?? NO_GRADE,
     workEmail: employee.workEmail ?? '',
     personalEmail: employee.personalEmail ?? '',
     phone: employee.phone ?? '',
@@ -139,6 +149,14 @@ export function EmployeeEditDialog({ employee }: { employee: Employee }) {
       if (values.employmentType !== employee.employmentType) {
         patch.employmentType = UI_TO_DB_EMPLOYMENT[values.employmentType];
       }
+      // 'none' sentinel → NULL (clears the grade); unchanged → omitted.
+      const nextGrade =
+        !values.payrollGrade || values.payrollGrade === NO_GRADE
+          ? null
+          : (values.payrollGrade as PayrollGrade);
+      if (nextGrade !== (employee.payrollGrade ?? null)) {
+        patch.payrollGrade = nextGrade;
+      }
       if ((values.workEmail ?? '') !== (employee.workEmail ?? '')) {
         patch.workEmail = values.workEmail ? values.workEmail : null;
       }
@@ -193,6 +211,7 @@ export function EmployeeEditDialog({ employee }: { employee: Employee }) {
   });
 
   const employmentType = form.watch('employmentType');
+  const payrollGrade = form.watch('payrollGrade') ?? NO_GRADE;
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -226,9 +245,17 @@ export function EmployeeEditDialog({ employee }: { employee: Employee }) {
               <Label htmlFor="employee-designation">Designation</Label>
               <Input
                 id="employee-designation"
+                list="employee-designation-options"
                 placeholder="Senior Strategist"
                 {...form.register('designation')}
               />
+              {/* Free text; leadership roles are suggested so the TL/Manager
+                  chips on the Team cards pick them up consistently. */}
+              <datalist id="employee-designation-options">
+                {DESIGNATION_SUGGESTIONS.map((d) => (
+                  <option key={d} value={d} />
+                ))}
+              </datalist>
             </div>
             <div className="grid gap-1.5">
               <Label htmlFor="employee-department">Department</Label>
@@ -311,19 +338,42 @@ export function EmployeeEditDialog({ employee }: { employee: Employee }) {
             </div>
           </div>
 
-          <div className="grid gap-1.5">
-            <Label htmlFor="employee-notice-period">Notice period</Label>
-            <Input
-              id="employee-notice-period"
-              placeholder="e.g. 30 days"
-              {...form.register('noticePeriodDays')}
-              aria-invalid={form.formState.errors.noticePeriodDays ? true : undefined}
-            />
-            {form.formState.errors.noticePeriodDays ? (
-              <p className="text-destructive text-xs">
-                {form.formState.errors.noticePeriodDays.message}
-              </p>
-            ) : null}
+          <div className="grid grid-cols-2 gap-3">
+            <div className="grid gap-1.5">
+              <Label htmlFor="employee-payroll-grade">Payroll grade</Label>
+              <Select value={payrollGrade} onValueChange={(v) => form.setValue('payrollGrade', v)}>
+                <SelectTrigger id="employee-payroll-grade">
+                  <SelectValue placeholder="No grade" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={NO_GRADE}>No grade</SelectItem>
+                  {PAYROLL_GRADE_GROUPS.map((g) => (
+                    <SelectGroup key={g.label}>
+                      <SelectLabel>{g.label}</SelectLabel>
+                      {g.grades.map((grade) => (
+                        <SelectItem key={grade} value={grade}>
+                          {grade}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="employee-notice-period">Notice period</Label>
+              <Input
+                id="employee-notice-period"
+                placeholder="e.g. 30 days"
+                {...form.register('noticePeriodDays')}
+                aria-invalid={form.formState.errors.noticePeriodDays ? true : undefined}
+              />
+              {form.formState.errors.noticePeriodDays ? (
+                <p className="text-destructive text-xs">
+                  {form.formState.errors.noticePeriodDays.message}
+                </p>
+              ) : null}
+            </div>
           </div>
 
           <div className="grid gap-1.5">

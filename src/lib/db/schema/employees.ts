@@ -61,6 +61,11 @@ export const employees = pgTable(
     status: employeeStatusEnum().notNull().default('active'),
     designation: text(),
     department: text(),
+    // Salary grade level (0071). One text column — the employee *type* is
+    // derivable from the first letter: Intern → I; Probation → PA/PB/PC/PA+;
+    // Employee → EA/EB/EC/EA+. Nullable for legacy / ungraded teammates.
+    // Values are validated by the zod enum in create/updateEmployee.
+    payrollGrade: text(),
     reportsToEmployeeId: uuid(), // self-FK, added in migration
     joinedOn: date().notNull(),
     // Optional date of birth (no time component). Nullable for legacy rows

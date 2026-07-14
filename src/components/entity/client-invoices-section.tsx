@@ -77,6 +77,12 @@ const STATE_LABEL: Record<InvoiceRow['state'], string> = {
 export type ClientInvoicesSectionProps = {
   clientId: string;
   clientName: string;
+  /**
+   * Optional opener for a finalized invoice's stored PDF (documentId +
+   * documentNumber). OS windows pass a handler that opens a documents
+   * window beside; when absent the row falls back to a signed-URL tab.
+   */
+  onOpenInvoice?: (documentId: string, documentNumber: string) => void;
 };
 
 /**
@@ -101,7 +107,11 @@ function gstr1DeadlineLabel(documentDate: string): string {
   });
 }
 
-export function ClientInvoicesSection({ clientId, clientName }: ClientInvoicesSectionProps) {
+export function ClientInvoicesSection({
+  clientId,
+  clientName,
+  onOpenInvoice,
+}: ClientInvoicesSectionProps) {
   const { hasCapability } = useCurrentUser();
   // OS read-only bridge — permissive outside the OS. Compose/theme edits hang
   // off the OS edit grant; voiding an invoice off the delete grant.
@@ -293,10 +303,34 @@ export function ClientInvoicesSection({ clientId, clientName }: ClientInvoicesSe
                   inv.documentType === 'proforma'
                     ? (rows.find((r) => r.convertedFromInvoiceId === inv.id) ?? null)
                     : null;
+                // Row click opens the invoice: drafts open the composer
+                // (edit/preview); finalized invoices open their stored PDF.
+                const isEditableDraft = inv.state === 'draft' && canCompose;
+                const clickable = isEditableDraft || Boolean(inv.sourceDocumentId);
+                const openRow = () => {
+                  if (isEditableDraft) {
+                    openEdit(inv.id);
+                    return;
+                  }
+                  if (!inv.sourceDocumentId) return;
+                  if (onOpenInvoice) {
+                    onOpenInvoice(inv.sourceDocumentId, inv.documentNumber);
+                  } else {
+                    void downloadSent(inv);
+                  }
+                };
                 return (
                   <li
                     key={inv.id}
-                    className="hover:bg-muted/30 flex items-center justify-between gap-3 px-4 py-3"
+                    className={`hover:bg-muted/30 flex items-center justify-between gap-3 px-4 py-3 ${clickable ? 'cursor-pointer' : ''}`}
+                    onClick={clickable ? openRow : undefined}
+                    title={
+                      isEditableDraft
+                        ? `Open draft ${inv.documentNumber} in the composer`
+                        : inv.sourceDocumentId
+                          ? `Open invoice ${inv.documentNumber}`
+                          : undefined
+                    }
                   >
                     <div className="flex min-w-0 items-start gap-3">
                       <FileTextIcon
@@ -331,7 +365,10 @@ export function ClientInvoicesSection({ clientId, clientName }: ClientInvoicesSe
                         </div>
                       </div>
                     </div>
-                    <div className="flex shrink-0 items-center gap-1">
+                    <div
+                      className="flex shrink-0 items-center gap-1"
+                      onClick={(e) => e.stopPropagation()}
+                    >
                       {inv.state === 'draft' && canCompose ? (
                         <Button
                           size="sm"

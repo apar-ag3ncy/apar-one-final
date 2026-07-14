@@ -23,8 +23,12 @@ export type StatementOfAccountProps = {
   noun?: string;
   /** Optional Date range header (renders in the corner if set). */
   rangeLabel?: string;
-  /** Optional click handler — used to deep-link into the transaction window. */
-  onSelectTransaction?: (txnId: string) => void;
+  /**
+   * Optional click handler — used to deep-link into the transaction window.
+   * Receives the line's transaction kind too, so consumers can route invoice
+   * lines (`kind === 'client_invoice'`) to the invoice itself.
+   */
+  onSelectTransaction?: (txnId: string, kind?: string) => void;
   /**
    * Base filename (no extension) for the PDF / Excel export. When set, an
    * Export control appears once the statement has rows. Omit to hide export.
@@ -238,7 +242,7 @@ function StatementRow({
   onSelectTransaction,
 }: {
   line: StatementLine;
-  onSelectTransaction?: (txnId: string) => void;
+  onSelectTransaction?: (txnId: string, kind?: string) => void;
 }) {
   const debit = line.side === 'debit' ? line.amountPaise : 0n;
   const credit = line.side === 'credit' ? line.amountPaise : 0n;
@@ -260,7 +264,14 @@ function StatementRow({
         // which lines haven't been posted yet.
         opacity: isDraft ? 0.7 : 1,
       }}
-      onClick={clickable ? () => onSelectTransaction!(line.txnId) : undefined}
+      title={
+        clickable
+          ? line.kind === 'client_invoice'
+            ? 'Open this invoice'
+            : 'Open this transaction'
+          : undefined
+      }
+      onClick={clickable ? () => onSelectTransaction!(line.txnId, line.kind) : undefined}
     >
       <td style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{dateLabel}</td>
       <td>

@@ -37,6 +37,7 @@ export type IconName =
   | 'trash'
   | 'edit'
   | 'download'
+  | 'refresh'
   | 'alert';
 
 const ICONS: Record<IconName, ReactNode> = {
@@ -190,6 +191,12 @@ const ICONS: Record<IconName, ReactNode> = {
     <>
       <path d="M12 20h9" />
       <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z" />
+    </>
+  ),
+  refresh: (
+    <>
+      <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+      <path d="M21 3v6h-6" />
     </>
   ),
   download: (

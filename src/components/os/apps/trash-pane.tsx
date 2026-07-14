@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import { RotateCcwIcon } from 'lucide-react';
 
 import { Icon } from '../icons';
+import { TypeToConfirmDialog } from './os-modal-kit';
 import {
   listTrash,
   listTrashLog,
@@ -87,6 +88,9 @@ export function TrashPane() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [confirmKey, setConfirmKey] = useState<string | null>(null);
+  // Documents get a stronger gate than the inline "Delete?" confirm: the file
+  // is unrecoverable once purged, so the user must type "delete" first.
+  const [typeConfirm, setTypeConfirm] = useState<TrashItemRow | null>(null);
 
   const reload = useCallback(() => {
     Promise.all([listTrash(), listTrashLog()])
@@ -140,6 +144,7 @@ export function TrashPane() {
       toast.error(err instanceof Error ? err.message : 'Could not permanently delete this item.');
     } finally {
       setBusyKey(null);
+      setTypeConfirm(null);
     }
   };
 
@@ -276,7 +281,11 @@ export function TrashPane() {
                                   style={{ color: 'var(--apar-red)' }}
                                   disabled={busy}
                                   title="Permanently delete — cannot be undone"
-                                  onClick={() => setConfirmKey(key)}
+                                  onClick={() =>
+                                    item.kind === 'document'
+                                      ? setTypeConfirm(item)
+                                      : setConfirmKey(key)
+                                  }
                                 >
                                   <Icon name="trash" size={12} />
                                   Delete
@@ -293,6 +302,21 @@ export function TrashPane() {
           ))
         )}
       </div>
+
+      {typeConfirm ? (
+        <TypeToConfirmDialog
+          title="Permanently delete document?"
+          message={
+            <>
+              <strong>{typeConfirm.label}</strong> will be deleted for good — the file is removed
+              from storage and cannot be recovered.
+            </>
+          }
+          busy={busyKey === rowKey(typeConfirm)}
+          onConfirm={() => void purge(typeConfirm)}
+          onCancel={() => setTypeConfirm(null)}
+        />
+      ) : null}
 
       <div className="settings-row" style={{ alignItems: 'flex-start' }}>
         <div>

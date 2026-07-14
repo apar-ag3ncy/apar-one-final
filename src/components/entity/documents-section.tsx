@@ -140,6 +140,15 @@ export function DocumentsSection({
   const [mode, setMode] = useState<'active' | 'trash'>('active');
   const [busyId, setBusyId] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<EntityDocumentRow | null>(null);
+  // Permanent deletion is unrecoverable — the user must literally type
+  // "delete" before the destructive button enables.
+  const [confirmText, setConfirmText] = useState('');
+  const confirmArmed = confirmText.trim().toLowerCase() === 'delete';
+
+  // Reset the typed confirmation whenever the dialog opens for a new row.
+  useEffect(() => {
+    if (confirming) queueMicrotask(() => setConfirmText(''));
+  }, [confirming]);
 
   // OS read-only bridge — permissive outside the OS. Upload needs the edit
   // grant; the trash actions (delete / restore / permanent-delete) need delete.
@@ -414,6 +423,25 @@ export function DocumentsSection({
               to a recorded bill or invoice, that copy is kept.
             </DialogDescription>
           </DialogHeader>
+          <div className="grid gap-1.5">
+            <Label htmlFor="doc-confirm-delete">
+              Type <strong>delete</strong> to confirm
+            </Label>
+            <Input
+              id="doc-confirm-delete"
+              autoComplete="off"
+              spellCheck={false}
+              placeholder="delete"
+              value={confirmText}
+              onChange={(e) => setConfirmText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && confirmArmed && busyId === null && confirming) {
+                  void permanentlyDelete(confirming);
+                }
+              }}
+              disabled={busyId !== null}
+            />
+          </div>
           <DialogFooter>
             <Button
               variant="outline"
@@ -425,7 +453,8 @@ export function DocumentsSection({
             <Button
               variant="destructive"
               onClick={() => confirming && void permanentlyDelete(confirming)}
-              disabled={busyId !== null}
+              disabled={!confirmArmed || busyId !== null}
+              title={confirmArmed ? undefined : 'Type "delete" to enable'}
             >
               {busyId ? 'Deleting…' : 'Delete permanently'}
             </Button>

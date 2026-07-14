@@ -38,6 +38,17 @@ export const projectTasks = pgTable(
     categoryId: uuid().references(() => deliverableCategories.id, {
       onDelete: 'set null',
     }),
+    /**
+     * Eisenhower priority tag (0070): 'urgent_important' | 'urgent' |
+     * 'important' | 'nice'. NULL = no priority. Plain text; values are
+     * enforced by the zod enums in server/entities/project-tasks.ts.
+     */
+    priority: text(),
+    /**
+     * Where the deliverable came from (0070): 'apar' | 'vendor'. NULL on
+     * legacy rows; the server action defaults new deliverables to 'apar'.
+     */
+    source: text(),
     dueOn: date(),
     position: integer().notNull().default(0),
     completedAt: timestamp({ withTimezone: true }),

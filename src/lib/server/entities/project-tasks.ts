@@ -12,7 +12,9 @@ import {
   projectMembers,
   projectTaskAssignees,
   projectTasks,
+  projectVendors,
   projects,
+  vendors,
 } from '@/lib/db/schema';
 import { AppError } from '@/lib/errors';
 import { requireCapability } from '@/lib/rbac';
@@ -185,12 +187,169 @@ export async function removeProjectMember(input: { id: string }): Promise<void> 
 }
 
 /* -------------------------------------------------------------------------- */
+/* Project vendors                                                            */
+/* -------------------------------------------------------------------------- */
+
+export type ProjectVendorRow = {
+  id: string;
+  vendorId: string;
+  vendorName: string;
+  role: string | null;
+};
+
+const ProjectVendorIdSchema = z.string().uuid();
+
+export async function listProjectVendors(projectId: string): Promise<readonly ProjectVendorRow[]> {
+  await getActorContext();
+  const parsedProjectId = z.string().uuid().parse(projectId);
+
+  const rows = await db
+    .select({
+      id: projectVendors.id,
+      vendorId: projectVendors.vendorId,
+      vendorName: vendors.name,
+      role: projectVendors.role,
+    })
+    .from(projectVendors)
+    .innerJoin(vendors, eq(vendors.id, projectVendors.vendorId))
+    .where(eq(projectVendors.projectId, parsedProjectId))
+    .orderBy(asc(vendors.name), asc(projectVendors.createdAt));
+
+  return rows.map(
+    (r): ProjectVendorRow => ({
+      id: r.id,
+      vendorId: r.vendorId,
+      vendorName: r.vendorName,
+      role: r.role,
+    }),
+  );
+}
+
+const AddProjectVendorSchema = z.object({
+  projectId: z.string().uuid(),
+  vendorId: z.string().uuid(),
+  role: z.string().max(500).nullable().optional(),
+});
+
+export async function addProjectVendor(input: {
+  projectId: string;
+  vendorId: string;
+  role?: string | null;
+}): Promise<ProjectVendorRow> {
+  const ctx = await getActorContext();
+  requireCapability(ctx, 'update_client');
+  const parsed = AddProjectVendorSchema.parse(input);
+  const role = parsed.role?.trim() ? parsed.role.trim() : null;
+
+  // Upsert-safe: ignore the UNIQUE(project_id, vendor_id) collision so a
+  // repeat add is a no-op that still returns the existing row.
+  const inserted = await db
+    .insert(projectVendors)
+    .values({
+      projectId: parsed.projectId,
+      vendorId: parsed.vendorId,
+      role,
+      createdBy: ctx.userId,
+    })
+    .onConflictDoNothing({
+      target: [projectVendors.projectId, projectVendors.vendorId],
+    })
+    .returning({ id: projectVendors.id });
+
+  const linkId =
+    inserted[0]?.id ??
+    (
+      await db
+        .select({ id: projectVendors.id })
+        .from(projectVendors)
+        .where(
+          and(
+            eq(projectVendors.projectId, parsed.projectId),
+            eq(projectVendors.vendorId, parsed.vendorId),
+          ),
+        )
+        .limit(1)
+    )[0]?.id;
+
+  if (!linkId) {
+    throw new AppError('internal', 'project_vendors insert returned no row');
+  }
+
+  const [row] = await db
+    .select({
+      id: projectVendors.id,
+      vendorId: projectVendors.vendorId,
+      vendorName: vendors.name,
+      role: projectVendors.role,
+    })
+    .from(projectVendors)
+    .innerJoin(vendors, eq(vendors.id, projectVendors.vendorId))
+    .where(eq(projectVendors.id, linkId))
+    .limit(1);
+
+  if (!row) {
+    throw new AppError('not_found', 'Project vendor not found after insert.', {
+      detail: { id: linkId },
+    });
+  }
+
+  // Only log when a new link was actually created (not on a no-op).
+  if (inserted.length > 0) {
+    await logAudit({
+      actorId: ctx.userId,
+      entityType: 'project',
+      entityId: parsed.projectId,
+      action: 'insert',
+      changes: {
+        vendor_added: { id: linkId, vendor_id: parsed.vendorId, role },
+      },
+    });
+  }
+
+  return {
+    id: row.id,
+    vendorId: row.vendorId,
+    vendorName: row.vendorName,
+    role: row.role,
+  };
+}
+
+export async function removeProjectVendor(input: { id: string }): Promise<void> {
+  const ctx = await getActorContext();
+  requireCapability(ctx, 'update_client');
+  const id = ProjectVendorIdSchema.parse(input.id);
+
+  const [row] = await db
+    .delete(projectVendors)
+    .where(eq(projectVendors.id, id))
+    .returning({ id: projectVendors.id, projectId: projectVendors.projectId });
+
+  if (!row) return; // idempotent: already gone
+
+  await logAudit({
+    actorId: ctx.userId,
+    entityType: 'project',
+    entityId: row.projectId,
+    action: 'delete',
+    changes: { vendor_removed: { id } },
+  });
+}
+
+/* -------------------------------------------------------------------------- */
 /* Project deliverables (table: project_tasks)                                */
 /* -------------------------------------------------------------------------- */
 
 export type ProjectTaskStatus = 'todo' | 'in_progress' | 'done';
 
+/** Eisenhower priority tag (0070). null = no priority set. */
+export type ProjectTaskPriority = 'urgent_important' | 'urgent' | 'important' | 'nice';
+
+/** Who the deliverable came from (0070). null on legacy rows. */
+export type ProjectTaskSource = 'apar' | 'vendor';
+
 const ProjectTaskStatusSchema = z.enum(['todo', 'in_progress', 'done']);
+const ProjectTaskPrioritySchema = z.enum(['urgent_important', 'urgent', 'important', 'nice']);
+const ProjectTaskSourceSchema = z.enum(['apar', 'vendor']);
 const ProjectTaskIdSchema = z.string().uuid();
 
 export type ProjectTaskAssignee = {
@@ -204,6 +363,8 @@ export type ProjectTaskRow = {
   title: string;
   description: string | null;
   status: ProjectTaskStatus;
+  priority: ProjectTaskPriority | null;
+  source: ProjectTaskSource | null;
   /** Multi-assignee (0061) — every employee working this deliverable. */
   assignees: readonly ProjectTaskAssignee[];
   categoryId: string | null;
@@ -226,6 +387,8 @@ export async function listProjectTasks(projectId: string): Promise<readonly Proj
       title: projectTasks.title,
       description: projectTasks.description,
       status: projectTasks.status,
+      priority: projectTasks.priority,
+      source: projectTasks.source,
       categoryId: projectTasks.categoryId,
       categoryName: deliverableCategories.name,
       categoryColor: deliverableCategories.color,
@@ -249,6 +412,8 @@ const CreateProjectTaskSchema = z.object({
   description: z.string().max(4000).nullable().optional(),
   assigneeEmployeeIds: z.array(z.string().uuid()).max(50).optional(),
   categoryId: z.string().uuid().nullable().optional(),
+  priority: ProjectTaskPrioritySchema.nullable().optional(),
+  source: ProjectTaskSourceSchema.nullable().optional(),
   dueOn: z.string().nullable().optional(),
   status: ProjectTaskStatusSchema.optional(),
 });
@@ -259,6 +424,8 @@ export async function createProjectTask(input: {
   description?: string | null;
   assigneeEmployeeIds?: string[];
   categoryId?: string | null;
+  priority?: ProjectTaskPriority | null;
+  source?: ProjectTaskSource | null;
   dueOn?: string | null;
   status?: ProjectTaskStatus;
 }): Promise<ProjectTaskRow> {
@@ -276,6 +443,9 @@ export async function createProjectTask(input: {
       description: parsed.description ?? null,
       status,
       categoryId: parsed.categoryId ?? null,
+      priority: parsed.priority ?? null,
+      // New deliverables default to 'apar' unless the caller says otherwise.
+      source: parsed.source === undefined ? 'apar' : parsed.source,
       dueOn: parsed.dueOn ?? null,
       completedAt: status === 'done' ? new Date() : null,
       createdBy: ctx.userId,
@@ -319,6 +489,8 @@ const UpdateProjectTaskSchema = z.object({
   description: z.string().max(4000).nullable().optional(),
   assigneeEmployeeIds: z.array(z.string().uuid()).max(50).optional(),
   categoryId: z.string().uuid().nullable().optional(),
+  priority: ProjectTaskPrioritySchema.nullable().optional(),
+  source: ProjectTaskSourceSchema.nullable().optional(),
   dueOn: z.string().nullable().optional(),
   status: ProjectTaskStatusSchema.optional(),
 });
@@ -329,6 +501,8 @@ export async function updateProjectTask(input: {
   description?: string | null;
   assigneeEmployeeIds?: string[];
   categoryId?: string | null;
+  priority?: ProjectTaskPriority | null;
+  source?: ProjectTaskSource | null;
   dueOn?: string | null;
   status?: ProjectTaskStatus;
 }): Promise<ProjectTaskRow> {
@@ -362,6 +536,8 @@ export async function updateProjectTask(input: {
       ...(parsed.title !== undefined ? { title: parsed.title } : {}),
       ...(parsed.description !== undefined ? { description: parsed.description } : {}),
       ...(parsed.categoryId !== undefined ? { categoryId: parsed.categoryId } : {}),
+      ...(parsed.priority !== undefined ? { priority: parsed.priority } : {}),
+      ...(parsed.source !== undefined ? { source: parsed.source } : {}),
       ...(parsed.dueOn !== undefined ? { dueOn: parsed.dueOn } : {}),
       ...(parsed.status !== undefined ? { status: parsed.status } : {}),
       ...completedAtPatch,
@@ -493,6 +669,8 @@ export type EmployeeProjectTaskRow = {
   taskId: string;
   title: string;
   status: ProjectTaskStatus;
+  priority: ProjectTaskPriority | null;
+  source: ProjectTaskSource | null;
   projectId: string;
   projectName: string;
   projectCode: string | null;
@@ -515,6 +693,8 @@ export async function listEmployeeProjectTasks(
       taskId: projectTasks.id,
       title: projectTasks.title,
       status: projectTasks.status,
+      priority: projectTasks.priority,
+      source: projectTasks.source,
       projectId: projectTasks.projectId,
       projectName: projects.name,
       projectCode: projects.code,
@@ -540,6 +720,8 @@ export async function listEmployeeProjectTasks(
       taskId: r.taskId,
       title: r.title,
       status: r.status as ProjectTaskStatus,
+      priority: (r.priority as ProjectTaskPriority | null) ?? null,
+      source: (r.source as ProjectTaskSource | null) ?? null,
       projectId: r.projectId,
       projectName: r.projectName,
       projectCode: r.projectCode,
@@ -559,6 +741,8 @@ type TaskSelectRow = {
   title: string;
   description: string | null;
   status: string;
+  priority: string | null;
+  source: string | null;
   categoryId: string | null;
   categoryName: string | null;
   categoryColor: string | null;
@@ -575,6 +759,8 @@ function mapTaskRow(r: TaskSelectRow, assignees: readonly ProjectTaskAssignee[])
     title: r.title,
     description: r.description,
     status: r.status as ProjectTaskStatus,
+    priority: (r.priority as ProjectTaskPriority | null) ?? null,
+    source: (r.source as ProjectTaskSource | null) ?? null,
     assignees,
     categoryId: r.categoryId,
     categoryName: r.categoryName,
@@ -618,6 +804,8 @@ async function getTaskRow(id: string): Promise<ProjectTaskRow> {
       title: projectTasks.title,
       description: projectTasks.description,
       status: projectTasks.status,
+      priority: projectTasks.priority,
+      source: projectTasks.source,
       categoryId: projectTasks.categoryId,
       categoryName: deliverableCategories.name,
       categoryColor: deliverableCategories.color,

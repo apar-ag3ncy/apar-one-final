@@ -10,7 +10,7 @@
 // Reads gated by `view_salary`, writes by `manage_salary_structures`
 // (salary) and `record_bonus_or_perk` (incentives/perks).
 
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 
 import {
@@ -173,6 +173,43 @@ export function CompensationSection({ employeeId, employeeName }: CompensationSe
     );
   }, [structures]);
 
+  // Salary history grouped by YEAR of effective-from (newest first), each
+  // version carrying a display-only % change vs the chronologically previous
+  // version's monthly CTC. Pure presentation math (capture, don't calculate):
+  // bigint paise go through Number() for the ratio only — nothing here feeds
+  // the ledger or payroll.
+  const history = useMemo(() => {
+    type HistoryRow = { row: SalaryStructureRow; changePct: number | null };
+    if (!structures || structures.length === 0) {
+      return [] as Array<{ year: string; rows: HistoryRow[] }>;
+    }
+    const asc = [...structures].sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom));
+    const pctById = new Map<string, number | null>();
+    asc.forEach((s, i) => {
+      const prev = i > 0 ? asc[i - 1]! : null;
+      if (!prev || prev.ctcMonthlyPaise <= 0n) {
+        pctById.set(s.id, null); // first version (or unusable base) → '—'
+        return;
+      }
+      pctById.set(
+        s.id,
+        (Number(s.ctcMonthlyPaise - prev.ctcMonthlyPaise) / Number(prev.ctcMonthlyPaise)) * 100,
+      );
+    });
+    // `structures` is already newest-first; keep that order and bucket by year.
+    const groups: Array<{ year: string; rows: HistoryRow[] }> = [];
+    for (const s of structures) {
+      const year = s.effectiveFrom.slice(0, 4);
+      let g = groups[groups.length - 1];
+      if (!g || g.year !== year) {
+        g = { year, rows: [] };
+        groups.push(g);
+      }
+      g.rows.push({ row: s, changePct: pctById.get(s.id) ?? null });
+    }
+    return groups;
+  }, [structures]);
+
   if (isLoading || structures === null || bonuses === null || payments === null) {
     return (
       <div style={{ padding: 16, color: 'var(--text-muted)', fontSize: 13 }}>
@@ -228,7 +265,8 @@ export function CompensationSection({ employeeId, employeeName }: CompensationSe
       )}
 
       {/* Salary — history (every version listed so a wrong update is deletable;
-          deleting one re-extends the previous version over its span) */}
+          deleting one re-extends the previous version over its span). Grouped
+          year-wise, with a display-only % change vs the previous version. */}
       {canView && structures.length > 0 ? (
         <OsCard title="Salary history">
           <table className="table" style={{ width: '100%', fontSize: 12 }}>
@@ -240,46 +278,93 @@ export function CompensationSection({ employeeId, employeeName }: CompensationSe
                 <th style={{ ...th, textAlign: 'right' }}>HRA</th>
                 <th style={{ ...th, textAlign: 'right' }}>Special</th>
                 <th style={{ ...th, textAlign: 'right' }}>Monthly CTC</th>
+                <th style={{ ...th, textAlign: 'right' }} title="vs the previous salary version">
+                  Change
+                </th>
                 {canManageSalary ? <th style={{ ...th, width: 36 }} /> : null}
               </tr>
             </thead>
             <tbody>
-              {structures.map((s) => (
-                <tr key={s.id}>
-                  <td style={td}>{formatDay(s.effectiveFrom)}</td>
-                  <td style={td}>{s.effectiveTo ? formatDay(s.effectiveTo) : 'current'}</td>
-                  <td style={{ ...td, textAlign: 'right' }}>{formatINR(s.basicPaise)}</td>
-                  <td style={{ ...td, textAlign: 'right' }}>{formatINR(s.hraPaise)}</td>
-                  <td style={{ ...td, textAlign: 'right' }}>
-                    {formatINR(s.specialAllowancePaise)}
-                  </td>
-                  <td style={{ ...td, textAlign: 'right', fontWeight: 600 }}>
-                    {formatINR(s.ctcMonthlyPaise)}
-                  </td>
-                  {canManageSalary ? (
-                    <td style={{ ...td, textAlign: 'right' }}>
-                      <button
-                        type="button"
-                        className="btn"
-                        title="Delete this salary update (recoverable from Trash for 30 days)"
-                        style={{ padding: '2px 8px' }}
-                        onClick={async () => {
-                          try {
-                            await deleteSalaryStructure({ id: s.id });
-                            await reload();
-                            toast.success('Salary update moved to Trash.');
-                          } catch (e) {
-                            toast.error(
-                              e instanceof Error ? e.message : 'Could not delete the salary update',
-                            );
-                          }
-                        }}
-                      >
-                        ✕
-                      </button>
+              {history.map((group) => (
+                <Fragment key={group.year}>
+                  <tr>
+                    <td
+                      colSpan={canManageSalary ? 8 : 7}
+                      style={{
+                        ...td,
+                        paddingTop: 10,
+                        fontSize: 10,
+                        fontWeight: 700,
+                        letterSpacing: '0.06em',
+                        textTransform: 'uppercase',
+                        color: 'var(--text-muted)',
+                      }}
+                    >
+                      {group.year}
                     </td>
-                  ) : null}
-                </tr>
+                  </tr>
+                  {group.rows.map(({ row: s, changePct }) => (
+                    <tr key={s.id}>
+                      <td style={td}>{formatDay(s.effectiveFrom)}</td>
+                      <td style={td}>{s.effectiveTo ? formatDay(s.effectiveTo) : 'current'}</td>
+                      <td style={{ ...td, textAlign: 'right' }}>{formatINR(s.basicPaise)}</td>
+                      <td style={{ ...td, textAlign: 'right' }}>{formatINR(s.hraPaise)}</td>
+                      <td style={{ ...td, textAlign: 'right' }}>
+                        {formatINR(s.specialAllowancePaise)}
+                      </td>
+                      <td style={{ ...td, textAlign: 'right', fontWeight: 600 }}>
+                        {formatINR(s.ctcMonthlyPaise)}
+                      </td>
+                      <td
+                        style={{
+                          ...td,
+                          textAlign: 'right',
+                          fontWeight: 600,
+                          color:
+                            changePct === null || changePct === 0
+                              ? 'var(--text-muted)'
+                              : changePct > 0
+                                ? 'var(--apar-green, #2E8F5A)'
+                                : 'var(--apar-red, #c34a2c)',
+                        }}
+                        title={
+                          changePct === null
+                            ? 'First salary version — nothing to compare against'
+                            : 'Change vs the previous salary version (display only)'
+                        }
+                      >
+                        {changePct === null
+                          ? '—'
+                          : `${changePct > 0 ? '+' : ''}${changePct.toFixed(1)}%`}
+                      </td>
+                      {canManageSalary ? (
+                        <td style={{ ...td, textAlign: 'right' }}>
+                          <button
+                            type="button"
+                            className="btn"
+                            title="Delete this salary update (recoverable from Trash for 30 days)"
+                            style={{ padding: '2px 8px' }}
+                            onClick={async () => {
+                              try {
+                                await deleteSalaryStructure({ id: s.id });
+                                await reload();
+                                toast.success('Salary update moved to Trash.');
+                              } catch (e) {
+                                toast.error(
+                                  e instanceof Error
+                                    ? e.message
+                                    : 'Could not delete the salary update',
+                                );
+                              }
+                            }}
+                          >
+                            ✕
+                          </button>
+                        </td>
+                      ) : null}
+                    </tr>
+                  ))}
+                </Fragment>
               ))}
             </tbody>
           </table>

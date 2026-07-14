@@ -13,6 +13,7 @@ import {
   type LeaveBalanceRow,
 } from '@/lib/server/entities/attendance';
 import { defaultStatusForDate } from '@/lib/attendance-defaults';
+import { istDaysAgo, todayIST } from '@/lib/ist-date';
 import { applyLeave, listEmployeeLeaves, type LeaveRow } from '@/lib/server/entities/payroll';
 import { DateField } from '@/components/shared/date-field';
 
@@ -69,14 +70,15 @@ const LEAVE_LABEL: Record<LeaveBalanceRow['kind'], string> = {
   paternity: 'Paternity',
 };
 
+// "Today" and the 30-day strip resolve in Asia/Kolkata (ist-date.ts) — the
+// old toISOString() version pointed at the wrong day between 00:00 and
+// 05:29 IST, marking/reading yesterday's row.
 function todayISO(): string {
-  return new Date().toISOString().slice(0, 10);
+  return todayIST();
 }
 
 function daysBack(n: number): string {
-  const d = new Date();
-  d.setDate(d.getDate() - n);
-  return d.toISOString().slice(0, 10);
+  return istDaysAgo(n);
 }
 
 export function AttendanceSection({ employeeId, employeeName }: AttendanceSectionProps) {
@@ -159,8 +161,55 @@ export function AttendanceSection({ employeeId, employeeName }: AttendanceSectio
 
   const attendanceByDate = new Map(attendance.map((a) => [a.date, a]));
 
+  // Leave policy usage — derived from approved leaves. "Paid" = earned +
+  // casual (the 2/month quota); sick tracks the Indian FY (Apr→Mar), same
+  // convention as the leave-balance card below. Leave kinds ARE stored per
+  // row, so both counts are exact.
+  const today = todayISO();
+  const thisMonth = today.slice(0, 7);
+  const fyStartYear =
+    Number(today.slice(5, 7)) >= 4 ? Number(today.slice(0, 4)) : Number(today.slice(0, 4)) - 1;
+  const approved = leaveList.filter((l) => l.status === 'approved');
+  const sumDays = (rows: readonly LeaveRow[]) =>
+    rows.reduce((sum, l) => sum + (Number.parseFloat(l.days) || 0), 0);
+  const paidUsedThisMonth = sumDays(
+    approved.filter(
+      (l) => (l.kind === 'earned' || l.kind === 'casual') && l.fromDate.slice(0, 7) === thisMonth,
+    ),
+  );
+  const sickUsedThisFy = sumDays(
+    approved.filter(
+      (l) =>
+        l.kind === 'sick' &&
+        l.fromDate >= `${fyStartYear}-04-01` &&
+        l.fromDate <= `${fyStartYear + 1}-03-31`,
+    ),
+  );
+  const fmtDays = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(1));
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      {/* Leave policy strip — header area of the Attendance & leaves tab. */}
+      <div
+        style={{
+          display: 'flex',
+          flexWrap: 'wrap',
+          alignItems: 'center',
+          gap: '4px 12px',
+          padding: '8px 12px',
+          borderRadius: 10,
+          border: '1px solid var(--border)',
+          background: 'var(--content-2)',
+          fontSize: 12,
+        }}
+      >
+        <span style={{ fontWeight: 700 }}>Policy: 2 paid/month · 6 sick/year</span>
+        <span style={{ color: 'var(--text-muted)' }}>
+          Paid used this month: {fmtDays(paidUsedThisMonth)} / 2 · Sick used this FY:{' '}
+          {fmtDays(sickUsedThisFy)} / 6
+        </span>
+      </div>
+
       {/* Mark today */}
       <OsCard title="Mark today">
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
@@ -175,7 +224,7 @@ export function AttendanceSection({ employeeId, employeeName }: AttendanceSectio
               'holiday',
             ] as AttendanceStatus[]
           ).map((s) => {
-            const today = todayISO();
+            // `today` comes from the component scope (IST) above.
             // Show the effective status (default if no override).
             const current = attendanceByDate.get(today)?.status ?? defaultStatusForDate(today);
             const isActive = current === s;

@@ -14,7 +14,7 @@ import {
   type UniversalLedgerPage,
   type UniversalLedgerRow,
 } from '@/lib/server/ledger/report-suite';
-import { navigateBesideFocused } from './navigate';
+import { openTransactionOrInvoice } from './open-invoice';
 import {
   DateField,
   OsExportButtons,
@@ -222,7 +222,10 @@ export function UniversalLedgerWindow() {
                 const legs = [...r.legs].sort((a, b) =>
                   a.side === b.side ? 0 : a.side === 'debit' ? -1 : 1,
                 );
-                const open = () => navigateBesideFocused({ type: 'transaction', id: r.txnId });
+                // Invoice entries open the invoice PDF itself; everything
+                // else opens the plain transaction window.
+                const open = () =>
+                  openTransactionOrInvoice(r.txnId, r.kind, r.documentNumber ?? undefined);
                 return (
                   <Fragment key={r.txnId}>
                     {legs.map((leg, i) => (

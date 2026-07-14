@@ -22,7 +22,20 @@ import {
   listDepartments as listDbDepartments,
   resolveDocumentUrl,
 } from '@/lib/server-stub/entity-actions';
-import { departmentLabel, type Employee as HrEmployee } from '@/components/employees/types';
+import {
+  departmentLabel,
+  payrollGradeKind,
+  PAYROLL_GRADE_GROUPS,
+  type Employee as HrEmployee,
+} from '@/components/employees/types';
+import {
+  DESIGNATION_SUGGESTIONS,
+  LEAD_DESIGNATION_META,
+  designationLeadKind,
+  isNewJoiner,
+  probationDaysLeft,
+} from '@/lib/employee-badges';
+import { todayIST } from '@/lib/ist-date';
 import {
   ACCENTS,
   DOCK_GAP_MAX,
@@ -337,9 +350,17 @@ export function ClientsApp({
                         }}
                       />
                     ) : (
+                      // Square with slight radius — matches the uploaded-logo
+                      // tile above so the directory reads consistently (§8).
                       <div
                         className="avatar"
-                        style={{ width: 28, height: 28, fontSize: 11, background: c.tone }}
+                        style={{
+                          width: 28,
+                          height: 28,
+                          fontSize: 11,
+                          background: c.tone,
+                          borderRadius: 6,
+                        }}
                       >
                         {c.logo}
                       </div>
@@ -1497,9 +1518,17 @@ export function ProjectsApp({
                   </div>
                   <div className="name">{p.name}</div>
                   <div className="meta">
+                    {/* Square with slight radius — board-card marks render
+                        square across the OS, never circular (§8). */}
                     <div
                       className="avatar"
-                      style={{ width: 18, height: 18, fontSize: 8, background: '#7A4E2D' }}
+                      style={{
+                        width: 18,
+                        height: 18,
+                        fontSize: 8,
+                        background: '#7A4E2D',
+                        borderRadius: 5,
+                      }}
                     >
                       {p.lead}
                     </div>
@@ -1658,6 +1687,37 @@ const EMP_TYPE_LABEL: Record<string, string> = {
   intern: 'Intern',
 };
 
+/**
+ * Small dot-pill used for the derived employee badges (New / Probation /
+ * Team Leader / Manager) — same look as the status + attendance chips.
+ */
+function EmpBadgeChip({ color, label, title }: { color: string; label: string; title?: string }) {
+  return (
+    <span
+      title={title}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 5,
+        marginTop: 4,
+        marginLeft: 6,
+        fontSize: 10,
+        fontWeight: 600,
+        padding: '2px 8px',
+        borderRadius: 999,
+        color,
+        background: `color-mix(in oklab, ${color} 14%, transparent)`,
+        whiteSpace: 'nowrap',
+      }}
+    >
+      <span
+        style={{ width: 6, height: 6, borderRadius: '50%', background: color, flexShrink: 0 }}
+      />
+      {label}
+    </span>
+  );
+}
+
 type DirRow = HrEmployee & { tone: string; managerName: string | null };
 
 export function EmployeesApp({
@@ -1672,6 +1732,7 @@ export function EmployeesApp({
   const [filterDept, setFilterDept] = useState('all');
   const [filterStatus, setFilterStatus] = useState<'all' | EmpStatusUi>('all');
   const [filterType, setFilterType] = useState('all');
+  const [filterGrade, setFilterGrade] = useState('all');
   const [sortBy, setSortBy] = useState<'name' | 'joined' | 'dept'>('name');
   const [showInactive, setShowInactive] = useState(false);
   const [showNew, setShowNew] = useState(false);
@@ -1780,6 +1841,13 @@ export function EmployeesApp({
     .filter((e) => (showInactive || filterStatus === 'separated' ? true : e.status !== 'separated'))
     .filter((e) => (filterStatus === 'all' ? true : e.status === filterStatus))
     .filter((e) => (filterType === 'all' ? true : e.employmentType === filterType))
+    .filter((e) =>
+      filterGrade === 'all'
+        ? true
+        : filterGrade === 'ungraded'
+          ? !e.payrollGrade
+          : e.payrollGrade === filterGrade,
+    )
     .filter((e) => (filterDept === 'all' ? true : departmentLabel(e.department) === filterDept))
     .filter((e) =>
       q === ''
@@ -1817,6 +1885,16 @@ export function EmployeesApp({
     // stays on hover via the title attribute.
     const visibleName = e.displayName || e.fullName;
     const att = e.status === 'separated' ? undefined : attToday[e.id];
+    // Derived badges — nothing stored. "New" = joined in the last 30 days;
+    // "Probation" = first 6 months for unconfirmed full/part-timers.
+    const showNewChip = e.status !== 'separated' && isNewJoiner(e.joinedAt);
+    const probationLeft = probationDaysLeft({
+      joinedOn: e.joinedAt,
+      employmentType: e.employmentType,
+      confirmedOn: e.confirmedOn ?? null,
+      status: e.status,
+    });
+    const leadKind = designationLeadKind(e.designation);
     return (
       <div
         key={e.id}
@@ -1940,7 +2018,66 @@ export function EmployeesApp({
                 {ATT_LABEL[att]}
               </span>
             ) : null}
-            <div className="role">{e.designation || '—'}</div>
+            {showNewChip ? (
+              <EmpBadgeChip color="#3b82d9" label="New" title="Joined within the last 30 days" />
+            ) : null}
+            {probationLeft !== null ? (
+              <EmpBadgeChip
+                color="#d08a1e"
+                label={`Probation · ${probationLeft}d left`}
+                title="First 6 months from joining — clears once a confirmation date is set"
+              />
+            ) : null}
+            <div className="role" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              {leadKind ? (
+                <span
+                  title={e.designation}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 5,
+                    fontSize: 10.5,
+                    fontWeight: 700,
+                    padding: '2px 8px',
+                    borderRadius: 999,
+                    color: LEAD_DESIGNATION_META[leadKind].color,
+                    border: `1px solid color-mix(in oklab, ${LEAD_DESIGNATION_META[leadKind].color} 45%, transparent)`,
+                    background: `color-mix(in oklab, ${LEAD_DESIGNATION_META[leadKind].color} 12%, transparent)`,
+                    whiteSpace: 'nowrap',
+                    maxWidth: '100%',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                  }}
+                >
+                  <Icon name="star" size={10} />
+                  {e.designation}
+                </span>
+              ) : (
+                <span>{e.designation || '—'}</span>
+              )}
+              {/* Payroll grade badge (§1.1) — the implied type on hover. */}
+              {e.payrollGrade ? (
+                <span
+                  title={`Payroll grade — ${payrollGradeKind(e.payrollGrade)}`}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    fontSize: 9.5,
+                    fontWeight: 700,
+                    letterSpacing: '0.05em',
+                    padding: '1px 6px',
+                    borderRadius: 999,
+                    border: '1px solid var(--border)',
+                    color: 'var(--text-muted)',
+                    background: 'var(--content-2)',
+                    whiteSpace: 'nowrap',
+                    flexShrink: 0,
+                  }}
+                >
+                  {e.payrollGrade}
+                </span>
+              ) : null}
+            </div>
             <div className="dept">
               {departmentLabel(e.department)} ·{' '}
               {EMP_TYPE_LABEL[e.employmentType] ?? e.employmentType}
@@ -2169,6 +2306,24 @@ export function EmployeesApp({
         </select>
         <select
           className="input"
+          value={filterGrade}
+          onChange={(e) => setFilterGrade(e.target.value)}
+          aria-label="Filter by payroll grade"
+        >
+          <option value="all">All grades</option>
+          <option value="ungraded">No grade</option>
+          {PAYROLL_GRADE_GROUPS.map((g) => (
+            <optgroup key={g.label} label={g.label}>
+              {g.grades.map((grade) => (
+                <option key={grade} value={grade}>
+                  {grade}
+                </option>
+              ))}
+            </optgroup>
+          ))}
+        </select>
+        <select
+          className="input"
           value={filterDept}
           onChange={(e) => setFilterDept(e.target.value)}
           aria-label="Filter by department"
@@ -2392,7 +2547,10 @@ type EditorForm = {
 };
 
 function todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
+  // Asia/Kolkata, NOT toISOString() — the UTC date is still *yesterday*
+  // between 00:00 and 05:29 IST, which made the Team cards' attendance chip
+  // query (and the create-form's joined-on default) point at the wrong day.
+  return todayIST();
 }
 
 const EMPTY_EDITOR_FORM: EditorForm = {
@@ -2597,10 +2755,18 @@ export function EmployeeProfileEditor({
           </Field>
           <Field label="Designation">
             <input
+              list="os-employee-designations"
               value={form.designation}
               onChange={(e) => set('designation', e.target.value)}
               placeholder="Senior Visualiser"
             />
+            {/* Free text; leadership roles are suggested so the TL/Manager
+                chips on the Team cards pick them up consistently. */}
+            <datalist id="os-employee-designations">
+              {DESIGNATION_SUGGESTIONS.map((d) => (
+                <option key={d} value={d} />
+              ))}
+            </datalist>
             {errors.designation ? <FieldErr msg={errors.designation} /> : null}
           </Field>
           <Field label="Department">
