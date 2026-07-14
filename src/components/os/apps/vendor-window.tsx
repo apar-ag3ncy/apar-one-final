@@ -20,10 +20,16 @@ import { StatementOfAccount } from '@/components/entity/statement-of-account';
 import { useRealtimeActivity } from '@/lib/client/use-realtime-activity';
 import { getEntityActivity } from '@/lib/server/entities/activity';
 import { listContacts, type ContactRow } from '@/lib/server/entities/contacts';
+import {
+  getVendorStats,
+  type VendorProjectStat,
+  type VendorStats,
+} from '@/lib/server/entities/vendor-stats';
 import { getVendorStatement, type Statement } from '@/lib/server/ledger/statements';
 import { getVendor } from '@/lib/server-stub/entity-actions';
 import type { Vendor } from '@/components/vendors/types';
 import { osActions } from '@/lib/os/store';
+import { formatINR } from '../format';
 import { navigateBesideFocused } from './navigate';
 
 export type VendorWindowProps = {
@@ -33,6 +39,7 @@ export type VendorWindowProps = {
 
 type VendorTab =
   | 'overview'
+  | 'stats'
   | 'contacts'
   | 'addresses'
   | 'bank'
@@ -45,6 +52,7 @@ type VendorTab =
 
 const TAB_LABELS: Record<VendorTab, string> = {
   overview: 'Overview',
+  stats: 'Statistics',
   contacts: 'Contacts',
   addresses: 'Addresses',
   bank: 'Bank accounts',
@@ -109,6 +117,7 @@ export function VendorWindow({ vendorId, onClose }: VendorWindowProps) {
   const { vendor, contacts } = state;
   const tabs: readonly VendorTab[] = [
     'overview',
+    'stats',
     'contacts',
     'addresses',
     'bank',
@@ -139,6 +148,7 @@ export function VendorWindow({ vendorId, onClose }: VendorWindowProps) {
       </div>
       <div style={{ flex: 1, overflow: 'auto', padding: 20 }}>
         {tab === 'overview' ? <OverviewBody vendor={vendor} contacts={contacts} /> : null}
+        {tab === 'stats' ? <StatsBody vendorId={vendor.id} /> : null}
         {tab === 'contacts' ? (
           <ContactsSection
             entityType="vendor"
@@ -283,6 +293,144 @@ function OverviewBody({ vendor, contacts }: { vendor: Vendor; contacts: readonly
           >
             No notes yet.
           </p>
+        )}
+      </OsCard>
+    </div>
+  );
+}
+
+// Tones for the DB project_status enum (schema/projects.ts) — the stats list
+// shows the real project rows, not the OS-side localStorage statuses.
+const PROJECT_STATUS_TONE: Record<
+  VendorProjectStat['status'],
+  { bg: string; fg: string; label: string }
+> = {
+  pitch: { bg: '#1a3b6e', fg: '#9ec2f0', label: 'Pitch' },
+  won: { bg: '#1a5e6e', fg: '#9edef0', label: 'Won' },
+  active: { bg: '#1f6b3b', fg: '#a4d8b3', label: 'Active' },
+  on_hold: { bg: '#7a5a17', fg: '#e7c980', label: 'On hold' },
+  completed: { bg: '#3a3a78', fg: '#bdbdf5', label: 'Completed' },
+  cancelled: { bg: '#3a3a3a', fg: '#bdbdbd', label: 'Cancelled' },
+};
+
+// Vendor statistics (founder change-batch §6): billed / paid / payable KPIs
+// derived live from the ledger, plus the projects this vendor has posted
+// bills against. All money is bigint paise through formatINR.
+function StatsBody({ vendorId }: { vendorId: string }) {
+  const [stats, setStats] = useState<VendorStats | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      setStats(null);
+      setError(null);
+    });
+    getVendorStats(vendorId)
+      .then((s) => {
+        if (!cancelled) setStats(s);
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) {
+          setError(e instanceof Error ? e.message : 'Failed to load statistics');
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [vendorId]);
+
+  if (error) {
+    return <p style={{ fontSize: 13, color: 'var(--text-error, #c33)', margin: 0 }}>{error}</p>;
+  }
+  if (!stats) {
+    return <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>Loading statistics…</div>;
+  }
+
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+      <Kpi
+        label="Projects"
+        value={String(stats.projectsAssigned)}
+        trend={`${stats.projectsCompleted} completed · ${stats.projectsTotal} total`}
+      />
+      <Kpi
+        label="Billed"
+        value={formatINR(stats.billsTotalPaise)}
+        trend={`${stats.billCount} posted ${stats.billCount === 1 ? 'bill' : 'bills'}`}
+      />
+      <Kpi label="Paid" value={formatINR(stats.paidTotalPaise)} trend="Payments made" />
+      <Kpi
+        label="Payable"
+        value={formatINR(stats.payablePaise)}
+        trend="Billed − allocated payments"
+      />
+      <Kpi
+        label="Bills"
+        value={String(stats.billCount)}
+        trend={`${stats.pendingBillCount} pending · ${stats.completedBillCount} completed`}
+      />
+      <OsCard title="Projects">
+        {stats.projects.length === 0 ? (
+          <p
+            style={{
+              fontSize: 13,
+              color: 'var(--text-muted)',
+              fontStyle: 'italic',
+              margin: 0,
+            }}
+          >
+            No projects billed by this vendor yet.
+          </p>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column' }}>
+            {stats.projects.map((p, i) => {
+              const tone = PROJECT_STATUS_TONE[p.status];
+              return (
+                <div
+                  key={p.projectId}
+                  onClick={() =>
+                    osActions.openWindow({
+                      app: 'projects',
+                      entityId: p.projectId,
+                      title: p.projectName,
+                      position: 'beside-focused',
+                    })
+                  }
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 12,
+                    padding: '8px 0',
+                    borderTop: i === 0 ? 'none' : '1px solid var(--border)',
+                    cursor: 'pointer',
+                    fontSize: 13,
+                  }}
+                >
+                  <span
+                    style={{
+                      fontWeight: 600,
+                      minWidth: 0,
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {p.projectName}
+                  </span>
+                  <span
+                    className="pill"
+                    style={{ background: tone.bg, color: tone.fg, flexShrink: 0 }}
+                  >
+                    <span className="dot" style={{ background: tone.fg }} />
+                    {tone.label}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
         )}
       </OsCard>
     </div>
