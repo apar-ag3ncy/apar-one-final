@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useTransition, type FormEvent, type ReactN
 import { APPS } from './data';
 import { navigateBesideFocused } from './apps/navigate';
 import { ConfirmDialog, Field, Modal } from './apps/os-modal-kit';
+import { SortHeader, useSortedRows, useTableSort } from './apps/table-sort';
 import { ProjectFormModal } from './apps/project-form-modal';
 import { CompanySettingsPane } from './apps/company-settings-pane';
 import { BillingSettingsPane } from './apps/billing-settings-pane';
@@ -285,6 +286,14 @@ export function ClientsApp({
       c.manager.toLowerCase().includes(q)
     );
   });
+  const { sort, toggle } = useTableSort<'name' | 'industry' | 'manager' | 'status' | 'activity'>();
+  const sortedClients = useSortedRows(filtered, sort, {
+    name: (c) => c.name,
+    industry: (c) => c.industry,
+    manager: (c) => c.manager,
+    status: (c) => c.status,
+    activity: (c) => c.activity,
+  });
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
@@ -317,16 +326,16 @@ export function ClientsApp({
         <table className="table">
           <thead>
             <tr>
-              <th>Account</th>
-              <th>Industry</th>
-              <th>Manager</th>
-              <th>Status</th>
-              <th>Last activity</th>
+              <SortHeader label="Account" sortKey="name" sort={sort} onSort={toggle} />
+              <SortHeader label="Industry" sortKey="industry" sort={sort} onSort={toggle} />
+              <SortHeader label="Manager" sortKey="manager" sort={sort} onSort={toggle} />
+              <SortHeader label="Status" sortKey="status" sort={sort} onSort={toggle} />
+              <SortHeader label="Last activity" sortKey="activity" sort={sort} onSort={toggle} />
               <th style={{ width: 64 }} />
             </tr>
           </thead>
           <tbody>
-            {filtered.map((c) => (
+            {sortedClients.map((c) => (
               <tr
                 key={c.id}
                 className="row-clickable row-with-actions"
@@ -785,6 +794,14 @@ export function VendorsApp({
   const filtered = vendors.filter((v) => {
     const q = search.toLowerCase();
     return v.name.toLowerCase().includes(q) || v.cat.toLowerCase().includes(q);
+  });
+  const { sort, toggle } = useTableSort<'name' | 'cat' | 'gstin' | 'last' | 'outstanding'>();
+  const sortedVendors = useSortedRows(filtered, sort, {
+    name: (v) => v.name,
+    cat: (v) => v.cat,
+    gstin: (v) => v.gstin ?? null,
+    last: (v) => v.last ?? null,
+    outstanding: (v) => v.outstanding ?? 0,
   });
 
   return (
