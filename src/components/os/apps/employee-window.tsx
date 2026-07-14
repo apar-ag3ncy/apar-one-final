@@ -615,6 +615,7 @@ function ProjectsLedBody({
                       >
                         {t.title}
                       </span>
+                      <TaskPriorityChip priority={t.priority} />
                       <TaskStatusBadge status={t.status} />
                     </li>
                   ))}
@@ -730,6 +731,38 @@ const TASK_STATUS_LABELS: Record<EmployeeProjectTaskRow['status'], string> = {
   in_progress: 'In progress',
   done: 'Done',
 };
+
+// Eisenhower priority chip (0070) — same palette as the Deliverables tab in
+// the project window: red / orange / blue / gray, hottest first.
+const TASK_PRIORITY_CHIP: Record<
+  NonNullable<EmployeeProjectTaskRow['priority']>,
+  { label: string; color: string }
+> = {
+  urgent_important: { label: 'Urgent & Important', color: '#e5484d' },
+  urgent: { label: 'Urgent', color: '#f76b15' },
+  important: { label: 'Important', color: '#3b82f6' },
+  nice: { label: 'Nice / Not right now', color: '#8b8d98' },
+};
+
+function TaskPriorityChip({ priority }: { priority: EmployeeProjectTaskRow['priority'] }) {
+  if (!priority) return null;
+  const chip = TASK_PRIORITY_CHIP[priority];
+  return (
+    <span
+      style={{
+        fontSize: 10,
+        fontWeight: 600,
+        padding: '1px 7px',
+        borderRadius: 999,
+        border: `1px solid ${chip.color}`,
+        color: chip.color,
+        whiteSpace: 'nowrap',
+      }}
+    >
+      {chip.label}
+    </span>
+  );
+}
 
 const TASK_STATUS_TONE: Record<EmployeeProjectTaskRow['status'], { bg: string; fg: string }> = {
   todo: { bg: '#3a3a3a', fg: '#bdbdbd' },
