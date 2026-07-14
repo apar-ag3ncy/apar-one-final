@@ -38,6 +38,7 @@ import {
 } from '@/lib/server/entities/project-tasks';
 import { getEmployeeStatement, type Statement } from '@/lib/server/ledger/statements';
 import { listEmployees } from '@/lib/server-stub/entity-actions';
+import { payrollGradeKind } from '@/components/employees/types';
 import { Icon } from '../icons';
 import { EmployeeProfileEditor } from '../apps';
 import { useEntityMutation } from '../auth/entity-mutation-gate';
@@ -391,7 +392,17 @@ function OverviewBody({
         <DetailGrid
           items={[
             ['Display name', employee.displayName ?? '—'],
-            ['Designation', employee.designation ?? '—'],
+            [
+              'Designation',
+              // Payroll grade rides beside the designation as a chip (§1.1).
+              <span
+                key="designation"
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}
+              >
+                {employee.designation ?? '—'}
+                {employee.payrollGrade ? <GradeChip grade={employee.payrollGrade} /> : null}
+              </span>,
+            ],
             ['Department', employee.department ?? '—'],
             ['Employment type', employee.employmentType.replace('_', ' ')],
             ['Contract', employee.contractStatus],
@@ -1049,7 +1060,7 @@ function Card({ title, children }: { title: string; children: React.ReactNode })
   );
 }
 
-function DetailGrid({ items }: { items: ReadonlyArray<[string, string]> }) {
+function DetailGrid({ items }: { items: ReadonlyArray<[string, React.ReactNode]> }) {
   return (
     <dl
       style={{
@@ -1081,6 +1092,30 @@ function DetailGrid({ items }: { items: ReadonlyArray<[string, string]> }) {
 
 function Muted({ children }: { children: React.ReactNode }) {
   return <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0 }}>{children}</p>;
+}
+
+/** Small payroll-grade pill ('EA+'); the implied type surfaces on hover. */
+function GradeChip({ grade }: { grade: string }) {
+  return (
+    <span
+      title={`Payroll grade — ${payrollGradeKind(grade)}`}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        fontSize: 10,
+        fontWeight: 700,
+        letterSpacing: '0.05em',
+        padding: '1px 7px',
+        borderRadius: 999,
+        border: '1px solid var(--border)',
+        color: 'var(--text-muted)',
+        background: 'var(--content-2)',
+        whiteSpace: 'nowrap',
+      }}
+    >
+      {grade}
+    </span>
+  );
 }
 
 function initials(name: string): string {

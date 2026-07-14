@@ -35,6 +35,11 @@ import { IFSC_RE, PAN_RE, last4, maskAadhaar, maskPAN } from '@/lib/validators';
 const EmployeeIdSchema = z.string().uuid();
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+// Payroll grade levels (§1.1, migration 0071). The employee *type* is
+// derivable from the first letter — Intern (I), Probation (P…),
+// Employee (E…) — so one nullable column carries both.
+const PayrollGradeEnum = z.enum(['I', 'PA', 'PB', 'PC', 'PA+', 'EA', 'EB', 'EC', 'EA+']);
+
 export async function archiveEmployee(id: string): Promise<void> {
   await archiveEmployees([id]);
 }
@@ -297,6 +302,7 @@ const CreateEmployeeSchema = z.object({
   employmentType: z.enum(['full_time', 'part_time', 'contract', 'intern', 'consultant']),
   status: z.enum(['prospective', 'active', 'on_leave', 'notice', 'separated']).optional(),
   designation: z.string().trim().max(160).optional(),
+  payrollGrade: PayrollGradeEnum.nullable().optional(),
   // Departments are dynamic free-text; normalise to lowercase so the picker
   // list dedups ("Creative" / "creative") and display title-cases uniformly.
   department: z.string().trim().toLowerCase().max(120).optional(),
@@ -485,6 +491,7 @@ export async function createEmployee(input: CreateEmployeeInput): Promise<Create
           employmentType: v.employmentType,
           status: v.status ?? 'active',
           designation: v.designation || null,
+          payrollGrade: v.payrollGrade ?? null,
           department: v.department || null,
           reportsToEmployeeId: v.reportsToEmployeeId || null,
           joinedOn: v.joinedOn,
@@ -657,6 +664,7 @@ const UpdateEmployeeSchema = z.object({
   personalEmail: z.string().trim().max(200).nullable().optional(),
   phone: z.string().trim().max(40).nullable().optional(),
   designation: z.string().trim().max(160).nullable().optional(),
+  payrollGrade: PayrollGradeEnum.nullable().optional(),
   department: z.string().trim().toLowerCase().max(120).nullable().optional(),
   employmentType: z.enum(['full_time', 'part_time', 'contract', 'intern', 'consultant']).optional(),
   status: z.enum(['prospective', 'active', 'on_leave', 'notice', 'separated']).optional(),
@@ -768,6 +776,7 @@ export async function updateEmployee(input: UpdateEmployeeInput): Promise<Update
   if (v.personalEmail !== undefined) patch.personalEmail = v.personalEmail;
   if (v.phone !== undefined) patch.phone = v.phone;
   if (v.designation !== undefined) patch.designation = v.designation;
+  if (v.payrollGrade !== undefined) patch.payrollGrade = v.payrollGrade;
   if (v.department !== undefined) patch.department = v.department;
   if (v.employmentType !== undefined) patch.employmentType = v.employmentType;
   if (v.status !== undefined) patch.status = v.status;
@@ -838,6 +847,7 @@ export type EditableEmployee = {
   fullName: string;
   displayName: string | null;
   designation: string | null;
+  payrollGrade: string | null;
   department: string | null;
   employmentType: 'full_time' | 'part_time' | 'contract' | 'intern' | 'consultant';
   status: 'prospective' | 'active' | 'on_leave' | 'notice' | 'separated';
@@ -862,6 +872,7 @@ export async function getEmployeeEditable(id: string): Promise<EditableEmployee 
       fullName: employees.fullName,
       displayName: employees.displayName,
       designation: employees.designation,
+      payrollGrade: employees.payrollGrade,
       department: employees.department,
       employmentType: employees.employmentType,
       status: employees.status,

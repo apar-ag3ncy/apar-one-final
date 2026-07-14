@@ -5,6 +5,42 @@ export type EmploymentType = 'full_time' | 'part_time' | 'contractor' | 'intern'
 export type EmployeeStatus = 'active' | 'on_leave' | 'notice' | 'separated' | 'prospective';
 
 /**
+ * Payroll grade levels (§1.1). The employee *type* is derivable from the
+ * grade's first letter — Intern (I), Probation (P…), Employee (E…) — so a
+ * single nullable column carries both.
+ */
+export type PayrollGrade = 'I' | 'PA' | 'PB' | 'PC' | 'PA+' | 'EA' | 'EB' | 'EC' | 'EA+';
+
+export const PAYROLL_GRADES: readonly PayrollGrade[] = [
+  'I',
+  'PA',
+  'PB',
+  'PC',
+  'PA+',
+  'EA',
+  'EB',
+  'EC',
+  'EA+',
+];
+
+/** Grades grouped by employee type, for grouped pickers / filters. */
+export const PAYROLL_GRADE_GROUPS: ReadonlyArray<{
+  label: string;
+  grades: readonly PayrollGrade[];
+}> = [
+  { label: 'Intern', grades: ['I'] },
+  { label: 'Probation', grades: ['PA', 'PB', 'PC', 'PA+'] },
+  { label: 'Employee', grades: ['EA', 'EB', 'EC', 'EA+'] },
+];
+
+/** Employee type implied by a grade's first letter ('EA+' → 'Employee'). */
+export function payrollGradeKind(grade: string): string {
+  if (grade.startsWith('I')) return 'Intern';
+  if (grade.startsWith('P')) return 'Probation';
+  return 'Employee';
+}
+
+/**
  * Departments are free-form / dynamic — HR can add new ones at create/edit
  * time. The values below seed the suggestion list; any string is accepted
  * and persisted. Stored lowercase (server normalizes); rendered title-cased
@@ -42,6 +78,8 @@ export type Employee = {
   department: Department;
   employmentType: EmploymentType;
   status: EmployeeStatus;
+  /** Salary grade level ('EA+', 'I', …). Optional — null for ungraded rows. */
+  payrollGrade?: PayrollGrade | null;
   workEmail: string;
   personalEmail?: string;
   phone: string;

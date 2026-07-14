@@ -491,6 +491,13 @@
       "when": 1782700090000,
       "tag": "0069_move_salary_out_of_office_expenses",
       "breakpoints": true
+    },
+    {
+      "idx": 71,
+      "version": "7",
+      "when": 1782900090000,
+      "tag": "0071_payroll_grades",
+      "breakpoints": true
     }
   ]
 }

@@ -51,6 +51,8 @@ export type EmployeeSummary = {
     fullName: string;
     displayName: string | null;
     designation: string | null;
+    /** Salary grade level ('EA+', 'I', …) — null when ungraded (0071). */
+    payrollGrade: string | null;
     department: string | null;
     employmentType: string;
     status: string;
@@ -185,6 +187,7 @@ export async function getEmployeeSummary(employeeId: string): Promise<EmployeeSu
       fullName: emp.fullName,
       displayName: emp.displayName,
       designation: emp.designation,
+      payrollGrade: emp.payrollGrade,
       department: emp.department,
       employmentType: emp.employmentType,
       status: emp.status,

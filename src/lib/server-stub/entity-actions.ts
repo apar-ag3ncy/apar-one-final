@@ -57,6 +57,7 @@ import type {
   EmployeeStatus,
   EmploymentType,
   Department,
+  PayrollGrade,
 } from '@/components/employees/types';
 import type {
   Project,
@@ -360,6 +361,7 @@ export async function listEmployees(): Promise<readonly Employee[]> {
       fullName: employees.fullName,
       displayName: employees.displayName,
       designation: employees.designation,
+      payrollGrade: employees.payrollGrade,
       department: employees.department,
       employmentType: employees.employmentType,
       status: employees.status,
@@ -388,6 +390,7 @@ export async function listEmployees(): Promise<readonly Employee[]> {
       fullName: r.fullName,
       displayName: r.displayName,
       designation: r.designation ?? '',
+      payrollGrade: (r.payrollGrade as PayrollGrade | null) ?? null,
       department: mapDepartment(r.department),
       employmentType: mapEmploymentType(r.employmentType),
       status: mapEmployeeStatus(r.status, r.isArchived),
