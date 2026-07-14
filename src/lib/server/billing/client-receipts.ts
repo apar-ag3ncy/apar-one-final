@@ -20,6 +20,7 @@ import { AppError } from '@/lib/errors';
 import { requireCapability } from '@/lib/rbac';
 import { getActorContext } from '@/lib/server/actor';
 import { createDraftTransaction, postTransaction, reverseTransaction } from '@/lib/server/ledger';
+import { getClientStatement } from '@/lib/server/ledger/statements';
 
 import { renderPaymentReceiptPdf, type PaymentReceiptPdfData } from './pdf/payment-receipt';
 import { uploadBillingPdf } from './pdf/upload';
@@ -579,6 +580,57 @@ export async function listOpenInvoicesForClient(
       outstandingPaise: BigInt(r.outstanding ?? '0'),
     }))
     .filter((r) => r.outstandingPaise > 0n);
+}
+
+export type ClientOverviewStats = {
+  /** Receivable still to collect (Σ outstanding across open invoices). */
+  outstandingPaise: bigint;
+  /** Open invoices with a non-zero balance. */
+  pendingInvoiceCount: number;
+  /** Lifetime invoiced to this client (Dr 1200 legs). */
+  invoicedTotalPaise: bigint;
+  /** Lifetime received against those invoices (Cr 1200 legs). */
+  receivedTotalPaise: bigint;
+  lastInvoiceOn: string | null;
+  lastPaymentOn: string | null;
+};
+
+/**
+ * Headline financials for a client's Overview — reuses the same open-invoice
+ * outstanding the payments dialog caps against, and the posted client statement
+ * (Trade Receivables 1200) for lifetime invoiced / received. Aggregate only.
+ */
+export async function getClientOverviewStats(clientId: string): Promise<ClientOverviewStats> {
+  const [open, statement] = await Promise.all([
+    listOpenInvoicesForClient(clientId),
+    getClientStatement({ clientId }),
+  ]);
+
+  const outstandingPaise = open.reduce((acc, r) => acc + r.outstandingPaise, 0n);
+
+  let invoicedTotalPaise = 0n;
+  let receivedTotalPaise = 0n;
+  let lastInvoiceOn: string | null = null;
+  let lastPaymentOn: string | null = null;
+  for (const line of statement.lines) {
+    if (line.accountCode !== '1200') continue; // Trade Receivables only
+    if (line.side === 'debit') {
+      invoicedTotalPaise += line.amountPaise;
+      if (!lastInvoiceOn || line.txnDate > lastInvoiceOn) lastInvoiceOn = line.txnDate;
+    } else {
+      receivedTotalPaise += line.amountPaise;
+      if (!lastPaymentOn || line.txnDate > lastPaymentOn) lastPaymentOn = line.txnDate;
+    }
+  }
+
+  return {
+    outstandingPaise,
+    pendingInvoiceCount: open.length,
+    invoicedTotalPaise,
+    receivedTotalPaise,
+    lastInvoiceOn,
+    lastPaymentOn,
+  };
 }
 
 export type ReceivableByProjectRow = {
