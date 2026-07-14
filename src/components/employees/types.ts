@@ -48,6 +48,11 @@ export type Employee = {
   city: string;
   joinedAt: Date;
   dateOfBirth: string | null;
+  /**
+   * Probation-confirmation date (YYYY-MM-DD) or null while still on
+   * probation. Optional so demo/sample constructors stay valid.
+   */
+  confirmedOn?: string | null;
   exitedAt: Date | null;
   reportsTo: string | null;
   panMasked: string | null; // e.g. XXXXX1234X

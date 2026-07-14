@@ -29,6 +29,8 @@ import { useRealtimeActivity } from '@/lib/client/use-realtime-activity';
 import { getEntityActivity } from '@/lib/server/entities/activity';
 import { listContacts, type ContactRow } from '@/lib/server/entities/contacts';
 import { getEmployeeSummary, type EmployeeSummary } from '@/lib/server/entities/employee-summary';
+import { getEmployeeKpis, type EmployeeKpis } from '@/lib/server/entities/employee-kpis';
+import { isNewJoiner, probationDaysLeft } from '@/lib/employee-badges';
 import { addEmployeeAchievement } from '@/lib/server/entities/employee-achievements';
 import {
   listEmployeeProjects,
@@ -137,6 +139,7 @@ export function EmployeeWindow({ employeeId, onClose }: EmployeeWindowProps) {
 
   const tabDefs: ReadonlyArray<{ value: string; label: string; count?: number }> = [
     { value: 'overview', label: 'Overview' },
+    { value: 'kpis', label: 'KPIs' },
     { value: 'contacts', label: 'Contacts', count: contacts.length },
     { value: 'addresses', label: 'Addresses' },
     { value: 'bank-tax', label: 'Bank & Tax' },
@@ -184,6 +187,7 @@ export function EmployeeWindow({ employeeId, onClose }: EmployeeWindowProps) {
             directReports={directReports}
           />
         ) : null}
+        {tab === 'kpis' ? <KpisBody employeeId={employee.id} /> : null}
         {tab === 'contacts' ? (
           <ContactsSection
             entityType="employee"
@@ -286,6 +290,15 @@ function Header({
   /** Omitted when the user lacks edit permission — the button is then hidden. */
   onEdit?: () => void;
 }) {
+  // Derived badges (no storage): "New" = joined within the last 30 days;
+  // "Probation" = first 6 months for unconfirmed full/part-time employees.
+  const showNewChip = employee.status !== 'separated' && isNewJoiner(employee.joinedOn);
+  const probationLeft = probationDaysLeft({
+    joinedOn: employee.joinedOn,
+    employmentType: employee.employmentType,
+    confirmedOn: employee.confirmedOn,
+    status: employee.status,
+  });
   return (
     <header
       style={{
@@ -322,6 +335,38 @@ function Header({
           })}
         </div>
       </div>
+      {showNewChip ? (
+        <span
+          title="Joined within the last 30 days"
+          style={{
+            fontSize: 11,
+            fontWeight: 600,
+            padding: '4px 10px',
+            borderRadius: 999,
+            color: '#3b82d9',
+            background: 'color-mix(in oklab, #3b82d9 14%, transparent)',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          New
+        </span>
+      ) : null}
+      {probationLeft !== null ? (
+        <span
+          title="First 6 months from joining — clears once a confirmation date is set"
+          style={{
+            fontSize: 11,
+            fontWeight: 600,
+            padding: '4px 10px',
+            borderRadius: 999,
+            color: '#d08a1e',
+            background: 'color-mix(in oklab, #d08a1e 14%, transparent)',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          Probation · {probationLeft}d left
+        </span>
+      ) : null}
       <span
         style={{
           fontSize: 11,
@@ -457,6 +502,109 @@ function OverviewBody({
               </div>
             )}
           </div>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* KPIs tab — display-only aggregates from getEmployeeKpis                     */
+/* -------------------------------------------------------------------------- */
+
+function KpisBody({ employeeId }: { employeeId: string }) {
+  const [kpis, setKpis] = useState<EmployeeKpis | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    getEmployeeKpis({ employeeId })
+      .then((k) => {
+        if (!cancelled) setKpis(k);
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) setError(e instanceof Error ? e.message : 'Failed to load KPIs');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [employeeId]);
+
+  if (error) {
+    return <p style={{ fontSize: 13, color: 'var(--text-error, #c33)', margin: 0 }}>{error}</p>;
+  }
+  if (kpis === null) {
+    return <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0 }}>Loading KPIs…</p>;
+  }
+
+  const monthLabel = new Date(`${kpis.month}-01T00:00:00Z`).toLocaleDateString('en-IN', {
+    month: 'long',
+    year: 'numeric',
+    timeZone: 'UTC',
+  });
+  const a = kpis.attendance;
+  const d = kpis.deliverables;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <Card title={`Attendance — ${monthLabel}`}>
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
+            gap: 10,
+          }}
+        >
+          <Kpi
+            label="Attendance"
+            value={a.attendancePct === null ? '—' : `${a.attendancePct}%`}
+            trend={`of ${a.workingDaysElapsed} working day${a.workingDaysElapsed === 1 ? '' : 's'} elapsed`}
+          />
+          <Kpi label="Present" value={a.presentDays} trend="incl. work from home" />
+          <Kpi label="Half-days" value={a.halfDays} />
+          <Kpi label="On leave" value={a.onLeaveDays} />
+          <Kpi label="Absent" value={a.absentDays} />
+        </div>
+      </Card>
+      <Card title="Deliverables">
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
+            gap: 10,
+          }}
+        >
+          <Kpi label="Assigned" value={d.assigned} />
+          <Kpi label="Completed" value={d.completed} />
+          <Kpi
+            label="Completion"
+            value={d.completionPct === null ? '—' : `${d.completionPct}%`}
+            trend={d.assigned === 0 ? 'nothing assigned yet' : undefined}
+          />
+        </div>
+      </Card>
+      <Card title="Projects & tenure">
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
+            gap: 10,
+          }}
+        >
+          <Kpi
+            label="Active projects"
+            value={kpis.projects.activeMemberships}
+            trend="team memberships"
+          />
+          <Kpi
+            label="Tenure"
+            value={`${kpis.tenure.months} mo`}
+            trend={`since ${new Date(kpis.tenure.joinedOn).toLocaleDateString('en-IN', {
+              day: '2-digit',
+              month: 'short',
+              year: 'numeric',
+            })}`}
+          />
         </div>
       </Card>
     </div>

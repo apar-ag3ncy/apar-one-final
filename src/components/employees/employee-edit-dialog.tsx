@@ -28,6 +28,7 @@ import {
 import { Textarea } from '@/components/ui/textarea';
 import { updateEmployee, type UpdateEmployeeInput } from '@/lib/server/entities/employees';
 import { listDepartments } from '@/lib/server-stub/entity-actions';
+import { DESIGNATION_SUGGESTIONS } from '@/lib/employee-badges';
 import { departmentLabel } from '@/components/employees/types';
 import type { Employee, EmploymentType } from '@/components/employees/types';
 
@@ -226,9 +227,17 @@ export function EmployeeEditDialog({ employee }: { employee: Employee }) {
               <Label htmlFor="employee-designation">Designation</Label>
               <Input
                 id="employee-designation"
+                list="employee-designation-options"
                 placeholder="Senior Strategist"
                 {...form.register('designation')}
               />
+              {/* Free text; leadership roles are suggested so the TL/Manager
+                  chips on the Team cards pick them up consistently. */}
+              <datalist id="employee-designation-options">
+                {DESIGNATION_SUGGESTIONS.map((d) => (
+                  <option key={d} value={d} />
+                ))}
+              </datalist>
             </div>
             <div className="grid gap-1.5">
               <Label htmlFor="employee-department">Department</Label>

@@ -24,6 +24,14 @@ import {
 } from '@/lib/server-stub/entity-actions';
 import { departmentLabel, type Employee as HrEmployee } from '@/components/employees/types';
 import {
+  DESIGNATION_SUGGESTIONS,
+  LEAD_DESIGNATION_META,
+  designationLeadKind,
+  isNewJoiner,
+  probationDaysLeft,
+} from '@/lib/employee-badges';
+import { todayIST } from '@/lib/ist-date';
+import {
   ACCENTS,
   DOCK_GAP_MAX,
   DOCK_GAP_MIN,
@@ -1658,6 +1666,37 @@ const EMP_TYPE_LABEL: Record<string, string> = {
   intern: 'Intern',
 };
 
+/**
+ * Small dot-pill used for the derived employee badges (New / Probation /
+ * Team Leader / Manager) — same look as the status + attendance chips.
+ */
+function EmpBadgeChip({ color, label, title }: { color: string; label: string; title?: string }) {
+  return (
+    <span
+      title={title}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 5,
+        marginTop: 4,
+        marginLeft: 6,
+        fontSize: 10,
+        fontWeight: 600,
+        padding: '2px 8px',
+        borderRadius: 999,
+        color,
+        background: `color-mix(in oklab, ${color} 14%, transparent)`,
+        whiteSpace: 'nowrap',
+      }}
+    >
+      <span
+        style={{ width: 6, height: 6, borderRadius: '50%', background: color, flexShrink: 0 }}
+      />
+      {label}
+    </span>
+  );
+}
+
 type DirRow = HrEmployee & { tone: string; managerName: string | null };
 
 export function EmployeesApp({
@@ -1817,6 +1856,16 @@ export function EmployeesApp({
     // stays on hover via the title attribute.
     const visibleName = e.displayName || e.fullName;
     const att = e.status === 'separated' ? undefined : attToday[e.id];
+    // Derived badges — nothing stored. "New" = joined in the last 30 days;
+    // "Probation" = first 6 months for unconfirmed full/part-timers.
+    const showNewChip = e.status !== 'separated' && isNewJoiner(e.joinedAt);
+    const probationLeft = probationDaysLeft({
+      joinedOn: e.joinedAt,
+      employmentType: e.employmentType,
+      confirmedOn: e.confirmedOn ?? null,
+      status: e.status,
+    });
+    const leadKind = designationLeadKind(e.designation);
     return (
       <div
         key={e.id}
@@ -1940,7 +1989,44 @@ export function EmployeesApp({
                 {ATT_LABEL[att]}
               </span>
             ) : null}
-            <div className="role">{e.designation || '—'}</div>
+            {showNewChip ? (
+              <EmpBadgeChip color="#3b82d9" label="New" title="Joined within the last 30 days" />
+            ) : null}
+            {probationLeft !== null ? (
+              <EmpBadgeChip
+                color="#d08a1e"
+                label={`Probation · ${probationLeft}d left`}
+                title="First 6 months from joining — clears once a confirmation date is set"
+              />
+            ) : null}
+            <div className="role">
+              {leadKind ? (
+                <span
+                  title={e.designation}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 5,
+                    fontSize: 10.5,
+                    fontWeight: 700,
+                    padding: '2px 8px',
+                    borderRadius: 999,
+                    color: LEAD_DESIGNATION_META[leadKind].color,
+                    border: `1px solid color-mix(in oklab, ${LEAD_DESIGNATION_META[leadKind].color} 45%, transparent)`,
+                    background: `color-mix(in oklab, ${LEAD_DESIGNATION_META[leadKind].color} 12%, transparent)`,
+                    whiteSpace: 'nowrap',
+                    maxWidth: '100%',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                  }}
+                >
+                  <Icon name="star" size={10} />
+                  {e.designation}
+                </span>
+              ) : (
+                e.designation || '—'
+              )}
+            </div>
             <div className="dept">
               {departmentLabel(e.department)} ·{' '}
               {EMP_TYPE_LABEL[e.employmentType] ?? e.employmentType}
@@ -2392,7 +2478,10 @@ type EditorForm = {
 };
 
 function todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
+  // Asia/Kolkata, NOT toISOString() — the UTC date is still *yesterday*
+  // between 00:00 and 05:29 IST, which made the Team cards' attendance chip
+  // query (and the create-form's joined-on default) point at the wrong day.
+  return todayIST();
 }
 
 const EMPTY_EDITOR_FORM: EditorForm = {
@@ -2597,10 +2686,18 @@ export function EmployeeProfileEditor({
           </Field>
           <Field label="Designation">
             <input
+              list="os-employee-designations"
               value={form.designation}
               onChange={(e) => set('designation', e.target.value)}
               placeholder="Senior Visualiser"
             />
+            {/* Free text; leadership roles are suggested so the TL/Manager
+                chips on the Team cards pick them up consistently. */}
+            <datalist id="os-employee-designations">
+              {DESIGNATION_SUGGESTIONS.map((d) => (
+                <option key={d} value={d} />
+              ))}
+            </datalist>
             {errors.designation ? <FieldErr msg={errors.designation} /> : null}
           </Field>
           <Field label="Department">
