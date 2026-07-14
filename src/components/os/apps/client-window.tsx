@@ -31,6 +31,10 @@ import { getEntityActivity } from '@/lib/server/entities/activity';
 import { listContacts, type ContactRow } from '@/lib/server/entities/contacts';
 import { getClientStatement, type Statement } from '@/lib/server/ledger/statements';
 import {
+  getClientOverviewStats,
+  type ClientOverviewStats,
+} from '@/lib/server/billing/client-receipts';
+import {
   getClient,
   listEmployees,
   listProjectsByClient,
@@ -212,7 +216,14 @@ export function ClientWindow({ clientId, onClose }: ClientWindowProps) {
         ))}
       </div>
       <div style={{ flex: 1, overflow: 'auto', padding: 20 }}>
-        {tab === 'overview' ? <OverviewBody client={client} contacts={contacts} /> : null}
+        {tab === 'overview' ? (
+          <OverviewBody
+            client={client}
+            contacts={contacts}
+            projects={projects}
+            onOpenTab={setTab}
+          />
+        ) : null}
         {tab === 'contacts' ? (
           <ContactsSection
             entityType="client"
@@ -587,11 +598,105 @@ function Header({
 /* Overview (OS-styled KPI strip + profile card + notes)                       */
 /* -------------------------------------------------------------------------- */
 
-function OverviewBody({ client, contacts }: { client: Client; contacts: readonly ContactRow[] }) {
+function OverviewBody({
+  client,
+  contacts,
+  projects,
+  onOpenTab,
+}: {
+  client: Client;
+  contacts: readonly ContactRow[];
+  projects: readonly Project[];
+  onOpenTab: (tab: ClientTab) => void;
+}) {
+  const [stats, setStats] = useState<ClientOverviewStats | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    getClientOverviewStats(client.id)
+      .then((s) => {
+        if (!cancelled) setStats(s);
+      })
+      .catch(() => {
+        /* leave financial tiles as "—" */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [client.id]);
+
+  // Project mix from the already-loaded list (raw DB status is authoritative).
+  const active = projects.filter((p) => p.dbStatus === 'active').length;
+  const completed = projects.filter((p) => p.dbStatus === 'completed').length;
+  const pipeline = projects.filter((p) => p.dbStatus === 'pitch' || p.dbStatus === 'won').length;
+  const money = (p: bigint | undefined) => (p === undefined ? '—' : formatINRPaise(p));
+
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-      <Kpi label="Contacts" value={String(contacts.length)} />
-      <Kpi label="Projects" value={String(client.projectsCount)} />
+      {/* Founder headline row — project mix + money. */}
+      <div
+        style={{
+          gridColumn: 'span 2',
+          display: 'grid',
+          gridTemplateColumns: 'repeat(4, 1fr)',
+          gap: 12,
+        }}
+      >
+        <Kpi
+          label="Active projects"
+          value={String(active)}
+          trend={pipeline > 0 ? `${pipeline} in pipeline` : undefined}
+          onClick={() => onOpenTab('projects')}
+        />
+        <Kpi
+          label="Completed"
+          value={String(completed)}
+          trend={`${projects.length} total`}
+          onClick={() => onOpenTab('projects')}
+        />
+        <Kpi
+          label="To be collected"
+          value={money(stats?.outstandingPaise)}
+          accent={stats && stats.outstandingPaise > 0n ? 'var(--apar-red, #c33)' : undefined}
+          trend="outstanding receivable"
+          onClick={() => onOpenTab('invoices')}
+        />
+        <Kpi
+          label="Pending invoices"
+          value={stats ? String(stats.pendingInvoiceCount) : '—'}
+          trend="awaiting payment"
+          onClick={() => onOpenTab('invoices')}
+        />
+        <Kpi
+          label="Total invoiced"
+          value={money(stats?.invoicedTotalPaise)}
+          trend={
+            stats?.lastInvoiceOn
+              ? `last ${formatShortDate(new Date(stats.lastInvoiceOn))}`
+              : undefined
+          }
+          onClick={() => onOpenTab('invoices')}
+        />
+        <Kpi
+          label="Received"
+          value={money(stats?.receivedTotalPaise)}
+          accent={stats && stats.receivedTotalPaise > 0n ? 'var(--apar-green, #2E8F5A)' : undefined}
+          trend={
+            stats?.lastPaymentOn
+              ? `last ${formatShortDate(new Date(stats.lastPaymentOn))}`
+              : undefined
+          }
+        />
+        <Kpi
+          label="Contacts"
+          value={String(contacts.length)}
+          onClick={() => onOpenTab('contacts')}
+        />
+        <Kpi
+          label="Documents"
+          value={String(client.documentsCount ?? 0)}
+          onClick={() => onOpenTab('documents')}
+        />
+      </div>
       <OsCard title="Profile">
         <DetailGrid
           items={[
@@ -631,15 +736,31 @@ function OverviewBody({ client, contacts }: { client: Client; contacts: readonly
   );
 }
 
-function Kpi({ label, value, trend }: { label: string; value: string; trend?: string }) {
+function Kpi({
+  label,
+  value,
+  trend,
+  accent,
+  onClick,
+}: {
+  label: string;
+  value: string;
+  trend?: string;
+  /** Colour the value (e.g. red for money owed to us). */
+  accent?: string;
+  onClick?: () => void;
+}) {
   return (
     <div
+      onClick={onClick}
       style={{
         background: 'var(--content-2)',
         border: '1px solid var(--border)',
         borderRadius: 10,
         padding: 14,
+        cursor: onClick ? 'pointer' : undefined,
       }}
+      title={onClick ? 'Open' : undefined}
     >
       <div
         style={{
@@ -652,7 +773,7 @@ function Kpi({ label, value, trend }: { label: string; value: string; trend?: st
       >
         {label}
       </div>
-      <div className="font-display" style={{ fontSize: 26, marginTop: 4 }}>
+      <div className="font-display" style={{ fontSize: 26, marginTop: 4, color: accent }}>
         {value}
       </div>
       {trend ? (
