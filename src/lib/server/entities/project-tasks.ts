@@ -1,6 +1,6 @@
 'use server';
 
-import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { logAudit } from '@/lib/audit';
@@ -45,6 +45,8 @@ export type ProjectMemberRow = {
   id: string;
   employeeId: string;
   employeeName: string;
+  /** Employee's department — lets the assignee picker group teammates (0073). */
+  department: string | null;
   roleNote: string | null;
 };
 
@@ -59,6 +61,7 @@ export async function listProjectMembers(projectId: string): Promise<readonly Pr
       id: projectMembers.id,
       employeeId: projectMembers.employeeId,
       employeeName: employees.fullName,
+      department: employees.department,
       roleNote: projectMembers.roleNote,
     })
     .from(projectMembers)
@@ -71,6 +74,7 @@ export async function listProjectMembers(projectId: string): Promise<readonly Pr
       id: r.id,
       employeeId: r.employeeId,
       employeeName: r.employeeName,
+      department: r.department,
       roleNote: r.roleNote,
     }),
   );
@@ -131,6 +135,7 @@ export async function addProjectMember(input: {
       id: projectMembers.id,
       employeeId: projectMembers.employeeId,
       employeeName: employees.fullName,
+      department: employees.department,
       roleNote: projectMembers.roleNote,
     })
     .from(projectMembers)
@@ -161,6 +166,7 @@ export async function addProjectMember(input: {
     id: row.id,
     employeeId: row.employeeId,
     employeeName: row.employeeName,
+    department: row.department,
     roleNote: row.roleNote,
   };
 }
@@ -352,9 +358,16 @@ const ProjectTaskPrioritySchema = z.enum(['urgent_important', 'urgent', 'importa
 const ProjectTaskSourceSchema = z.enum(['apar', 'vendor']);
 const ProjectTaskIdSchema = z.string().uuid();
 
+/**
+ * A deliverable assignee — either an employee or a vendor (0073). Exactly one
+ * of `employeeId` / `vendorId` is set; `kind` says which; `name` is the
+ * employee's full name or the vendor's name.
+ */
 export type ProjectTaskAssignee = {
-  employeeId: string;
+  employeeId: string | null;
+  vendorId: string | null;
   name: string;
+  kind: 'employee' | 'vendor';
 };
 
 export type ProjectTaskRow = {
@@ -411,6 +424,7 @@ const CreateProjectTaskSchema = z.object({
   title: z.string().min(1).max(300),
   description: z.string().max(4000).nullable().optional(),
   assigneeEmployeeIds: z.array(z.string().uuid()).max(50).optional(),
+  assigneeVendorIds: z.array(z.string().uuid()).max(50).optional(),
   categoryId: z.string().uuid().nullable().optional(),
   priority: ProjectTaskPrioritySchema.nullable().optional(),
   source: ProjectTaskSourceSchema.nullable().optional(),
@@ -423,6 +437,7 @@ export async function createProjectTask(input: {
   title: string;
   description?: string | null;
   assigneeEmployeeIds?: string[];
+  assigneeVendorIds?: string[];
   categoryId?: string | null;
   priority?: ProjectTaskPriority | null;
   source?: ProjectTaskSource | null;
@@ -434,6 +449,7 @@ export async function createProjectTask(input: {
   const parsed = CreateProjectTaskSchema.parse(input);
   const status = parsed.status ?? 'todo';
   const assigneeIds = [...new Set(parsed.assigneeEmployeeIds ?? [])];
+  const vendorAssigneeIds = [...new Set(parsed.assigneeVendorIds ?? [])];
 
   const [inserted] = await db
     .insert(projectTasks)
@@ -470,13 +486,37 @@ export async function createProjectTask(input: {
       });
   }
 
+  if (vendorAssigneeIds.length > 0) {
+    await db
+      .insert(projectTaskAssignees)
+      .values(
+        vendorAssigneeIds.map((vendorId) => ({
+          taskId: inserted.id,
+          vendorId,
+          createdBy: ctx.userId,
+        })),
+      )
+      // Vendor uniqueness lives in a PARTIAL index (WHERE vendor_id IS NOT
+      // NULL), so the arbiter predicate must be repeated to match it.
+      .onConflictDoNothing({
+        target: [projectTaskAssignees.taskId, projectTaskAssignees.vendorId],
+        where: sql`${projectTaskAssignees.vendorId} IS NOT NULL`,
+      });
+  }
+
   await logAudit({
     actorId: ctx.userId,
     entityType: 'project',
     entityId: parsed.projectId,
     action: 'insert',
     changes: {
-      task_created: { id: inserted.id, title: parsed.title, status, assignees: assigneeIds },
+      task_created: {
+        id: inserted.id,
+        title: parsed.title,
+        status,
+        assignees: assigneeIds,
+        vendorAssignees: vendorAssigneeIds,
+      },
     },
   });
 
@@ -488,6 +528,7 @@ const UpdateProjectTaskSchema = z.object({
   title: z.string().min(1).max(300).optional(),
   description: z.string().max(4000).nullable().optional(),
   assigneeEmployeeIds: z.array(z.string().uuid()).max(50).optional(),
+  assigneeVendorIds: z.array(z.string().uuid()).max(50).optional(),
   categoryId: z.string().uuid().nullable().optional(),
   priority: ProjectTaskPrioritySchema.nullable().optional(),
   source: ProjectTaskSourceSchema.nullable().optional(),
@@ -500,6 +541,7 @@ export async function updateProjectTask(input: {
   title?: string;
   description?: string | null;
   assigneeEmployeeIds?: string[];
+  assigneeVendorIds?: string[];
   categoryId?: string | null;
   priority?: ProjectTaskPriority | null;
   source?: ProjectTaskSource | null;
@@ -545,14 +587,18 @@ export async function updateProjectTask(input: {
     })
     .where(and(eq(projectTasks.id, parsed.id), isNull(projectTasks.deletedAt)));
 
-  // Replace-set assignee semantics: the provided list becomes THE list.
+  // Replace-set assignee semantics, per kind: the provided list becomes THE
+  // list for that kind. `undefined` leaves that kind untouched — passing only
+  // employee ids never disturbs vendor rows and vice-versa (0073).
   if (parsed.assigneeEmployeeIds !== undefined) {
     const next = [...new Set(parsed.assigneeEmployeeIds)];
     const current = await db
       .select({ employeeId: projectTaskAssignees.employeeId })
       .from(projectTaskAssignees)
-      .where(eq(projectTaskAssignees.taskId, parsed.id));
-    const currentIds = new Set(current.map((r) => r.employeeId));
+      .where(
+        and(eq(projectTaskAssignees.taskId, parsed.id), isNotNull(projectTaskAssignees.employeeId)),
+      );
+    const currentIds = new Set(current.map((r) => r.employeeId).filter((id): id is string => !!id));
     const toAdd = next.filter((id) => !currentIds.has(id));
     const toRemove = [...currentIds].filter((id) => !next.includes(id));
     if (toAdd.length > 0) {
@@ -572,6 +618,39 @@ export async function updateProjectTask(input: {
           and(
             eq(projectTaskAssignees.taskId, parsed.id),
             inArray(projectTaskAssignees.employeeId, toRemove),
+          ),
+        );
+    }
+  }
+
+  if (parsed.assigneeVendorIds !== undefined) {
+    const next = [...new Set(parsed.assigneeVendorIds)];
+    const current = await db
+      .select({ vendorId: projectTaskAssignees.vendorId })
+      .from(projectTaskAssignees)
+      .where(
+        and(eq(projectTaskAssignees.taskId, parsed.id), isNotNull(projectTaskAssignees.vendorId)),
+      );
+    const currentIds = new Set(current.map((r) => r.vendorId).filter((id): id is string => !!id));
+    const toAdd = next.filter((id) => !currentIds.has(id));
+    const toRemove = [...currentIds].filter((id) => !next.includes(id));
+    if (toAdd.length > 0) {
+      await db
+        .insert(projectTaskAssignees)
+        .values(toAdd.map((vendorId) => ({ taskId: parsed.id, vendorId, createdBy: ctx.userId })))
+        // Vendor uniqueness is a PARTIAL index — repeat its predicate.
+        .onConflictDoNothing({
+          target: [projectTaskAssignees.taskId, projectTaskAssignees.vendorId],
+          where: sql`${projectTaskAssignees.vendorId} IS NOT NULL`,
+        });
+    }
+    if (toRemove.length > 0) {
+      await db
+        .delete(projectTaskAssignees)
+        .where(
+          and(
+            eq(projectTaskAssignees.taskId, parsed.id),
+            inArray(projectTaskAssignees.vendorId, toRemove),
           ),
         );
     }
@@ -772,25 +851,48 @@ function mapTaskRow(r: TaskSelectRow, assignees: readonly ProjectTaskAssignee[])
   };
 }
 
-/** Batch-load assignees for a set of tasks; one query, grouped in JS. */
+/**
+ * Batch-load assignees for a set of tasks; one query, grouped in JS. Each row
+ * points at either an employee or a vendor (0073), so both are LEFT-joined —
+ * an inner join on employees would DROP every vendor assignee. `name` is the
+ * employee full name or the vendor name; `kind` follows whichever id is set.
+ */
 async function loadAssignees(
   taskIds: readonly string[],
 ): Promise<Map<string, ProjectTaskAssignee[]>> {
   const out = new Map<string, ProjectTaskAssignee[]>();
   if (taskIds.length === 0) return out;
+  const sortName = sql<string>`coalesce(${employees.fullName}, ${vendors.name})`;
   const rows = await db
     .select({
       taskId: projectTaskAssignees.taskId,
       employeeId: projectTaskAssignees.employeeId,
-      name: employees.fullName,
+      vendorId: projectTaskAssignees.vendorId,
+      employeeName: employees.fullName,
+      vendorName: vendors.name,
     })
     .from(projectTaskAssignees)
-    .innerJoin(employees, eq(employees.id, projectTaskAssignees.employeeId))
+    .leftJoin(employees, eq(employees.id, projectTaskAssignees.employeeId))
+    .leftJoin(vendors, eq(vendors.id, projectTaskAssignees.vendorId))
     .where(inArray(projectTaskAssignees.taskId, taskIds as string[]))
-    .orderBy(asc(employees.fullName));
+    .orderBy(asc(sortName));
   for (const r of rows) {
     const list = out.get(r.taskId) ?? [];
-    list.push({ employeeId: r.employeeId, name: r.name });
+    if (r.vendorId) {
+      list.push({
+        employeeId: null,
+        vendorId: r.vendorId,
+        name: r.vendorName ?? 'Unknown vendor',
+        kind: 'vendor',
+      });
+    } else if (r.employeeId) {
+      list.push({
+        employeeId: r.employeeId,
+        vendorId: null,
+        name: r.employeeName ?? 'Unknown',
+        kind: 'employee',
+      });
+    }
     out.set(r.taskId, list);
   }
   return out;

@@ -85,6 +85,12 @@ import { ProjectFormModal, type ProjectFormSubmit } from './project-form-modal';
 
 type EmployeeOption = { id: string; name: string };
 type VendorOption = { id: string; name: string };
+/**
+ * An option in the deliverable assignee picker (0073). `department` groups
+ * employees; vendors carry none. `id` is an employee id in employee mode, a
+ * vendor id in vendor mode.
+ */
+type AssigneeOption = { id: string; name: string; department?: string | null };
 
 export type ProjectWindowProps = {
   projectId: string;
@@ -1837,7 +1843,10 @@ function TasksBody({
   const [tasks, setTasks] = useState<readonly ProjectTaskRow[]>([]);
   // Assignee options are the project's TEAM (project_members), not the whole
   // employee directory — only people on the project can pick up deliverables.
-  const [team, setTeam] = useState<readonly EmployeeOption[]>([]);
+  // Carries each member's department so the picker can group by it (0073).
+  const [team, setTeam] = useState<readonly AssigneeOption[]>([]);
+  // Vendor-sourced deliverables assign to the project's vendors (0072/0073).
+  const [vendors, setVendors] = useState<readonly VendorOption[]>([]);
   const [categories, setCategories] = useState<readonly DeliverableCategoryRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -1848,6 +1857,7 @@ function TasksBody({
   // case — and stays editable. Multiple assignees via the picker dialog.
   const [title, setTitle] = useState('');
   const [draftAssignees, setDraftAssignees] = useState<readonly string[]>([]);
+  const [draftVendorAssignees, setDraftVendorAssignees] = useState<readonly string[]>([]);
   const [draftCategoryId, setDraftCategoryId] = useState('');
   const [draftPriority, setDraftPriority] = useState(''); // '' = no priority
   const [draftSource, setDraftSource] = useState<ProjectTaskSource>('apar');
@@ -1882,14 +1892,21 @@ function TasksBody({
     Promise.all([
       Promise.all(ids.map((id) => listProjectTasks(id))).then((g) => g.flat()),
       Promise.all(ids.map((id) => listProjectMembers(id).catch(() => []))).then((g) => g.flat()),
+      Promise.all(ids.map((id) => listProjectVendors(id).catch(() => []))).then((g) => g.flat()),
       listDeliverableCategories(),
     ])
-      .then(([t, members, cats]) => {
+      .then(([t, members, projVendors, cats]) => {
         if (cancelled) return;
         setTasks(t);
-        // Union the team across the parent + sub-projects for the assignee picker.
-        const uniq = new Map(members.map((m) => [m.employeeId, m.employeeName]));
-        setTeam([...uniq].map(([id, name]) => ({ id, name })));
+        // Union the team across the parent + sub-projects for the assignee
+        // picker, keeping each member's department for grouping.
+        const uniq = new Map(
+          members.map((m) => [m.employeeId, { name: m.employeeName, department: m.department }]),
+        );
+        setTeam([...uniq].map(([id, v]) => ({ id, name: v.name, department: v.department })));
+        // Union the project vendors likewise (deduped by vendor id).
+        const uniqV = new Map(projVendors.map((v) => [v.vendorId, v.vendorName]));
+        setVendors([...uniqV].map(([id, name]) => ({ id, name })));
         setCategories(cats);
         setLoading(false);
       })
@@ -1907,12 +1924,27 @@ function TasksBody({
 
   // A deliverable may still include someone who has since left the team; keep
   // those people visible in its picker so the selection doesn't misrender.
-  function optionsFor(task?: ProjectTaskRow): readonly EmployeeOption[] {
+  function employeeOptionsFor(task?: ProjectTaskRow): readonly AssigneeOption[] {
     if (!task) return team;
     const extra = task.assignees
-      .filter((a) => !team.some((m) => m.id === a.employeeId))
-      .map((a) => ({ id: a.employeeId, name: `${a.name} (not on team)` }));
+      .filter(
+        (a) => a.kind === 'employee' && a.employeeId && !team.some((m) => m.id === a.employeeId),
+      )
+      .map((a) => ({
+        id: a.employeeId as string,
+        name: `${a.name} (not on team)`,
+        department: null,
+      }));
     return extra.length > 0 ? [...team, ...extra] : team;
+  }
+
+  // Likewise for vendors that have since been unlinked from the project.
+  function vendorOptionsFor(task?: ProjectTaskRow): readonly AssigneeOption[] {
+    if (!task) return vendors;
+    const extra = task.assignees
+      .filter((a) => a.kind === 'vendor' && a.vendorId && !vendors.some((v) => v.id === a.vendorId))
+      .map((a) => ({ id: a.vendorId as string, name: `${a.name} (not on project)` }));
+    return extra.length > 0 ? [...vendors, ...extra] : vendors;
   }
 
   function replaceTask(row: ProjectTaskRow) {
@@ -1925,10 +1957,14 @@ function TasksBody({
     setBusy(true);
     setError(null);
     try {
+      // Source decides which kind of assignee the deliverable carries: a
+      // vendor-sourced deliverable gets its vendor picks, an apar one gets its
+      // employee picks (0073).
       const row = await createProjectTask({
         projectId: grouped ? addTargetId : projectId,
         title: t,
-        assigneeEmployeeIds: [...draftAssignees],
+        assigneeEmployeeIds: draftSource === 'vendor' ? [] : [...draftAssignees],
+        assigneeVendorIds: draftSource === 'vendor' ? [...draftVendorAssignees] : [],
         categoryId: draftCategoryId || null,
         priority: draftPriority ? (draftPriority as ProjectTaskPriority) : null,
         source: draftSource,
@@ -1937,6 +1973,7 @@ function TasksBody({
       setTasks((prev) => [...prev, row]);
       setTitle('');
       setDraftAssignees([]);
+      setDraftVendorAssignees([]);
       setDraftCategoryId('');
       setDraftPriority('');
       setDraftSource('apar');
@@ -1961,11 +1998,16 @@ function TasksBody({
     }
   }
 
-  async function changeAssignees(id: string, assigneeEmployeeIds: readonly string[]) {
+  async function changeAssignees(id: string, mode: 'employee' | 'vendor', ids: readonly string[]) {
     setBusy(true);
     setError(null);
     try {
-      const row = await updateProjectTask({ id, assigneeEmployeeIds: [...assigneeEmployeeIds] });
+      // Only the picked kind is sent — the other kind is left untouched (0073).
+      const row = await updateProjectTask(
+        mode === 'vendor'
+          ? { id, assigneeVendorIds: [...ids] }
+          : { id, assigneeEmployeeIds: [...ids] },
+      );
       replaceTask(row);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Failed to update deliverable');
@@ -2035,7 +2077,10 @@ function TasksBody({
 
   function assigneeSummary(assignees: readonly ProjectTaskAssignee[]): string {
     if (assignees.length === 0) return 'Unassigned';
-    if (assignees.length === 1) return assignees[0]!.name;
+    if (assignees.length === 1) {
+      const a = assignees[0]!;
+      return a.kind === 'vendor' ? `${a.name} (vendor)` : a.name;
+    }
     if (assignees.length === 2)
       return `${firstName(assignees[0]!.name)}, ${firstName(assignees[1]!.name)}`;
     return `${firstName(assignees[0]!.name)} +${assignees.length - 1}`;
@@ -2298,15 +2343,21 @@ function TasksBody({
             type="button"
             onClick={() => setPickerFor('draft')}
             title={
-              team.length === 0
-                ? 'Add team mates in the Team tab to assign deliverables.'
-                : 'Pick one or more people for this deliverable'
+              draftSource === 'vendor'
+                ? vendors.length === 0
+                  ? 'Add vendors in the Team tab to assign this deliverable.'
+                  : 'Pick one or more vendors for this deliverable'
+                : team.length === 0
+                  ? 'Add team mates in the Team tab to assign deliverables.'
+                  : 'Pick one or more people for this deliverable'
             }
           >
             <Icon name="users" size={13} />
-            {draftAssignees.length === 0
-              ? 'Assignees'
-              : `${draftAssignees.length} assignee${draftAssignees.length === 1 ? '' : 's'}`}
+            {(() => {
+              const n =
+                draftSource === 'vendor' ? draftVendorAssignees.length : draftAssignees.length;
+              return n === 0 ? 'Assignees' : `${n} assignee${n === 1 ? '' : 's'}`;
+            })()}
           </button>
           <select
             className="input"
@@ -2442,28 +2493,55 @@ function TasksBody({
         </ul>
       )}
 
-      {pickerFor ? (
-        <AssigneePickerDialog
-          options={pickerFor === 'draft' ? team : optionsFor(pickerTask ?? undefined)}
-          initial={
-            pickerFor === 'draft'
-              ? draftAssignees
-              : (pickerTask?.assignees.map((a) => a.employeeId) ?? [])
-          }
-          busy={busy}
-          onCancel={() => setPickerFor(null)}
-          onSave={(ids) => {
-            if (pickerFor === 'draft') {
-              setDraftAssignees(ids);
-              setPickerFor(null);
-            } else {
-              const id = pickerFor;
-              setPickerFor(null);
-              void changeAssignees(id, ids);
-            }
-          }}
-        />
-      ) : null}
+      {pickerFor
+        ? (() => {
+            // Source decides the picker's flavour: 'vendor' deliverables assign
+            // to project vendors; everything else (apar / untagged) to team
+            // members grouped by department (0073).
+            const isDraft = pickerFor === 'draft';
+            const source = isDraft ? draftSource : (pickerTask?.source ?? 'apar');
+            const mode: 'employee' | 'vendor' = source === 'vendor' ? 'vendor' : 'employee';
+
+            const options =
+              mode === 'vendor'
+                ? isDraft
+                  ? vendors
+                  : vendorOptionsFor(pickerTask ?? undefined)
+                : isDraft
+                  ? team
+                  : employeeOptionsFor(pickerTask ?? undefined);
+
+            const initial = isDraft
+              ? mode === 'vendor'
+                ? draftVendorAssignees
+                : draftAssignees
+              : (pickerTask?.assignees
+                  .filter((a) => (mode === 'vendor' ? a.kind === 'vendor' : a.kind === 'employee'))
+                  .map((a) => (mode === 'vendor' ? a.vendorId : a.employeeId))
+                  .filter((id): id is string => !!id) ?? []);
+
+            return (
+              <AssigneePickerDialog
+                mode={mode}
+                options={options}
+                initial={initial}
+                busy={busy}
+                onCancel={() => setPickerFor(null)}
+                onSave={(ids) => {
+                  if (isDraft) {
+                    if (mode === 'vendor') setDraftVendorAssignees(ids);
+                    else setDraftAssignees(ids);
+                    setPickerFor(null);
+                  } else {
+                    const id = pickerFor;
+                    setPickerFor(null);
+                    void changeAssignees(id, mode, ids);
+                  }
+                }}
+              />
+            );
+          })()
+        : null}
 
       {manageCats ? (
         <CategoryManagerModal
@@ -2480,25 +2558,40 @@ function firstName(full: string): string {
   return full.trim().split(/\s+/)[0] ?? full;
 }
 
+const NO_DEPARTMENT = 'No department';
+
+/** Department bucket key for grouping/filtering — null/blank → "No department". */
+function departmentKey(dept?: string | null): string {
+  return dept && dept.trim() ? dept.trim() : NO_DEPARTMENT;
+}
+
 /**
- * Multi-select assignee picker — same os-modal chrome + checkbox-list pattern
- * as AddTeamMatesDialog, but returns the full replacement set (deliverables
- * use replace-set semantics server-side).
+ * Multi-select assignee picker (0073). Returns the full replacement set
+ * (deliverables use per-kind replace-set semantics server-side).
+ *
+ * `mode` is driven by the deliverable's source: 'employee' offers the project
+ * team grouped by department, with a live search box and a department filter;
+ * 'vendor' offers the project's vendors as a flat, searchable list (vendors
+ * carry no department, so there is no grouping/filter UI).
  */
 function AssigneePickerDialog({
+  mode,
   options,
   initial,
   busy,
   onCancel,
   onSave,
 }: {
-  options: readonly EmployeeOption[];
+  mode: 'employee' | 'vendor';
+  options: readonly AssigneeOption[];
   initial: readonly string[];
   busy: boolean;
   onCancel: () => void;
-  onSave: (employeeIds: readonly string[]) => void;
+  onSave: (ids: readonly string[]) => void;
 }) {
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set(initial));
+  const [search, setSearch] = useState('');
+  const [deptFilter, setDeptFilter] = useState(''); // '' = all departments
 
   function toggle(id: string) {
     setSelected((prev) => {
@@ -2509,52 +2602,158 @@ function AssigneePickerDialog({
     });
   }
 
+  const isVendor = mode === 'vendor';
+  const q = search.trim().toLowerCase();
+
+  // Distinct departments present (employee mode only), "No department" last.
+  const departments = isVendor
+    ? []
+    : [...new Set(options.map((o) => departmentKey(o.department)))].sort((a, b) => {
+        if (a === NO_DEPARTMENT) return 1;
+        if (b === NO_DEPARTMENT) return -1;
+        return a.localeCompare(b);
+      });
+
+  const filtered = options.filter(
+    (o) =>
+      (q === '' || o.name.toLowerCase().includes(q)) &&
+      (isVendor || deptFilter === '' || departmentKey(o.department) === deptFilter),
+  );
+
+  // Group the filtered options by department (employee mode).
+  const groups = new Map<string, AssigneeOption[]>();
+  if (!isVendor) {
+    for (const o of filtered) {
+      const k = departmentKey(o.department);
+      const arr = groups.get(k) ?? [];
+      arr.push(o);
+      groups.set(k, arr);
+    }
+  }
+  const groupKeys = [...groups.keys()].sort((a, b) => {
+    if (a === NO_DEPARTMENT) return 1;
+    if (b === NO_DEPARTMENT) return -1;
+    return a.localeCompare(b);
+  });
+
+  const renderOption = (o: AssigneeOption) => (
+    <li key={o.id}>
+      <label
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 10,
+          padding: '7px 10px',
+          borderRadius: 8,
+          border: '1px solid var(--border)',
+          fontSize: 13,
+          cursor: 'pointer',
+          background: selected.has(o.id) ? 'var(--hover)' : 'transparent',
+        }}
+      >
+        <input
+          type="checkbox"
+          checked={selected.has(o.id)}
+          onChange={() => toggle(o.id)}
+          style={{ accentColor: 'var(--apar-red, #e63a1f)' }}
+        />
+        <span style={{ flex: 1 }}>{o.name}</span>
+      </label>
+    </li>
+  );
+
+  const listStyle = {
+    display: 'flex',
+    flexDirection: 'column' as const,
+    gap: 4,
+    listStyle: 'none' as const,
+    padding: 0,
+    margin: 0,
+  };
+
   return (
-    <Modal title="Assignees" onClose={onCancel} width={400}>
+    <Modal title={isVendor ? 'Vendor assignees' : 'Assignees'} onClose={onCancel} width={400}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: 18 }}>
         {options.length === 0 ? (
           <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0 }}>
-            No team mates yet — add people in the Team tab first.
+            {isVendor
+              ? 'No vendors on this project — add them in the Team tab.'
+              : 'No team mates yet — add people in the Team tab first.'}
           </p>
         ) : (
-          <ul
-            style={{
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 4,
-              listStyle: 'none',
-              padding: 0,
-              margin: 0,
-              maxHeight: 280,
-              overflowY: 'auto',
-            }}
-          >
-            {options.map((e) => (
-              <li key={e.id}>
-                <label
+          <>
+            {/* Search + (employee-only) department filter */}
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <div style={{ position: 'relative', flex: '1 1 160px' }}>
+                <span
                   style={{
+                    position: 'absolute',
+                    left: 8,
+                    top: '50%',
+                    transform: 'translateY(-50%)',
+                    color: 'var(--text-muted)',
                     display: 'flex',
-                    alignItems: 'center',
-                    gap: 10,
-                    padding: '7px 10px',
-                    borderRadius: 8,
-                    border: '1px solid var(--border)',
-                    fontSize: 13,
-                    cursor: 'pointer',
-                    background: selected.has(e.id) ? 'var(--hover)' : 'transparent',
                   }}
                 >
-                  <input
-                    type="checkbox"
-                    checked={selected.has(e.id)}
-                    onChange={() => toggle(e.id)}
-                    style={{ accentColor: 'var(--apar-red, #e63a1f)' }}
-                  />
-                  <span style={{ flex: 1 }}>{e.name}</span>
-                </label>
-              </li>
-            ))}
-          </ul>
+                  <Icon name="search" size={13} />
+                </span>
+                <input
+                  className="input"
+                  style={{ width: '100%', paddingLeft: 28 }}
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder={isVendor ? 'Search vendors…' : 'Search people…'}
+                  autoFocus
+                />
+              </div>
+              {!isVendor && departments.length > 1 ? (
+                <select
+                  className="input"
+                  style={{ flex: '0 1 150px' }}
+                  value={deptFilter}
+                  onChange={(e) => setDeptFilter(e.target.value)}
+                  title="Filter by department"
+                >
+                  <option value="">All departments</option>
+                  {departments.map((d) => (
+                    <option key={d} value={d}>
+                      {d}
+                    </option>
+                  ))}
+                </select>
+              ) : null}
+            </div>
+
+            <div style={{ maxHeight: 280, overflowY: 'auto' }}>
+              {filtered.length === 0 ? (
+                <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: '6px 2px' }}>
+                  No matches.
+                </p>
+              ) : isVendor ? (
+                <ul style={listStyle}>{filtered.map(renderOption)}</ul>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  {groupKeys.map((k) => (
+                    <div key={k} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                      <div
+                        style={{
+                          fontSize: 10.5,
+                          fontWeight: 700,
+                          color: 'var(--text-muted)',
+                          textTransform: 'uppercase',
+                          letterSpacing: '0.06em',
+                          padding: '2px 2px',
+                        }}
+                      >
+                        {k}
+                      </div>
+                      <ul style={listStyle}>{groups.get(k)!.map(renderOption)}</ul>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </>
         )}
         <div
           style={{
