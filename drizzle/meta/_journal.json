@@ -505,6 +505,13 @@
       "when": 1782900090000,
       "tag": "0071_payroll_grades",
       "breakpoints": true
+    },
+    {
+      "idx": 72,
+      "version": "7",
+      "when": 1783000090000,
+      "tag": "0072_project_vendors",
+      "breakpoints": true
     }
   ]
 }

@@ -12,7 +12,9 @@ import {
   projectMembers,
   projectTaskAssignees,
   projectTasks,
+  projectVendors,
   projects,
+  vendors,
 } from '@/lib/db/schema';
 import { AppError } from '@/lib/errors';
 import { requireCapability } from '@/lib/rbac';
@@ -181,6 +183,155 @@ export async function removeProjectMember(input: { id: string }): Promise<void> 
     entityId: row.projectId,
     action: 'delete',
     changes: { member_removed: { id } },
+  });
+}
+
+/* -------------------------------------------------------------------------- */
+/* Project vendors                                                            */
+/* -------------------------------------------------------------------------- */
+
+export type ProjectVendorRow = {
+  id: string;
+  vendorId: string;
+  vendorName: string;
+  role: string | null;
+};
+
+const ProjectVendorIdSchema = z.string().uuid();
+
+export async function listProjectVendors(projectId: string): Promise<readonly ProjectVendorRow[]> {
+  await getActorContext();
+  const parsedProjectId = z.string().uuid().parse(projectId);
+
+  const rows = await db
+    .select({
+      id: projectVendors.id,
+      vendorId: projectVendors.vendorId,
+      vendorName: vendors.name,
+      role: projectVendors.role,
+    })
+    .from(projectVendors)
+    .innerJoin(vendors, eq(vendors.id, projectVendors.vendorId))
+    .where(eq(projectVendors.projectId, parsedProjectId))
+    .orderBy(asc(vendors.name), asc(projectVendors.createdAt));
+
+  return rows.map(
+    (r): ProjectVendorRow => ({
+      id: r.id,
+      vendorId: r.vendorId,
+      vendorName: r.vendorName,
+      role: r.role,
+    }),
+  );
+}
+
+const AddProjectVendorSchema = z.object({
+  projectId: z.string().uuid(),
+  vendorId: z.string().uuid(),
+  role: z.string().max(500).nullable().optional(),
+});
+
+export async function addProjectVendor(input: {
+  projectId: string;
+  vendorId: string;
+  role?: string | null;
+}): Promise<ProjectVendorRow> {
+  const ctx = await getActorContext();
+  requireCapability(ctx, 'update_client');
+  const parsed = AddProjectVendorSchema.parse(input);
+  const role = parsed.role?.trim() ? parsed.role.trim() : null;
+
+  // Upsert-safe: ignore the UNIQUE(project_id, vendor_id) collision so a
+  // repeat add is a no-op that still returns the existing row.
+  const inserted = await db
+    .insert(projectVendors)
+    .values({
+      projectId: parsed.projectId,
+      vendorId: parsed.vendorId,
+      role,
+      createdBy: ctx.userId,
+    })
+    .onConflictDoNothing({
+      target: [projectVendors.projectId, projectVendors.vendorId],
+    })
+    .returning({ id: projectVendors.id });
+
+  const linkId =
+    inserted[0]?.id ??
+    (
+      await db
+        .select({ id: projectVendors.id })
+        .from(projectVendors)
+        .where(
+          and(
+            eq(projectVendors.projectId, parsed.projectId),
+            eq(projectVendors.vendorId, parsed.vendorId),
+          ),
+        )
+        .limit(1)
+    )[0]?.id;
+
+  if (!linkId) {
+    throw new AppError('internal', 'project_vendors insert returned no row');
+  }
+
+  const [row] = await db
+    .select({
+      id: projectVendors.id,
+      vendorId: projectVendors.vendorId,
+      vendorName: vendors.name,
+      role: projectVendors.role,
+    })
+    .from(projectVendors)
+    .innerJoin(vendors, eq(vendors.id, projectVendors.vendorId))
+    .where(eq(projectVendors.id, linkId))
+    .limit(1);
+
+  if (!row) {
+    throw new AppError('not_found', 'Project vendor not found after insert.', {
+      detail: { id: linkId },
+    });
+  }
+
+  // Only log when a new link was actually created (not on a no-op).
+  if (inserted.length > 0) {
+    await logAudit({
+      actorId: ctx.userId,
+      entityType: 'project',
+      entityId: parsed.projectId,
+      action: 'insert',
+      changes: {
+        vendor_added: { id: linkId, vendor_id: parsed.vendorId, role },
+      },
+    });
+  }
+
+  return {
+    id: row.id,
+    vendorId: row.vendorId,
+    vendorName: row.vendorName,
+    role: row.role,
+  };
+}
+
+export async function removeProjectVendor(input: { id: string }): Promise<void> {
+  const ctx = await getActorContext();
+  requireCapability(ctx, 'update_client');
+  const id = ProjectVendorIdSchema.parse(input.id);
+
+  const [row] = await db
+    .delete(projectVendors)
+    .where(eq(projectVendors.id, id))
+    .returning({ id: projectVendors.id, projectId: projectVendors.projectId });
+
+  if (!row) return; // idempotent: already gone
+
+  await logAudit({
+    actorId: ctx.userId,
+    entityType: 'project',
+    entityId: row.projectId,
+    action: 'delete',
+    changes: { vendor_removed: { id } },
   });
 }
 
