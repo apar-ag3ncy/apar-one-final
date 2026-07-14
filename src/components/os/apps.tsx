@@ -337,9 +337,17 @@ export function ClientsApp({
                         }}
                       />
                     ) : (
+                      // Square with slight radius — matches the uploaded-logo
+                      // tile above so the directory reads consistently (§8).
                       <div
                         className="avatar"
-                        style={{ width: 28, height: 28, fontSize: 11, background: c.tone }}
+                        style={{
+                          width: 28,
+                          height: 28,
+                          fontSize: 11,
+                          background: c.tone,
+                          borderRadius: 6,
+                        }}
                       >
                         {c.logo}
                       </div>
@@ -1497,9 +1505,17 @@ export function ProjectsApp({
                   </div>
                   <div className="name">{p.name}</div>
                   <div className="meta">
+                    {/* Square with slight radius — board-card marks render
+                        square across the OS, never circular (§8). */}
                     <div
                       className="avatar"
-                      style={{ width: 18, height: 18, fontSize: 8, background: '#7A4E2D' }}
+                      style={{
+                        width: 18,
+                        height: 18,
+                        fontSize: 8,
+                        background: '#7A4E2D',
+                        borderRadius: 5,
+                      }}
                     >
                       {p.lead}
                     </div>

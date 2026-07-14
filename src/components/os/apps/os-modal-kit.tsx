@@ -5,7 +5,7 @@
 // Modal / ConfirmDialog / Field primitives without importing the whole
 // apps.tsx module graph.
 
-import { useEffect, type ReactNode } from 'react';
+import { useEffect, useId, useState, type ReactNode } from 'react';
 
 import { Icon } from '../icons';
 
@@ -92,6 +92,98 @@ export function ConfirmDialog({
             onClick={onConfirm}
           >
             {confirmLabel}
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+/**
+ * Destructive confirmation that requires literally typing a keyword (default
+ * "delete") before the confirm button enables. Reserved for PERMANENT,
+ * unrecoverable deletions — soft-deletes keep the plain ConfirmDialog.
+ */
+export function TypeToConfirmDialog({
+  title,
+  message,
+  keyword = 'delete',
+  confirmLabel = 'Delete permanently',
+  cancelLabel = 'Cancel',
+  busy = false,
+  onConfirm,
+  onCancel,
+}: {
+  title: string;
+  message: ReactNode;
+  /** The word the user must type, compared case-insensitively. */
+  keyword?: string;
+  confirmLabel?: string;
+  cancelLabel?: string;
+  /** Disables both buttons while the deletion runs. */
+  busy?: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  const [typed, setTyped] = useState('');
+  const inputId = useId();
+  const armed = typed.trim().toLowerCase() === keyword.toLowerCase();
+
+  return (
+    <Modal title={title} onClose={busy ? () => {} : onCancel} width={440}>
+      <div className="os-form">
+        <div
+          style={{
+            padding: '4px 2px 12px',
+            color: 'var(--text-muted)',
+            fontSize: 13,
+            lineHeight: 1.5,
+          }}
+        >
+          {message}
+        </div>
+        <label
+          htmlFor={inputId}
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 4,
+            paddingBottom: 12,
+            fontSize: 12,
+            color: 'var(--text-muted)',
+          }}
+        >
+          <span>
+            Type <strong style={{ color: 'var(--text)' }}>{keyword}</strong> to confirm
+          </span>
+          <input
+            id={inputId}
+            className="input"
+            autoFocus
+            autoComplete="off"
+            spellCheck={false}
+            placeholder={keyword}
+            value={typed}
+            disabled={busy}
+            onChange={(e) => setTyped(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && armed && !busy) onConfirm();
+            }}
+          />
+        </label>
+        <div className="os-form-actions">
+          <button type="button" className="btn" onClick={onCancel} disabled={busy}>
+            {cancelLabel}
+          </button>
+          <button
+            type="button"
+            className="btn primary"
+            style={{ background: 'var(--apar-red-deep)', borderColor: 'transparent' }}
+            onClick={onConfirm}
+            disabled={!armed || busy}
+            title={armed ? undefined : `Type "${keyword}" to enable`}
+          >
+            {busy ? 'Deleting…' : confirmLabel}
           </button>
         </div>
       </div>

@@ -40,6 +40,11 @@ import {
 import type { Client } from '@/components/clients/types';
 import { osActions } from '@/lib/os/store';
 import { navigateBesideFocused } from './navigate';
+import {
+  openDocumentWindow,
+  openInvoiceForTransaction,
+  openTransactionOrInvoice,
+} from './open-invoice';
 
 export type ClientWindowProps = {
   clientId: string;
@@ -240,10 +245,20 @@ export function ClientWindow({ clientId, onClose }: ClientWindowProps) {
           />
         ) : null}
         {tab === 'invoices' ? (
-          <ClientInvoicesSection clientId={client.id} clientName={client.name} />
+          <ClientInvoicesSection
+            clientId={client.id}
+            clientName={client.name}
+            onOpenInvoice={openDocumentWindow}
+          />
         ) : null}
         {tab === 'transactions' ? (
-          <ClientPaymentsSection clientId={client.id} clientName={client.name} />
+          <ClientPaymentsSection
+            clientId={client.id}
+            clientName={client.name}
+            onOpenInvoice={(invoiceTxnId, documentNumber) =>
+              void openInvoiceForTransaction(invoiceTxnId, documentNumber)
+            }
+          />
         ) : null}
         {tab === 'expenses' ? (
           <ClientExpensesOnBehalfSection clientId={client.id} clientName={client.name} />
@@ -574,10 +589,9 @@ function Header({
 
 function OverviewBody({ client, contacts }: { client: Client; contacts: readonly ContactRow[] }) {
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
       <Kpi label="Contacts" value={String(contacts.length)} />
       <Kpi label="Projects" value={String(client.projectsCount)} />
-      <Kpi label="Documents" value={String(client.documentsCount)} />
       <OsCard title="Profile">
         <DetailGrid
           items={[
@@ -762,14 +776,9 @@ function ClientLedgerBody({ clientId }: { clientId: string }) {
       noun="ledger entries"
       balanceMeaning="Positive = client owes us (Trade Receivables 1200)"
       exportName={`client-ledger-${clientId}`}
-      onSelectTransaction={(txnId) =>
-        osActions.openWindow({
-          app: 'transactions',
-          entityId: txnId,
-          title: 'Transaction',
-          position: 'beside-focused',
-        })
-      }
+      // Invoice lines open the invoice PDF itself; everything else opens the
+      // plain transaction window.
+      onSelectTransaction={(txnId, kind) => openTransactionOrInvoice(txnId, kind)}
     />
   );
 }
