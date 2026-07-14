@@ -22,7 +22,12 @@ import {
   listDepartments as listDbDepartments,
   resolveDocumentUrl,
 } from '@/lib/server-stub/entity-actions';
-import { departmentLabel, type Employee as HrEmployee } from '@/components/employees/types';
+import {
+  departmentLabel,
+  payrollGradeKind,
+  PAYROLL_GRADE_GROUPS,
+  type Employee as HrEmployee,
+} from '@/components/employees/types';
 import {
   ACCENTS,
   DOCK_GAP_MAX,
@@ -1672,6 +1677,7 @@ export function EmployeesApp({
   const [filterDept, setFilterDept] = useState('all');
   const [filterStatus, setFilterStatus] = useState<'all' | EmpStatusUi>('all');
   const [filterType, setFilterType] = useState('all');
+  const [filterGrade, setFilterGrade] = useState('all');
   const [sortBy, setSortBy] = useState<'name' | 'joined' | 'dept'>('name');
   const [showInactive, setShowInactive] = useState(false);
   const [showNew, setShowNew] = useState(false);
@@ -1780,6 +1786,13 @@ export function EmployeesApp({
     .filter((e) => (showInactive || filterStatus === 'separated' ? true : e.status !== 'separated'))
     .filter((e) => (filterStatus === 'all' ? true : e.status === filterStatus))
     .filter((e) => (filterType === 'all' ? true : e.employmentType === filterType))
+    .filter((e) =>
+      filterGrade === 'all'
+        ? true
+        : filterGrade === 'ungraded'
+          ? !e.payrollGrade
+          : e.payrollGrade === filterGrade,
+    )
     .filter((e) => (filterDept === 'all' ? true : departmentLabel(e.department) === filterDept))
     .filter((e) =>
       q === ''
@@ -1940,7 +1953,31 @@ export function EmployeesApp({
                 {ATT_LABEL[att]}
               </span>
             ) : null}
-            <div className="role">{e.designation || '—'}</div>
+            <div className="role" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span>{e.designation || '—'}</span>
+              {/* Payroll grade badge (§1.1) — the implied type on hover. */}
+              {e.payrollGrade ? (
+                <span
+                  title={`Payroll grade — ${payrollGradeKind(e.payrollGrade)}`}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    fontSize: 9.5,
+                    fontWeight: 700,
+                    letterSpacing: '0.05em',
+                    padding: '1px 6px',
+                    borderRadius: 999,
+                    border: '1px solid var(--border)',
+                    color: 'var(--text-muted)',
+                    background: 'var(--content-2)',
+                    whiteSpace: 'nowrap',
+                    flexShrink: 0,
+                  }}
+                >
+                  {e.payrollGrade}
+                </span>
+              ) : null}
+            </div>
             <div className="dept">
               {departmentLabel(e.department)} ·{' '}
               {EMP_TYPE_LABEL[e.employmentType] ?? e.employmentType}
@@ -2166,6 +2203,24 @@ export function EmployeesApp({
           <option value="part_time">Part-time</option>
           <option value="contractor">Contractor</option>
           <option value="intern">Intern</option>
+        </select>
+        <select
+          className="input"
+          value={filterGrade}
+          onChange={(e) => setFilterGrade(e.target.value)}
+          aria-label="Filter by payroll grade"
+        >
+          <option value="all">All grades</option>
+          <option value="ungraded">No grade</option>
+          {PAYROLL_GRADE_GROUPS.map((g) => (
+            <optgroup key={g.label} label={g.label}>
+              {g.grades.map((grade) => (
+                <option key={grade} value={grade}>
+                  {grade}
+                </option>
+              ))}
+            </optgroup>
+          ))}
         </select>
         <select
           className="input"
