@@ -6,7 +6,7 @@
 // shared section components from `@/components/entity/` so behaviour stays
 // in sync with the dashboard.
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 import { ActivityFeed } from '@/components/entity/activity-feed';
 import { EntityRef } from '@/components/entity/entity-ref';
@@ -28,16 +28,21 @@ import {
   getProject,
   listProjectTransactions,
   listEmployees,
+  listVendors,
 } from '@/lib/server-stub/entity-actions';
 import {
   listProjectMembers,
   addProjectMember,
   removeProjectMember,
+  listProjectVendors,
+  addProjectVendor,
+  removeProjectVendor,
   listProjectTasks,
   createProjectTask,
   updateProjectTask,
   deleteProjectTask,
   type ProjectMemberRow,
+  type ProjectVendorRow,
   type ProjectTaskAssignee,
   type ProjectTaskRow,
   type ProjectTaskStatus,
@@ -51,6 +56,7 @@ import {
 import {
   createProject,
   listSubProjects,
+  updateProject,
   type ProjectListRow,
 } from '@/lib/server/entities/projects';
 import {
@@ -72,9 +78,10 @@ import { toast } from 'sonner';
 import { osActions } from '@/lib/os/store';
 import { navigateBesideFocused } from './navigate';
 import { Modal } from './os-modal-kit';
-import { ProjectFormModal } from './project-form-modal';
+import { ProjectFormModal, type ProjectFormSubmit } from './project-form-modal';
 
 type EmployeeOption = { id: string; name: string };
+type VendorOption = { id: string; name: string };
 
 export type ProjectWindowProps = {
   projectId: string;
@@ -169,6 +176,27 @@ export function ProjectWindow({ projectId, onClose }: ProjectWindowProps) {
     };
   }, [projectId, reloadKey]);
 
+  // The money feed is loaded ONCE when the window opens, but transactions are
+  // recorded from other windows (receipts, payments, journals) while this one
+  // stays open. Refetch just the feed — no full-window "loading" flash —
+  // whenever the Transactions tab becomes active, and on the manual Refresh
+  // button in that tab.
+  const refreshFeed = useCallback(async () => {
+    try {
+      const feed = await listProjectTransactions(projectId);
+      setState((prev) => (prev.kind === 'ready' ? { ...prev, feed } : prev));
+    } catch {
+      /* non-fatal — keep showing the last-known feed */
+    }
+  }, [projectId]);
+
+  useEffect(() => {
+    if (tab !== 'transactions') return;
+    // Deferred via microtask so the lint doesn't see a synchronous setState
+    // inside the effect body (same idiom as the loaders above).
+    queueMicrotask(() => void refreshFeed());
+  }, [tab, refreshFeed]);
+
   if (state.kind === 'loading') {
     return <div style={{ padding: 24, color: 'var(--text-muted)' }}>Loading project…</div>;
   }
@@ -195,6 +223,7 @@ export function ProjectWindow({ projectId, onClose }: ProjectWindowProps) {
         subs={subs}
         canEdit={canEdit}
         onStatusChanged={() => setReloadKey((k) => k + 1)}
+        onEdited={() => setReloadKey((k) => k + 1)}
       />
       <div className="tabs">
         {tabs.map((t) => (
@@ -233,7 +262,9 @@ export function ProjectWindow({ projectId, onClose }: ProjectWindowProps) {
             onChanged={() => setReloadKey((k) => k + 1)}
           />
         ) : null}
-        {tab === 'transactions' ? <TransactionsBody project={project} feed={feed} /> : null}
+        {tab === 'transactions' ? (
+          <TransactionsBody project={project} feed={feed} onRefresh={refreshFeed} />
+        ) : null}
         {tab === 'documents' ? (
           <DocumentsSection
             entityType="project"
@@ -267,13 +298,41 @@ function Header({
   subs,
   canEdit,
   onStatusChanged,
+  onEdited,
 }: {
   project: Project;
   subs: readonly ProjectListRow[];
   canEdit: boolean;
   onStatusChanged?: () => void;
+  onEdited?: () => void;
 }) {
+  const [showEdit, setShowEdit] = useState(false);
   const tone = PROJECT_STATUS_TONE[project.status];
+
+  // Same guarded patch as ProjectsApp.updateProjectAction: the col↔status map
+  // is lossy (won→Proposed→pitch, cancelled→Completed→completed) so status is
+  // only sent when the column actually changed, and a blank/unchanged fee or
+  // code never overwrites the stored value.
+  async function submitEdit(input: ProjectFormSubmit) {
+    try {
+      await updateProject(project.id, {
+        name: input.name,
+        clientId: input.clientId,
+        leadEmployeeId: input.leadEmployeeId ?? null,
+        clientContactId: input.clientContactId ?? null,
+        ...(input.code && input.code !== project.code ? { code: input.code } : {}),
+        ...(input.col !== dbStatusToCol(project.dbStatus)
+          ? { status: colToDbStatus(input.col) }
+          : {}),
+        ...(input.fee !== project.feePaise ? { feePaise: input.fee } : {}),
+      });
+      toast.success('Project updated.');
+      setShowEdit(false);
+      onEdited?.();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Update failed');
+    }
+  }
   // A parent counts as linked when any of its sub-projects is (item 7).
   const linkedTotal =
     project.linkedInvoiceCount + subs.reduce((acc, s) => acc + s.linkedInvoiceCount, 0);
@@ -364,13 +423,46 @@ function Header({
         </div>
       </div>
       {canEdit ? (
-        <div style={{ flexShrink: 0 }}>
+        <div style={{ flexShrink: 0, display: 'flex', gap: 8, alignItems: 'center' }}>
+          <button
+            className="btn"
+            type="button"
+            title="Edit project details"
+            onClick={() => setShowEdit(true)}
+          >
+            <Icon name="edit" size={13} />
+            Edit
+          </button>
           <ProjectStatusChanger
             projectId={project.id}
             value={project.dbStatus}
             onChanged={onStatusChanged}
           />
         </div>
+      ) : null}
+      {showEdit ? (
+        <ProjectFormModal
+          mode="edit"
+          initial={{
+            id: project.id,
+            code: project.code,
+            name: project.name,
+            client: project.clientName,
+            clientId: project.clientId,
+            lead: initials(project.leadName),
+            leadEmployeeId: project.leadEmployeeId,
+            clientContactId: project.clientContactId,
+            clientContactName: project.clientContactName,
+            col: dbStatusToCol(project.dbStatus),
+            fee: project.feePaise,
+            parentProjectId: project.parentProjectId,
+            subProjectCount: project.subProjectCount,
+          }}
+          defaultCol={dbStatusToCol(project.dbStatus)}
+          onClose={() => setShowEdit(false)}
+          onSubProjectsChanged={onEdited}
+          onSubmit={(input) => void submitEdit(input)}
+        />
       ) : null}
     </div>
   );
@@ -597,10 +689,46 @@ function OverviewBody({
 /* Transactions                                                                */
 /* -------------------------------------------------------------------------- */
 
-function TransactionsBody({ project, feed }: { project: Project; feed: Feed }) {
+function TransactionsBody({
+  project,
+  feed,
+  onRefresh,
+}: {
+  project: Project;
+  feed: Feed;
+  onRefresh: () => Promise<void>;
+}) {
   const net = feed.incomePaise - feed.spendPaise;
+  const [refreshing, setRefreshing] = useState(false);
+
+  async function refresh() {
+    if (refreshing) return;
+    setRefreshing(true);
+    try {
+      await onRefresh();
+    } finally {
+      setRefreshing(false);
+    }
+  }
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+          {feed.transactions.length} transaction{feed.transactions.length === 1 ? '' : 's'}
+        </span>
+        <div style={{ flex: 1 }} />
+        <button
+          className="btn"
+          type="button"
+          title="Refresh transactions"
+          aria-label="Refresh transactions"
+          onClick={() => void refresh()}
+          disabled={refreshing}
+        >
+          <Icon name="refresh" size={13} />
+        </button>
+      </div>
       <div
         style={{
           display: 'grid',
@@ -1000,8 +1128,11 @@ function LinkInvoiceDialog({
 function TeamBody({ projectId, canEdit }: { projectId: string; canEdit: boolean }) {
   const [members, setMembers] = useState<readonly ProjectMemberRow[]>([]);
   const [employees, setEmployees] = useState<readonly EmployeeOption[]>([]);
+  const [vendorLinks, setVendorLinks] = useState<readonly ProjectVendorRow[]>([]);
+  const [vendorOptions, setVendorOptions] = useState<readonly VendorOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [vendorPickerOpen, setVendorPickerOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -1010,11 +1141,19 @@ function TeamBody({ projectId, canEdit }: { projectId: string; canEdit: boolean 
     queueMicrotask(() => {
       if (!cancelled) setLoading(true);
     });
-    Promise.all([listProjectMembers(projectId), listEmployees()])
-      .then(([m, emps]) => {
+    Promise.all([
+      listProjectMembers(projectId),
+      listEmployees(),
+      listProjectVendors(projectId),
+      // Picker options only — archived vendors are excluded by default.
+      listVendors().catch(() => []),
+    ])
+      .then(([m, emps, pv, vs]) => {
         if (cancelled) return;
         setMembers(m);
         setEmployees(emps.map((e) => ({ id: e.id, name: e.fullName })));
+        setVendorLinks(pv);
+        setVendorOptions(vs.map((v) => ({ id: v.id, name: v.name })));
         setLoading(false);
       })
       .catch((e: unknown) => {
@@ -1029,6 +1168,8 @@ function TeamBody({ projectId, canEdit }: { projectId: string; canEdit: boolean 
 
   const memberIds = new Set(members.map((m) => m.employeeId));
   const available = employees.filter((e) => !memberIds.has(e.id));
+  const linkedVendorIds = new Set(vendorLinks.map((v) => v.vendorId));
+  const availableVendors = vendorOptions.filter((v) => !linkedVendorIds.has(v.id));
 
   async function addMany(employeeIds: readonly string[]) {
     if (employeeIds.length === 0 || busy) return;
@@ -1060,6 +1201,41 @@ function TeamBody({ projectId, canEdit }: { projectId: string; canEdit: boolean 
       setMembers((prev) => prev.filter((m) => m.id !== id));
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Failed to remove member');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function addVendors(vendorIds: readonly string[], role: string) {
+    if (vendorIds.length === 0 || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const rows = await Promise.all(
+        vendorIds.map((vendorId) => addProjectVendor({ projectId, vendorId, role: role || null })),
+      );
+      setVendorLinks((prev) => {
+        const seen = new Set(prev.map((v) => v.id));
+        const merged = [...prev, ...rows.filter((r) => !seen.has(r.id))];
+        return merged.sort((a, b) => a.vendorName.localeCompare(b.vendorName));
+      });
+      setVendorPickerOpen(false);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Failed to add vendors');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function removeVendor(id: string) {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await removeProjectVendor({ id });
+      setVendorLinks((prev) => prev.filter((v) => v.id !== id));
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Failed to remove vendor');
     } finally {
       setBusy(false);
     }
@@ -1159,6 +1335,253 @@ function TeamBody({ projectId, canEdit }: { projectId: string; canEdit: boolean 
           ))}
         </ul>
       )}
+
+      {/* Vendors — supplier-side counterpart of the members list (§4.3). */}
+      <div
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 8,
+          borderTop: '1px solid var(--border)',
+          paddingTop: 14,
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <h3
+            style={{
+              fontSize: 11,
+              color: 'var(--text-muted)',
+              textTransform: 'uppercase',
+              letterSpacing: '0.06em',
+              fontWeight: 600,
+              margin: 0,
+            }}
+          >
+            Vendors{vendorLinks.length > 0 ? ` (${vendorLinks.length})` : ''}
+          </h3>
+          <div style={{ flex: 1 }} />
+          {canEdit ? (
+            <button
+              className="btn"
+              type="button"
+              onClick={() => setVendorPickerOpen(true)}
+              disabled={busy || availableVendors.length === 0}
+              title={
+                availableVendors.length === 0
+                  ? 'Every vendor is already on this project.'
+                  : undefined
+              }
+            >
+              <Icon name="plus" size={13} />
+              Add vendor
+            </button>
+          ) : null}
+        </div>
+
+        {vendorLinks.length === 0 ? (
+          <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0 }}>
+            No vendors attached to this project yet.
+          </p>
+        ) : (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {vendorLinks.map((v) => (
+              <span
+                key={v.id}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  padding: '5px 10px',
+                  borderRadius: 999,
+                  border: '1px solid var(--border)',
+                  fontSize: 12.5,
+                }}
+              >
+                <EntityRef
+                  type="vendor"
+                  id={v.vendorId}
+                  label={v.vendorName}
+                  hideIcon
+                  onNavigate={navigateBesideFocused}
+                />
+                {v.role ? (
+                  <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{v.role}</span>
+                ) : null}
+                {canEdit ? (
+                  <button
+                    className="btn row-action row-delete"
+                    type="button"
+                    title="Remove vendor"
+                    onClick={() => void removeVendor(v.id)}
+                    disabled={busy}
+                  >
+                    <Icon name="close" size={11} />
+                  </button>
+                ) : null}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {vendorPickerOpen ? (
+        <AddVendorsDialog
+          available={availableVendors}
+          busy={busy}
+          onCancel={() => setVendorPickerOpen(false)}
+          onAdd={(ids, role) => void addVendors(ids, role)}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * "Add vendor" popup — multi-select over the vendors not yet on the project,
+ * same os-modal chrome + checkbox-list pattern as AddTeamMatesDialog, plus an
+ * optional free-text role applied to everyone being added.
+ */
+function AddVendorsDialog({
+  available,
+  busy,
+  onCancel,
+  onAdd,
+}: {
+  available: readonly VendorOption[];
+  busy: boolean;
+  onCancel: () => void;
+  onAdd: (vendorIds: readonly string[], role: string) => void;
+}) {
+  const [query, setQuery] = useState('');
+  const [role, setRole] = useState('');
+  const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onCancel();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onCancel]);
+
+  const q = query.trim().toLowerCase();
+  const filtered = q ? available.filter((v) => v.name.toLowerCase().includes(q)) : available;
+
+  function toggle(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  return (
+    <div className="os-modal-overlay" onMouseDown={onCancel}>
+      <div className="os-modal" style={{ width: 440 }} onMouseDown={(e) => e.stopPropagation()}>
+        <div className="os-modal-head">
+          <div className="font-display" style={{ fontSize: 18 }}>
+            Add vendors
+          </div>
+          <button className="btn" type="button" onClick={onCancel} aria-label="Close">
+            <Icon name="close" size={13} />
+          </button>
+        </div>
+        <div className="os-modal-body">
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: 18 }}>
+            <input
+              className="input"
+              autoFocus
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search vendors…"
+            />
+
+            {filtered.length === 0 ? (
+              <p
+                style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0, padding: '8px 2px' }}
+              >
+                {available.length === 0
+                  ? 'Every vendor is already on this project.'
+                  : `No vendors match “${query}”.`}
+              </p>
+            ) : (
+              <ul
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 4,
+                  listStyle: 'none',
+                  padding: 0,
+                  margin: 0,
+                  maxHeight: 240,
+                  overflowY: 'auto',
+                }}
+              >
+                {filtered.map((v) => (
+                  <li key={v.id}>
+                    <label
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 10,
+                        padding: '7px 10px',
+                        borderRadius: 8,
+                        border: '1px solid var(--border)',
+                        fontSize: 13,
+                        cursor: 'pointer',
+                        background: selected.has(v.id) ? 'var(--hover)' : 'transparent',
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selected.has(v.id)}
+                        onChange={() => toggle(v.id)}
+                        style={{ accentColor: 'var(--accent, #4a72ff)' }}
+                      />
+                      <span style={{ flex: 1 }}>{v.name}</span>
+                    </label>
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            <input
+              className="input"
+              value={role}
+              onChange={(e) => setRole(e.target.value)}
+              placeholder="Role (optional), e.g. printer — applies to everyone added"
+            />
+
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'flex-end',
+                gap: 8,
+                paddingTop: 6,
+                borderTop: '1px solid var(--border)',
+              }}
+            >
+              <button className="btn" type="button" onClick={onCancel} disabled={busy}>
+                Cancel
+              </button>
+              <button
+                className="btn primary"
+                type="button"
+                onClick={() => onAdd([...selected], role.trim())}
+                disabled={busy || selected.size === 0}
+              >
+                <Icon name="plus" size={13} />
+                {busy
+                  ? 'Adding…'
+                  : selected.size === 0
+                    ? 'Add vendors'
+                    : `Add ${selected.size} vendor${selected.size === 1 ? '' : 's'}`}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
