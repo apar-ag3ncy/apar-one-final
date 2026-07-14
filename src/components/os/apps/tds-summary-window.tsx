@@ -17,6 +17,9 @@ import {
   useReportData,
   type ExportFormat,
 } from './report-window-kit';
+import { SortHeader, useSortedRows, useTableSort } from './table-sort';
+
+type TdsSortKey = 'month' | 'receivable' | 'payable';
 
 function monthLabel(m: string): string {
   const [y, mo] = m.split('-');
@@ -35,6 +38,13 @@ export function TdsSummaryWindow() {
     () => getTdsSummary({ from: fromDate, to: toDate }),
     [fromDate, toDate],
   );
+
+  const { sort, toggle } = useTableSort<TdsSortKey>();
+  const sortedRows = useSortedRows(data?.rows ?? [], sort, {
+    month: (r) => r.month,
+    receivable: (r) => r.receivablePaise,
+    payable: (r) => r.payablePaise,
+  });
 
   function handleExport(format: ExportFormat) {
     if (!data) return;
@@ -79,13 +89,27 @@ export function TdsSummaryWindow() {
           <table className="table">
             <thead>
               <tr>
-                <th>Month</th>
-                <th style={{ textAlign: 'right' }}>TDS receivable</th>
-                <th style={{ textAlign: 'right' }}>TDS payable</th>
+                <SortHeader label="Month" sortKey="month" sort={sort} onSort={toggle} />
+                <SortHeader
+                  label="TDS receivable"
+                  sortKey="receivable"
+                  sort={sort}
+                  onSort={toggle}
+                  align="right"
+                  style={{ textAlign: 'right' }}
+                />
+                <SortHeader
+                  label="TDS payable"
+                  sortKey="payable"
+                  sort={sort}
+                  onSort={toggle}
+                  align="right"
+                  style={{ textAlign: 'right' }}
+                />
               </tr>
             </thead>
             <tbody>
-              {data.rows.map((r) => (
+              {sortedRows.map((r) => (
                 <tr key={r.month}>
                   <td>{monthLabel(r.month)}</td>
                   <td

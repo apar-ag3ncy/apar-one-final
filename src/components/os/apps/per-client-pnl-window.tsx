@@ -21,6 +21,9 @@ import type { PerClientPnLRow } from '@/lib/server-stub/ledger-types';
 import { exportRows, paiseToRupees, type ExportFormat } from '@/lib/client/export-rows';
 import { navigateBesideFocused } from './navigate';
 import { OsExportButtons } from './report-window-kit';
+import { SortHeader, useSortedRows, useTableSort } from './table-sort';
+
+type PnlSortKey = 'client' | 'revenue' | 'cost' | 'margin' | 'marginpct' | 'txns';
 
 function currentFyDefaults(): { fromDate: string; toDate: string } {
   const today = new Date();
@@ -72,6 +75,17 @@ export function PerClientPnLWindow() {
       { revenue: 0n, cost: 0n, margin: 0n, txns: 0 },
     );
   }, [rows]);
+
+  const { sort, toggle } = useTableSort<PnlSortKey>();
+  const sortedRows = useSortedRows(rows ?? [], sort, {
+    client: (r) => r.clientName,
+    revenue: (r) => r.revenuePaise,
+    cost: (r) => r.directCostPaise,
+    margin: (r) => r.grossMarginPaise,
+    marginpct: (r) =>
+      r.revenuePaise === 0n ? null : Number((r.grossMarginPaise * 10000n) / r.revenuePaise) / 100,
+    txns: (r) => r.txnCount,
+  });
 
   function handleExport(format: ExportFormat) {
     if (!rows) return;
@@ -152,16 +166,51 @@ export function PerClientPnLWindow() {
           <table className="table">
             <thead>
               <tr>
-                <th>Client</th>
-                <th style={{ textAlign: 'right' }}>Revenue</th>
-                <th style={{ textAlign: 'right' }}>Direct cost</th>
-                <th style={{ textAlign: 'right' }}>Gross margin</th>
-                <th style={{ textAlign: 'right' }}>Margin %</th>
-                <th style={{ textAlign: 'right' }}>Txns</th>
+                <SortHeader label="Client" sortKey="client" sort={sort} onSort={toggle} />
+                <SortHeader
+                  label="Revenue"
+                  sortKey="revenue"
+                  sort={sort}
+                  onSort={toggle}
+                  align="right"
+                  style={{ textAlign: 'right' }}
+                />
+                <SortHeader
+                  label="Direct cost"
+                  sortKey="cost"
+                  sort={sort}
+                  onSort={toggle}
+                  align="right"
+                  style={{ textAlign: 'right' }}
+                />
+                <SortHeader
+                  label="Gross margin"
+                  sortKey="margin"
+                  sort={sort}
+                  onSort={toggle}
+                  align="right"
+                  style={{ textAlign: 'right' }}
+                />
+                <SortHeader
+                  label="Margin %"
+                  sortKey="marginpct"
+                  sort={sort}
+                  onSort={toggle}
+                  align="right"
+                  style={{ textAlign: 'right' }}
+                />
+                <SortHeader
+                  label="Txns"
+                  sortKey="txns"
+                  sort={sort}
+                  onSort={toggle}
+                  align="right"
+                  style={{ textAlign: 'right' }}
+                />
               </tr>
             </thead>
             <tbody>
-              {rows.map((r) => {
+              {sortedRows.map((r) => {
                 const positive = r.grossMarginPaise >= 0n;
                 const pct =
                   r.revenuePaise === 0n

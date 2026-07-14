@@ -22,6 +22,9 @@ import {
   useReportData,
   type ExportFormat,
 } from './report-window-kit';
+import { SortHeader, useSortedRows, useTableSort } from './table-sort';
+
+type RegisterSortKey = 'date' | 'doc' | 'party' | 'project' | 'taxable' | 'gst' | 'total';
 
 function RegisterWindow({
   title,
@@ -46,6 +49,17 @@ function RegisterWindow({
     () => fetcher({ from: fromDate, to: toDate }),
     [fromDate, toDate],
   );
+
+  const { sort, toggle } = useTableSort<RegisterSortKey>();
+  const sortedRows = useSortedRows(data?.rows ?? [], sort, {
+    date: (r) => r.txnDate,
+    doc: (r) => r.documentNumber,
+    party: (r) => r.partyName,
+    project: (r) => r.projectName,
+    taxable: (r) => r.taxablePaise,
+    gst: (r) => r.gstPaise,
+    total: (r) => r.totalPaise,
+  });
 
   function handleExport(format: ExportFormat) {
     if (!data) return;
@@ -94,17 +108,38 @@ function RegisterWindow({
         <table className="table">
           <thead>
             <tr>
-              <th>Date</th>
-              <th>{docLabel}</th>
-              <th>{partyLabel}</th>
-              <th>Project</th>
-              <th style={{ textAlign: 'right' }}>Taxable</th>
-              <th style={{ textAlign: 'right' }}>GST</th>
-              <th style={{ textAlign: 'right' }}>Total</th>
+              <SortHeader label="Date" sortKey="date" sort={sort} onSort={toggle} />
+              <SortHeader label={docLabel} sortKey="doc" sort={sort} onSort={toggle} />
+              <SortHeader label={partyLabel} sortKey="party" sort={sort} onSort={toggle} />
+              <SortHeader label="Project" sortKey="project" sort={sort} onSort={toggle} />
+              <SortHeader
+                label="Taxable"
+                sortKey="taxable"
+                sort={sort}
+                onSort={toggle}
+                align="right"
+                style={{ textAlign: 'right' }}
+              />
+              <SortHeader
+                label="GST"
+                sortKey="gst"
+                sort={sort}
+                onSort={toggle}
+                align="right"
+                style={{ textAlign: 'right' }}
+              />
+              <SortHeader
+                label="Total"
+                sortKey="total"
+                sort={sort}
+                onSort={toggle}
+                align="right"
+                style={{ textAlign: 'right' }}
+              />
             </tr>
           </thead>
           <tbody>
-            {data.rows.map((r) => (
+            {sortedRows.map((r) => (
               <tr
                 key={r.txnId}
                 style={{ cursor: 'pointer' }}

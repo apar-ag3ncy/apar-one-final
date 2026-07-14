@@ -18,6 +18,7 @@ import {
   useReportData,
   type ExportFormat,
 } from './report-window-kit';
+import { SortHeader, useSortedRows, useTableSort } from './table-sort';
 
 function kindLabel(k: string): string {
   return k.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
@@ -32,6 +33,15 @@ export function CashFlowWindow() {
     () => getCashFlowStatement({ from: fromDate, to: toDate }),
     [fromDate, toDate],
   );
+
+  // Sort the category rows only; the Opening/Closing balance rows stay pinned.
+  const { sort, toggle } = useTableSort<'category' | 'in' | 'out' | 'net'>();
+  const sortedRows = useSortedRows(data?.rows ?? [], sort, {
+    category: (r) => kindLabel(r.kind),
+    in: (r) => r.inflowPaise,
+    out: (r) => r.outflowPaise,
+    net: (r) => r.netPaise,
+  });
 
   function handleExport(format: ExportFormat) {
     if (!data) return;
@@ -92,10 +102,31 @@ export function CashFlowWindow() {
           <table className="table">
             <thead>
               <tr>
-                <th>Category</th>
-                <th style={{ textAlign: 'right' }}>Money in</th>
-                <th style={{ textAlign: 'right' }}>Money out</th>
-                <th style={{ textAlign: 'right' }}>Net</th>
+                <SortHeader label="Category" sortKey="category" sort={sort} onSort={toggle} />
+                <SortHeader
+                  label="Money in"
+                  sortKey="in"
+                  sort={sort}
+                  onSort={toggle}
+                  align="right"
+                  style={{ textAlign: 'right' }}
+                />
+                <SortHeader
+                  label="Money out"
+                  sortKey="out"
+                  sort={sort}
+                  onSort={toggle}
+                  align="right"
+                  style={{ textAlign: 'right' }}
+                />
+                <SortHeader
+                  label="Net"
+                  sortKey="net"
+                  sort={sort}
+                  onSort={toggle}
+                  align="right"
+                  style={{ textAlign: 'right' }}
+                />
               </tr>
             </thead>
             <tbody>
@@ -114,7 +145,7 @@ export function CashFlowWindow() {
                   {formatINR(data.openingPaise)}
                 </td>
               </tr>
-              {data.rows.map((r) => (
+              {sortedRows.map((r) => (
                 <tr key={r.kind}>
                   <td>{kindLabel(r.kind)}</td>
                   <td

@@ -7,6 +7,7 @@ import { RotateCcwIcon } from 'lucide-react';
 
 import { Icon } from '../icons';
 import { TypeToConfirmDialog } from './os-modal-kit';
+import { SortHeader, sortRows, useTableSort, type SortValue } from './table-sort';
 import {
   listTrash,
   listTrashLog,
@@ -36,6 +37,18 @@ const KIND_LABEL: Record<TrashKind, string> = {
   salary_structure: 'Salary update',
   bonus: 'Bonus / perk',
   document: 'Document',
+};
+
+/** Clickable columns of the trashed-items table. One shared sort state applies
+ *  within each kind section (rows stay grouped by their section). Accessors
+ *  return raw values (label strings, ISO deleted-at). */
+type TrashSortKey = 'type' | 'item' | 'reason' | 'deleted';
+
+const TRASH_SORT_ACCESSORS: Record<TrashSortKey, (i: TrashItemRow) => SortValue> = {
+  type: (i) => KIND_LABEL[i.kind],
+  item: (i) => i.label,
+  reason: (i) => i.reason,
+  deleted: (i) => i.deletedAt,
 };
 
 /** Order + headings for the per-app sections in the Trash. */
@@ -91,6 +104,7 @@ export function TrashPane() {
   // Documents get a stronger gate than the inline "Delete?" confirm: the file
   // is unrecoverable once purged, so the user must type "delete" first.
   const [typeConfirm, setTypeConfirm] = useState<TrashItemRow | null>(null);
+  const { sort, toggle } = useTableSort<TrashSortKey>();
 
   const reload = useCallback(() => {
     Promise.all([listTrash(), listTrashLog()])
@@ -193,109 +207,127 @@ export function TrashPane() {
               <table className="table">
                 <thead>
                   <tr>
-                    <th style={{ width: 130 }}>Type</th>
-                    <th>Item</th>
-                    <th style={{ width: 90 }}>Reason</th>
-                    <th style={{ width: 170 }}>Deleted</th>
+                    <SortHeader
+                      label="Type"
+                      sortKey="type"
+                      sort={sort}
+                      onSort={toggle}
+                      style={{ width: 130 }}
+                    />
+                    <SortHeader label="Item" sortKey="item" sort={sort} onSort={toggle} />
+                    <SortHeader
+                      label="Reason"
+                      sortKey="reason"
+                      sort={sort}
+                      onSort={toggle}
+                      style={{ width: 90 }}
+                    />
+                    <SortHeader
+                      label="Deleted"
+                      sortKey="deleted"
+                      sort={sort}
+                      onSort={toggle}
+                      style={{ width: 170 }}
+                    />
                     <th style={{ width: 200 }} />
                   </tr>
                 </thead>
                 <tbody>
-                  {items
-                    .filter((i) => i.kind === sectionKind)
-                    .map((item) => {
-                      const key = rowKey(item);
-                      const busy = busyKey === key;
-                      const confirming = confirmKey === key;
-                      return (
-                        <tr key={key} className="row-clickable">
-                          <td>
-                            <span className={`pill ${item.reason === 'archived' ? 'amber' : ''}`}>
-                              {KIND_LABEL[item.kind]}
-                            </span>
-                          </td>
-                          <td>
-                            <div style={{ fontWeight: 600 }}>{item.label}</div>
-                            {item.sublabel ? (
-                              <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                                {item.sublabel}
-                              </div>
-                            ) : null}
-                          </td>
-                          <td style={{ color: 'var(--text-muted)', textTransform: 'capitalize' }}>
-                            {item.reason}
-                          </td>
-                          <td style={{ color: 'var(--text-muted)' }}>
-                            {formatWhen(item.deletedAt)}
-                          </td>
-                          <td style={{ textAlign: 'right' }}>
-                            {confirming ? (
-                              <div
+                  {sortRows(
+                    items.filter((i) => i.kind === sectionKind),
+                    sort,
+                    TRASH_SORT_ACCESSORS,
+                  ).map((item) => {
+                    const key = rowKey(item);
+                    const busy = busyKey === key;
+                    const confirming = confirmKey === key;
+                    return (
+                      <tr key={key} className="row-clickable">
+                        <td>
+                          <span className={`pill ${item.reason === 'archived' ? 'amber' : ''}`}>
+                            {KIND_LABEL[item.kind]}
+                          </span>
+                        </td>
+                        <td>
+                          <div style={{ fontWeight: 600 }}>{item.label}</div>
+                          {item.sublabel ? (
+                            <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                              {item.sublabel}
+                            </div>
+                          ) : null}
+                        </td>
+                        <td style={{ color: 'var(--text-muted)', textTransform: 'capitalize' }}>
+                          {item.reason}
+                        </td>
+                        <td style={{ color: 'var(--text-muted)' }}>{formatWhen(item.deletedAt)}</td>
+                        <td style={{ textAlign: 'right' }}>
+                          {confirming ? (
+                            <div
+                              style={{
+                                display: 'flex',
+                                gap: 6,
+                                justifyContent: 'flex-end',
+                                alignItems: 'center',
+                              }}
+                            >
+                              <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                                Delete?
+                              </span>
+                              <button
+                                type="button"
+                                className="btn"
                                 style={{
-                                  display: 'flex',
-                                  gap: 6,
-                                  justifyContent: 'flex-end',
-                                  alignItems: 'center',
+                                  background: 'var(--apar-red-deep)',
+                                  borderColor: 'transparent',
+                                  color: '#fff',
                                 }}
+                                disabled={busy}
+                                onClick={() => void purge(item)}
                               >
-                                <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                                  Delete?
-                                </span>
-                                <button
-                                  type="button"
-                                  className="btn"
-                                  style={{
-                                    background: 'var(--apar-red-deep)',
-                                    borderColor: 'transparent',
-                                    color: '#fff',
-                                  }}
-                                  disabled={busy}
-                                  onClick={() => void purge(item)}
-                                >
-                                  Yes, delete
-                                </button>
-                                <button
-                                  type="button"
-                                  className="btn"
-                                  disabled={busy}
-                                  onClick={() => setConfirmKey(null)}
-                                >
-                                  Cancel
-                                </button>
-                              </div>
-                            ) : (
-                              <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
-                                <button
-                                  type="button"
-                                  className="btn"
-                                  disabled={busy}
-                                  title="Restore this item"
-                                  onClick={() => void restore(item)}
-                                >
-                                  <RotateCcwIcon size={12} aria-hidden />
-                                  Restore
-                                </button>
-                                <button
-                                  type="button"
-                                  className="btn"
-                                  style={{ color: 'var(--apar-red)' }}
-                                  disabled={busy}
-                                  title="Permanently delete — cannot be undone"
-                                  onClick={() =>
-                                    item.kind === 'document'
-                                      ? setTypeConfirm(item)
-                                      : setConfirmKey(key)
-                                  }
-                                >
-                                  <Icon name="trash" size={12} />
-                                  Delete
-                                </button>
-                              </div>
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    })}
+                                Yes, delete
+                              </button>
+                              <button
+                                type="button"
+                                className="btn"
+                                disabled={busy}
+                                onClick={() => setConfirmKey(null)}
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          ) : (
+                            <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                              <button
+                                type="button"
+                                className="btn"
+                                disabled={busy}
+                                title="Restore this item"
+                                onClick={() => void restore(item)}
+                              >
+                                <RotateCcwIcon size={12} aria-hidden />
+                                Restore
+                              </button>
+                              <button
+                                type="button"
+                                className="btn"
+                                style={{ color: 'var(--apar-red)' }}
+                                disabled={busy}
+                                title="Permanently delete — cannot be undone"
+                                onClick={() =>
+                                  item.kind === 'document'
+                                    ? setTypeConfirm(item)
+                                    : setConfirmKey(key)
+                                }
+                              >
+                                <Icon name="trash" size={12} />
+                                Delete
+                              </button>
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

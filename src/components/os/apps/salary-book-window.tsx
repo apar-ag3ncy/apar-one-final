@@ -13,6 +13,7 @@ import { getSalaryBook, type SalaryBook } from '@/lib/server/entities/payroll';
 import { formatINR } from '@/lib/money';
 import { exportRows, paiseToRupees, type ExportFormat } from '@/lib/client/export-rows';
 import { osActions } from '@/lib/os/store';
+import { SortHeader, useSortedRows, useTableSort } from './table-sort';
 
 function currentFyDefaults(): { fromDate: string; toDate: string } {
   const today = new Date();
@@ -45,6 +46,12 @@ function formatMonth(ym: string): string {
 
 type SalaryView = 'employee' | 'month';
 
+// Sort keys for the two tables. The By-employee table sorts its whole row set;
+// the By-month table sorts only the top-level month rows (each month keeps its
+// own per-employee sub-rows in place).
+type EmployeeSortKey = 'employee' | 'code' | 'payments' | 'lastPaid' | 'total';
+type MonthSortKey = 'month' | 'employees' | 'payments' | 'total';
+
 export function SalaryBookWindow() {
   const defaults = useMemo(() => currentFyDefaults(), []);
   const [fromDate, setFromDate] = useState<string>(defaults.fromDate);
@@ -53,6 +60,26 @@ export function SalaryBookWindow() {
   const [error, setError] = useState<string | null>(null);
   const [view, setView] = useState<SalaryView>('month');
   const [openMonths, setOpenMonths] = useState<ReadonlySet<string>>(new Set());
+
+  const empSort = useTableSort<EmployeeSortKey>();
+  const monthSort = useTableSort<MonthSortKey>();
+
+  // By-employee: sort the flat row list. Accessors return raw values.
+  const sortedRows = useSortedRows(book?.rows ?? [], empSort.sort, {
+    employee: (r) => r.employeeName,
+    code: (r) => r.employeeCode,
+    payments: (r) => r.count,
+    lastPaid: (r) => r.lastPaidOn,
+    total: (r) => r.totalPaise,
+  });
+  // By-month: sort ONLY the top-level month rows; the nested per-employee
+  // sub-rows stay grouped under their month in their original order.
+  const sortedMonths = useSortedRows(book?.byMonth ?? [], monthSort.sort, {
+    month: (m) => m.month,
+    employees: (m) => m.employeeCount,
+    payments: (m) => m.count,
+    total: (m) => m.totalPaise,
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -251,14 +278,41 @@ export function SalaryBookWindow() {
             <thead>
               <tr style={{ color: 'var(--text-muted)', textAlign: 'left' }}>
                 <th style={{ ...th, width: 24 }} aria-label="Expand" />
-                <th style={th}>Month</th>
-                <th style={{ ...th, textAlign: 'right' }}>Employees</th>
-                <th style={{ ...th, textAlign: 'right' }}>Payments</th>
-                <th style={{ ...th, textAlign: 'right' }}>Total paid</th>
+                <SortHeader
+                  label="Month"
+                  sortKey="month"
+                  sort={monthSort.sort}
+                  onSort={monthSort.toggle}
+                  style={th}
+                />
+                <SortHeader
+                  label="Employees"
+                  sortKey="employees"
+                  sort={monthSort.sort}
+                  onSort={monthSort.toggle}
+                  align="right"
+                  style={{ ...th, textAlign: 'right' }}
+                />
+                <SortHeader
+                  label="Payments"
+                  sortKey="payments"
+                  sort={monthSort.sort}
+                  onSort={monthSort.toggle}
+                  align="right"
+                  style={{ ...th, textAlign: 'right' }}
+                />
+                <SortHeader
+                  label="Total paid"
+                  sortKey="total"
+                  sort={monthSort.sort}
+                  onSort={monthSort.toggle}
+                  align="right"
+                  style={{ ...th, textAlign: 'right' }}
+                />
               </tr>
             </thead>
             <tbody>
-              {book.byMonth.map((m) => {
+              {sortedMonths.map((m) => {
                 const open = openMonths.has(m.month);
                 return (
                   <Fragment key={m.month}>
@@ -322,15 +376,47 @@ export function SalaryBookWindow() {
           <table className="table" style={{ width: '100%', fontSize: 13 }}>
             <thead>
               <tr style={{ color: 'var(--text-muted)', textAlign: 'left' }}>
-                <th style={th}>Employee</th>
-                <th style={th}>Code</th>
-                <th style={{ ...th, textAlign: 'right' }}>Payments</th>
-                <th style={th}>Last paid</th>
-                <th style={{ ...th, textAlign: 'right' }}>Total paid</th>
+                <SortHeader
+                  label="Employee"
+                  sortKey="employee"
+                  sort={empSort.sort}
+                  onSort={empSort.toggle}
+                  style={th}
+                />
+                <SortHeader
+                  label="Code"
+                  sortKey="code"
+                  sort={empSort.sort}
+                  onSort={empSort.toggle}
+                  style={th}
+                />
+                <SortHeader
+                  label="Payments"
+                  sortKey="payments"
+                  sort={empSort.sort}
+                  onSort={empSort.toggle}
+                  align="right"
+                  style={{ ...th, textAlign: 'right' }}
+                />
+                <SortHeader
+                  label="Last paid"
+                  sortKey="lastPaid"
+                  sort={empSort.sort}
+                  onSort={empSort.toggle}
+                  style={th}
+                />
+                <SortHeader
+                  label="Total paid"
+                  sortKey="total"
+                  sort={empSort.sort}
+                  onSort={empSort.toggle}
+                  align="right"
+                  style={{ ...th, textAlign: 'right' }}
+                />
               </tr>
             </thead>
             <tbody>
-              {book.rows.map((r) => (
+              {sortedRows.map((r) => (
                 <tr
                   key={r.employeeId}
                   style={{ cursor: 'pointer' }}
