@@ -2,13 +2,16 @@
 
 import { useEffect, useRef, useState } from 'react';
 import {
+  ArrowDownUpIcon,
   CheckCircle2Icon,
   DownloadIcon,
   EyeIcon,
   FileTextIcon,
   RotateCcwIcon,
+  SearchIcon,
   Trash2Icon,
   UploadIcon,
+  XIcon,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -100,6 +103,67 @@ const KIND_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
 
 const KIND_LABEL = new Map<string, string>(KIND_OPTIONS.map((k) => [k.value, k.label]));
 
+/* -------------------------------------------------------------------------- */
+/* Search + filter helpers (upload-date presets mirror the Office app)         */
+/* -------------------------------------------------------------------------- */
+
+type DatePreset = 'all' | 'week' | 'month' | 'last-month' | 'quarter' | 'fy' | 'custom';
+
+const DATE_PRESET_LABEL: Record<DatePreset, string> = {
+  all: 'Any date',
+  week: 'This week',
+  month: 'This month',
+  'last-month': 'Last month',
+  quarter: 'This quarter',
+  fy: 'This financial year',
+  custom: 'Custom range…',
+};
+
+/** Resolve a preset (or a custom from/to) to an inclusive [from, to] ISO date
+ *  range. `null` bounds mean "unbounded on that side"; uses the local calendar. */
+function dateRangeForPreset(
+  preset: DatePreset,
+  customFrom: string,
+  customTo: string,
+): { from: string | null; to: string | null } {
+  const iso = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = now.getMonth();
+  switch (preset) {
+    case 'week': {
+      const diffToMon = (now.getDay() + 6) % 7;
+      const mon = new Date(y, m, now.getDate() - diffToMon);
+      const sun = new Date(y, m, now.getDate() - diffToMon + 6);
+      return { from: iso(mon), to: iso(sun) };
+    }
+    case 'month':
+      return { from: iso(new Date(y, m, 1)), to: iso(new Date(y, m + 1, 0)) };
+    case 'last-month':
+      return { from: iso(new Date(y, m - 1, 1)), to: iso(new Date(y, m, 0)) };
+    case 'quarter': {
+      const qs = Math.floor(m / 3) * 3;
+      return { from: iso(new Date(y, qs, 1)), to: iso(new Date(y, qs + 3, 0)) };
+    }
+    case 'fy': {
+      // Indian FY: 1 Apr – 31 Mar. Before April, the FY began the prior year.
+      const startYear = m >= 3 ? y : y - 1;
+      return { from: iso(new Date(startYear, 3, 1)), to: iso(new Date(startYear + 1, 2, 31)) };
+    }
+    case 'custom':
+      return { from: customFrom || null, to: customTo || null };
+    default:
+      return { from: null, to: null };
+  }
+}
+
+/** A document's upload date as an IST calendar day (YYYY-MM-DD) — matches the
+ *  date shown on each row, so range filtering never drifts by the UTC offset. */
+function uploadedOnIst(createdAtIso: string): string {
+  return new Date(createdAtIso).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+}
+
 /** Radix Select forbids an empty-string item value — sentinel for "no project". */
 const NO_PROJECT = '__none__';
 
@@ -144,6 +208,22 @@ export function DocumentsSection({
   // "delete" before the destructive button enables.
   const [confirmText, setConfirmText] = useState('');
   const confirmArmed = confirmText.trim().toLowerCase() === 'delete';
+
+  // Search + filters over the visible list (client-side; the list is ≤ 200).
+  const [query, setQuery] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState<string>('all');
+  const [datePreset, setDatePreset] = useState<DatePreset>('all');
+  const [customFrom, setCustomFrom] = useState('');
+  const [customTo, setCustomTo] = useState('');
+  const [sortDir, setSortDir] = useState<'newest' | 'oldest'>('newest');
+
+  function clearFilters() {
+    setQuery('');
+    setCategoryFilter('all');
+    setDatePreset('all');
+    setCustomFrom('');
+    setCustomTo('');
+  }
 
   // Reset the typed confirmation whenever the dialog opens for a new row.
   useEffect(() => {
@@ -237,22 +317,64 @@ export function DocumentsSection({
 
   const list = mode === 'trash' ? trashRows : rows;
 
+  // Categories actually present in the current list, in the canonical order.
+  const presentKinds = KIND_OPTIONS.filter((k) => list.some((d) => d.kind === k.value));
+  const { from: dateFrom, to: dateTo } = dateRangeForPreset(datePreset, customFrom, customTo);
+  const q = query.trim().toLowerCase();
+  const filtersActive = q !== '' || categoryFilter !== 'all' || datePreset !== 'all';
+
+  const filtered = list
+    .filter((d) => {
+      if (categoryFilter !== 'all' && d.kind !== categoryFilter) return false;
+      if (dateFrom || dateTo) {
+        const day = uploadedOnIst(d.createdAt);
+        if (dateFrom && day < dateFrom) return false;
+        if (dateTo && day > dateTo) return false;
+      }
+      if (q) {
+        const hay =
+          `${d.title ?? ''} ${d.originalFilename ?? ''} ${d.description ?? ''} ${KIND_LABEL.get(d.kind) ?? d.kind}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    })
+    .sort((a, b) => {
+      const cmp = a.createdAt.localeCompare(b.createdAt);
+      return sortDir === 'newest' ? -cmp : cmp;
+    });
+
   return (
     <>
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle className="text-base">
             {mode === 'trash' ? 'Trash' : 'Documents'}{' '}
-            <span className="text-muted-foreground text-xs font-normal">({list.length})</span>
+            <span className="text-muted-foreground text-xs font-normal">
+              ({filtersActive ? `${filtered.length} of ${list.length}` : list.length})
+            </span>
           </CardTitle>
           <div className="flex items-center gap-2">
             {canDelete ? (
               mode === 'trash' ? (
-                <Button size="sm" variant="outline" onClick={() => setMode('active')}>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    clearFilters();
+                    setMode('active');
+                  }}
+                >
                   Back to documents
                 </Button>
               ) : (
-                <Button size="sm" variant="outline" onClick={() => setMode('trash')}>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    clearFilters();
+                    setMode('trash');
+                  }}
+                >
                   <Trash2Icon className="mr-1.5 size-4" aria-hidden />
                   Trash{trashRows.length > 0 ? ` (${trashRows.length})` : ''}
                 </Button>
@@ -266,6 +388,80 @@ export function DocumentsSection({
             ) : null}
           </div>
         </CardHeader>
+        {list.length > 0 ? (
+          <div className="flex flex-wrap items-center gap-2 px-4 pb-3">
+            <div className="relative min-w-[180px] flex-1">
+              <SearchIcon
+                className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2"
+                aria-hidden
+              />
+              <Input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search by name, file or category…"
+                className="h-9 pl-8"
+              />
+            </div>
+            <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+              <SelectTrigger className="h-9 w-[160px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All categories</SelectItem>
+                {presentKinds.map((k) => (
+                  <SelectItem key={k.value} value={k.value}>
+                    {k.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={datePreset} onValueChange={(v) => setDatePreset(v as DatePreset)}>
+              <SelectTrigger className="h-9 w-[160px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {(Object.keys(DATE_PRESET_LABEL) as DatePreset[]).map((p) => (
+                  <SelectItem key={p} value={p}>
+                    {DATE_PRESET_LABEL[p]}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {datePreset === 'custom' ? (
+              <div className="flex items-center gap-1.5">
+                <DateField
+                  value={customFrom}
+                  onChange={setCustomFrom}
+                  placeholder="From"
+                  className="w-[140px]"
+                />
+                <span className="text-muted-foreground text-xs">to</span>
+                <DateField
+                  value={customTo}
+                  onChange={setCustomTo}
+                  placeholder="To"
+                  className="w-[140px]"
+                />
+              </div>
+            ) : null}
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-9"
+              onClick={() => setSortDir((d) => (d === 'newest' ? 'oldest' : 'newest'))}
+              title="Toggle upload-date order"
+            >
+              <ArrowDownUpIcon className="mr-1.5 size-4" aria-hidden />
+              {sortDir === 'newest' ? 'Newest' : 'Oldest'}
+            </Button>
+            {filtersActive ? (
+              <Button variant="ghost" size="sm" className="h-9" onClick={clearFilters}>
+                <XIcon className="mr-1.5 size-4" aria-hidden />
+                Clear
+              </Button>
+            ) : null}
+          </div>
+        ) : null}
         <CardContent className="p-0">
           {list.length === 0 ? (
             <EmptyState
@@ -277,9 +473,13 @@ export function DocumentsSection({
                   : `Upload contracts, invoices, receipts, or other documents related to ${entityName}.`
               }
             />
+          ) : filtered.length === 0 ? (
+            <div className="text-muted-foreground px-4 py-8 text-center text-sm">
+              No documents match your search or filters.
+            </div>
           ) : (
             <ul className="divide-y">
-              {list.map((doc) => (
+              {filtered.map((doc) => (
                 <li
                   key={doc.id}
                   className="hover:bg-muted/30 flex items-center justify-between gap-3 px-4 py-3"
