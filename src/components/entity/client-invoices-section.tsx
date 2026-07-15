@@ -32,6 +32,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/shared/empty-state';
 import { StatusBadge, type StatusTone } from '@/components/shared/status-badge';
 import { InvoiceComposerDialog } from '@/components/entity/billing/invoice-composer';
+import { UploadInvoiceDialog } from '@/components/entity/billing/upload-invoice-dialog';
 import { useCurrentUser } from '@/lib/client/use-current-user';
 import { useEntityMutation } from '@/components/os/auth/entity-mutation-gate';
 import { formatINR } from '@/lib/money';
@@ -43,6 +44,10 @@ import {
 } from '@/lib/server/billing/invoices';
 import { voidInvoice } from '@/lib/server/billing/invoice-transitions';
 import { convertProformaToInvoice } from '@/lib/server/billing/proforma-conversion';
+import {
+  listUnrecordedClientInvoiceDocuments,
+  type UnrecordedInvoiceDocument,
+} from '@/lib/server/billing/record-uploaded-invoice';
 import {
   deleteInvoiceTheme,
   listInvoiceThemes,
@@ -130,6 +135,10 @@ export function ClientInvoicesSection({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [manageOpen, setManageOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<InvoiceRow | null>(null);
+  // Invoice PDFs uploaded (Documents tab or here) but not yet posted to books.
+  const [uploadedDocs, setUploadedDocs] = useState<readonly UnrecordedInvoiceDocument[]>([]);
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const [recordDocTarget, setRecordDocTarget] = useState<UnrecordedInvoiceDocument | null>(null);
 
   const reloadInvoices = useCallback(async () => {
     const data = await listInvoices({ clientId });
@@ -154,6 +163,14 @@ export function ClientInvoicesSection({
     }
   }, [clientId]);
 
+  const reloadUploadedDocs = useCallback(async () => {
+    try {
+      setUploadedDocs(await listUnrecordedClientInvoiceDocuments(clientId));
+    } catch {
+      /* non-fatal — the pending-uploads strip just stays as-is */
+    }
+  }, [clientId]);
+
   useEffect(() => {
     let cancelled = false;
     Promise.all([
@@ -161,13 +178,15 @@ export function ClientInvoicesSection({
       listInvoiceThemes().catch(() => []),
       getClientBillingReadiness(clientId).catch(() => null),
       listCompanyBankAccountOptions().catch(() => []),
+      listUnrecordedClientInvoiceDocuments(clientId).catch(() => []),
     ])
-      .then(([inv, ths, rdy, banks]) => {
+      .then(([inv, ths, rdy, banks, upl]) => {
         if (cancelled) return;
         setRows(inv.rows.filter((r) => r.state !== 'void'));
         setThemes(ths);
         setReadiness(rdy);
         setBankAccounts(banks);
+        setUploadedDocs(upl);
         setError(null);
       })
       .catch((e: unknown) => {
@@ -231,6 +250,15 @@ export function ClientInvoicesSection({
     }
   }
 
+  async function openUploadedDoc(d: UnrecordedInvoiceDocument) {
+    try {
+      const { url } = await getDocumentSignedUrl(d.documentId);
+      window.open(url, '_blank', 'noopener,noreferrer');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not open the file');
+    }
+  }
+
   if (error) {
     return <EmptyState icon={FileTextIcon} title="Could not load invoices" description={error} />;
   }
@@ -261,6 +289,17 @@ export function ClientInvoicesSection({
             {canCompose ? (
               <Button
                 size="sm"
+                variant="outline"
+                onClick={() => setUploadOpen(true)}
+                title="Upload an invoice PDF and record it in the books"
+              >
+                <UploadIcon className="mr-1.5 size-4" aria-hidden />
+                Upload invoice
+              </Button>
+            ) : null}
+            {canCompose ? (
+              <Button
+                size="sm"
                 onClick={openNew}
                 disabled={readiness != null && !billingReady}
                 title={
@@ -284,12 +323,60 @@ export function ClientInvoicesSection({
           </div>
         ) : null}
         <CardContent className="p-0">
-          {rows.length === 0 ? (
+          {uploadedDocs.length > 0 ? (
+            <div className="bg-muted/20 border-b px-4 py-3">
+              <div className="text-muted-foreground mb-2 text-xs font-medium">
+                Uploaded — not in books ({uploadedDocs.length})
+              </div>
+              <ul className="flex flex-col gap-1.5">
+                {uploadedDocs.map((d) => (
+                  <li
+                    key={d.documentId}
+                    className="bg-background flex items-center justify-between gap-3 rounded-md border px-3 py-2"
+                  >
+                    <button
+                      type="button"
+                      className="flex min-w-0 items-center gap-2 text-left"
+                      onClick={() => void openUploadedDoc(d)}
+                      title="Open the uploaded file"
+                    >
+                      <UploadIcon className="text-muted-foreground size-4 shrink-0" aria-hidden />
+                      <span className="truncate text-sm">
+                        {d.title || d.originalFilename || 'Uploaded invoice'}
+                      </span>
+                    </button>
+                    {canCompose ? (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="shrink-0"
+                        onClick={() => setRecordDocTarget(d)}
+                        disabled={readiness != null && !billingReady}
+                        title={
+                          readiness != null && !billingReady
+                            ? `Add this client's ${readiness.missing.join(', ')} first`
+                            : 'Record this invoice in the books'
+                        }
+                      >
+                        <FileCheck2Icon className="mr-1.5 size-4" aria-hidden />
+                        Record in books
+                      </Button>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+          {rows.length === 0 && uploadedDocs.length === 0 ? (
             <EmptyState
               icon={FileTextIcon}
               title="No invoices yet"
               description={`Generate a themed GST invoice for ${clientName}, preview it, then save & download.`}
             />
+          ) : rows.length === 0 ? (
+            <div className="text-muted-foreground px-4 py-6 text-center text-sm">
+              No invoices in the books yet.
+            </div>
           ) : (
             <ul className="divide-y">
               {rows.map((inv) => {
@@ -444,6 +531,39 @@ export function ClientInvoicesSection({
           onFinalized={() => {
             void reloadInvoices();
             void reloadReadiness();
+            void reloadUploadedDocs();
+          }}
+        />
+      ) : null}
+
+      {canCompose ? (
+        <UploadInvoiceDialog
+          open={uploadOpen}
+          onOpenChange={setUploadOpen}
+          clientId={clientId}
+          clientName={clientName}
+          readiness={readiness}
+          onDone={() => {
+            void reloadInvoices();
+            void reloadUploadedDocs();
+            void reloadReadiness();
+          }}
+        />
+      ) : null}
+
+      {canCompose ? (
+        <UploadInvoiceDialog
+          open={recordDocTarget !== null}
+          onOpenChange={(o) => !o && setRecordDocTarget(null)}
+          clientId={clientId}
+          clientName={clientName}
+          readiness={readiness}
+          existingDocumentId={recordDocTarget?.documentId ?? null}
+          existingLabel={recordDocTarget?.title || recordDocTarget?.originalFilename || null}
+          onDone={() => {
+            setRecordDocTarget(null);
+            void reloadInvoices();
+            void reloadUploadedDocs();
           }}
         />
       ) : null}

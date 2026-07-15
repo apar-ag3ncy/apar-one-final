@@ -1,10 +1,10 @@
 'use server';
 
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, desc, eq, isNull } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { db } from '@/lib/db/client';
-import { documents, invoiceLines, invoices, transactions } from '@/lib/db/schema';
+import { documents, entityDocuments, invoiceLines, invoices, transactions } from '@/lib/db/schema';
 import { AppError } from '@/lib/errors';
 import { logActivity } from '@/lib/activity';
 import { logAudit } from '@/lib/audit';
@@ -377,4 +377,67 @@ export async function recordUploadedClientInvoice(
     console.error('[billing/record-uploaded-invoice] failed:', e);
     return fail('Something went wrong recording the invoice. Please try again.');
   }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Uploaded invoice documents not yet recorded in the books                   */
+/* -------------------------------------------------------------------------- */
+
+export type UnrecordedInvoiceDocument = {
+  documentId: string;
+  title: string | null;
+  originalFilename: string | null;
+  uploadedAt: string;
+};
+
+/**
+ * Client `invoice`-kind documents that were uploaded (from the Documents tab
+ * or the Invoices-tab uploader) but never promoted to a real invoice — i.e.
+ * no LIVE invoice has this file as its `sourceDocumentId`. These are surfaced
+ * in the Invoices tab as "uploaded, not in books" so they stop being invisible
+ * there, and can be recorded via {@link recordUploadedClientInvoice} once the
+ * client is billing-ready.
+ */
+export async function listUnrecordedClientInvoiceDocuments(
+  clientId: string,
+): Promise<readonly UnrecordedInvoiceDocument[]> {
+  const ctx = await getActorContext();
+  requireCapability(ctx, 'create_invoice');
+  const cid = z.string().uuid().parse(clientId);
+
+  const rows = await db
+    .select({
+      documentId: entityDocuments.documentId,
+      title: entityDocuments.title,
+      originalFilename: documents.originalFilename,
+      createdAt: entityDocuments.createdAt,
+    })
+    .from(entityDocuments)
+    .innerJoin(documents, eq(documents.id, entityDocuments.documentId))
+    // Left-join any LIVE invoice built around this file; keep only the docs
+    // that matched none. A doc linked solely to a soft-deleted invoice is
+    // re-recordable, so it still counts as unrecorded.
+    .leftJoin(
+      invoices,
+      and(eq(invoices.sourceDocumentId, entityDocuments.documentId), isNull(invoices.deletedAt)),
+    )
+    .where(
+      and(
+        eq(entityDocuments.entityType, 'client'),
+        eq(entityDocuments.entityId, cid),
+        eq(entityDocuments.kind, 'invoice'),
+        eq(entityDocuments.status, 'active'),
+        isNull(entityDocuments.deletedAt),
+        isNull(documents.deletedAt),
+        isNull(invoices.id),
+      ),
+    )
+    .orderBy(desc(entityDocuments.createdAt));
+
+  return rows.map((r) => ({
+    documentId: r.documentId,
+    title: r.title,
+    originalFilename: r.originalFilename,
+    uploadedAt: r.createdAt.toISOString(),
+  }));
 }
