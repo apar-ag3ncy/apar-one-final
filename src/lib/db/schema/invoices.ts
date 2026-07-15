@@ -91,6 +91,14 @@ export const invoices = pgTable(
      */
     convertedFromInvoiceId: uuid(),
     /**
+     * Amend & reissue linkage (0074): when a SENT invoice is amended, the
+     * original is voided (its ledger posting reversed) and a fresh editable
+     * DRAFT reissue (new number) records the ORIGINAL's id here. Set only at
+     * draft-insert time, so it never changes on a posted row (no immutability-
+     * trigger conflict). Plain uuid, no FK — same stance as convertedFromInvoiceId.
+     */
+    amendedFromInvoiceId: uuid(),
+    /**
      * "Covered under a retainer" (0062) — flags an invoice as billing work a
      * client retainer covers. Pure capture; badge in lists, no posting
      * impact. Editable after send (a mis-tag must be fixable).
@@ -148,6 +156,7 @@ export const invoices = pgTable(
     index().on(t.clientId, t.documentDate.desc()),
     index().on(t.projectId),
     index().on(t.convertedFromInvoiceId),
+    index().on(t.amendedFromInvoiceId),
     index().on(t.billToAddressId),
     index().on(t.bankAccountId),
     index().on(t.state),

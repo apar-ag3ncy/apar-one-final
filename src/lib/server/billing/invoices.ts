@@ -77,6 +77,9 @@ const CreateInvoiceInputSchema = z.object({
   /** Set ONLY by proforma conversion (0062) — records the source proforma.
    *  The composer never sends this. */
   convertedFromInvoiceId: z.string().uuid().nullish(),
+  /** Set ONLY by amend & reissue (0074) — records the amended-from original.
+   *  The composer never sends this. */
+  amendedFromInvoiceId: z.string().uuid().nullish(),
   /** Document type. 'proforma' is a labelled proforma; it otherwise behaves
    *  like a tax 'invoice' (same numbering + ledger posting on send). */
   documentType: z.enum(['invoice', 'proforma']).default('invoice'),
@@ -371,6 +374,7 @@ async function insertDraftInvoice(
       projectId: v.projectId ?? null,
       coveredUnderRetainer: v.coveredUnderRetainer ?? false,
       convertedFromInvoiceId: v.convertedFromInvoiceId ?? null,
+      amendedFromInvoiceId: v.amendedFromInvoiceId ?? null,
       billToAddressId: v.billToAddressId ?? null,
       state: 'draft',
       subtotalPaise: v.subtotalPaise,
