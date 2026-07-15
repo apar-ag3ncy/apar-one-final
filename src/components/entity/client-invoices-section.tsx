@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   DownloadIcon,
   FileCheck2Icon,
+  FilePenIcon,
   FileTextIcon,
   PaletteIcon,
   PencilIcon,
@@ -43,6 +44,11 @@ import {
   type ClientBillingReadiness,
 } from '@/lib/server/billing/invoices';
 import { voidInvoice } from '@/lib/server/billing/invoice-transitions';
+import {
+  amendInvoice,
+  getInvoiceAmendmentChain,
+  type InvoiceAmendmentChainEntry,
+} from '@/lib/server/billing/invoice-amendment';
 import { convertProformaToInvoice } from '@/lib/server/billing/proforma-conversion';
 import {
   listUnrecordedClientInvoiceDocuments,
@@ -124,6 +130,9 @@ export function ClientInvoicesSection({
   const canCompose = osCanEdit && hasCapability('create_invoice');
   const canManageThemes = osCanEdit && hasCapability('manage_invoice_themes');
   const canDelete = osCanDelete && hasCapability('void_invoice');
+  // Amend & reissue both creates a new invoice AND reverses the original, so it
+  // needs compose (create_invoice) plus void_invoice.
+  const canAmend = canCompose && hasCapability('void_invoice');
 
   const [rows, setRows] = useState<readonly InvoiceRow[] | null>(null);
   const [themes, setThemes] = useState<InvoiceThemeSummary[]>([]);
@@ -135,6 +144,8 @@ export function ClientInvoicesSection({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [manageOpen, setManageOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<InvoiceRow | null>(null);
+  const [amendTarget, setAmendTarget] = useState<InvoiceRow | null>(null);
+  const [historyTarget, setHistoryTarget] = useState<InvoiceRow | null>(null);
   // Invoice PDFs uploaded (Documents tab or here) but not yet posted to books.
   const [uploadedDocs, setUploadedDocs] = useState<readonly UnrecordedInvoiceDocument[]>([]);
   const [uploadOpen, setUploadOpen] = useState(false);
@@ -438,6 +449,20 @@ export function ClientInvoicesSection({
                           {inv.coveredUnderRetainer ? (
                             <StatusBadge tone="neutral" label="Retainer" dot={false} />
                           ) : null}
+                          {inv.amendedFromInvoiceId ? (
+                            <button
+                              type="button"
+                              className="focus-visible:ring-ring rounded-full focus-visible:ring-2 focus-visible:outline-none"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setHistoryTarget(inv);
+                              }}
+                              title="Reissued by amendment — view the amendment history"
+                              aria-label="View amendment history"
+                            >
+                              <StatusBadge tone="warning" label="Amended" dot={false} />
+                            </button>
+                          ) : null}
                         </div>
                         <div className="text-muted-foreground mt-0.5 text-xs">
                           {formatINR(inv.capturedTotalPaise)}
@@ -486,6 +511,17 @@ export function ClientInvoicesSection({
                           aria-label="Convert proforma to tax invoice"
                         >
                           <FileCheck2Icon className="size-4" aria-hidden />
+                        </Button>
+                      ) : null}
+                      {inv.state === 'sent' && inv.documentType === 'invoice' && canAmend ? (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => setAmendTarget(inv)}
+                          title="Amend & reissue — reverses this invoice and opens an editable reissue"
+                          aria-label="Amend and reissue invoice"
+                        >
+                          <FilePenIcon className="size-4" aria-hidden />
                         </Button>
                       ) : null}
                       {canDelete && inv.state !== 'void' ? (
@@ -586,6 +622,23 @@ export function ClientInvoicesSection({
           void reloadReadiness();
         }}
       />
+
+      {canAmend ? (
+        <AmendInvoiceDialog
+          target={amendTarget}
+          onOpenChange={(o) => !o && setAmendTarget(null)}
+          onDone={(reissueId) => {
+            setAmendTarget(null);
+            void reloadInvoices();
+            openEdit(reissueId);
+          }}
+        />
+      ) : null}
+
+      <AmendmentHistoryDialog
+        target={historyTarget}
+        onOpenChange={(o) => !o && setHistoryTarget(null)}
+      />
     </>
   );
 }
@@ -681,6 +734,177 @@ function DeleteInvoiceDialog({
           </Button>
           <Button variant="destructive" onClick={submit} disabled={busy}>
             {busy ? 'Deleting…' : 'Delete invoice'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Amend & reissue dialog                                                     */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Amend a SENT tax invoice: reverses the original's ledger posting, marks it
+ * deleted, and spins up an editable DRAFT reissue (fresh number) carrying its
+ * lines. On success the parent reloads the list and opens the reissue in the
+ * composer so the operator can correct it and send it (a fresh ledger post).
+ */
+function AmendInvoiceDialog({
+  target,
+  onOpenChange,
+  onDone,
+}: {
+  target: InvoiceRow | null;
+  onOpenChange: (open: boolean) => void;
+  onDone: (reissueId: string) => void;
+}) {
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (target) queueMicrotask(() => setReason(''));
+  }, [target]);
+
+  if (!target) return null;
+
+  async function submit() {
+    if (reason.trim().length < 10) {
+      toast.error('Enter a reason of at least 10 characters.');
+      return;
+    }
+    setBusy(true);
+    try {
+      const result = await amendInvoice(target!.id, reason.trim());
+      toast.success(`Reissued as ${result.documentNumber} — edit and send it.`);
+      onDone(result.invoiceId);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not amend the invoice.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Dialog open={target !== null} onOpenChange={(v) => !busy && onOpenChange(v)}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Amend &amp; reissue invoice?</DialogTitle>
+          <DialogDescription>
+            This reverses <strong>{target.documentNumber}</strong>’s ledger entry, marks it deleted,
+            and creates a fresh editable draft (new number) carrying its lines. Correct the reissue
+            and send it to post again — the original stays on record. Give a reason.
+          </DialogDescription>
+        </DialogHeader>
+
+        <Textarea
+          rows={3}
+          placeholder="e.g. Wrong GST rate on the design line — reissuing corrected"
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          disabled={busy}
+        />
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>
+            Cancel
+          </Button>
+          <Button onClick={submit} disabled={busy}>
+            {busy ? 'Reissuing…' : 'Amend & reissue'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Amendment history dialog                                                   */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Scrollable list of the full amendment chain (oldest → newest) for an amended
+ * invoice. The live (non-deleted) tip is marked "Current".
+ */
+function AmendmentHistoryDialog({
+  target,
+  onOpenChange,
+}: {
+  target: InvoiceRow | null;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const [chain, setChain] = useState<readonly InvoiceAmendmentChainEntry[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!target) return;
+    let cancelled = false;
+    // Reset to the loading state off the synchronous effect body (react-hooks
+    // set-state-in-effect), then fetch the chain.
+    queueMicrotask(() => {
+      if (cancelled) return;
+      setChain(null);
+      setError(null);
+    });
+    getInvoiceAmendmentChain(target.id)
+      .then((c) => {
+        if (!cancelled) setChain(c);
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) setError(e instanceof Error ? e.message : 'Could not load history');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [target]);
+
+  return (
+    <Dialog open={target !== null} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Amendment history</DialogTitle>
+          <DialogDescription>
+            The full chain of amendments, oldest first. The current invoice is the live
+            (non-deleted) one; earlier entries were reversed on reissue.
+          </DialogDescription>
+        </DialogHeader>
+
+        {error ? (
+          <div className="text-destructive text-sm">{error}</div>
+        ) : chain === null ? (
+          <div className="flex flex-col gap-2">
+            <Skeleton className="h-12 w-full" />
+            <Skeleton className="h-12 w-full" />
+          </div>
+        ) : chain.length === 0 ? (
+          <div className="text-muted-foreground text-sm">No amendment history.</div>
+        ) : (
+          <ul className="max-h-80 divide-y overflow-y-auto rounded-md border">
+            {chain.map((entry) => {
+              const state = entry.state as InvoiceRow['state'];
+              return (
+                <li key={entry.id} className="flex items-center justify-between gap-3 px-3 py-2">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span className="truncate text-sm font-medium">{entry.documentNumber}</span>
+                    <StatusBadge tone={STATE_TONE[state]} label={STATE_LABEL[state]} dot={false} />
+                    {entry.isCurrent ? (
+                      <StatusBadge tone="success" label="Current" dot={false} />
+                    ) : null}
+                  </div>
+                  <div className="text-muted-foreground shrink-0 text-right text-xs">
+                    <div>{formatINR(BigInt(entry.capturedTotalPaise))}</div>
+                    <div>{entry.documentDate}</div>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Close
           </Button>
         </DialogFooter>
       </DialogContent>

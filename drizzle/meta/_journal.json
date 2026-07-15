@@ -519,6 +519,13 @@
       "when": 1783600090000,
       "tag": "0073_task_vendor_assignees",
       "breakpoints": true
+    },
+    {
+      "idx": 74,
+      "version": "7",
+      "when": 1783700090000,
+      "tag": "0074_invoice_amendments",
+      "breakpoints": true
     }
   ]
 }
