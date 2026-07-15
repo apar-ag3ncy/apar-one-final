@@ -512,6 +512,13 @@
       "when": 1783000090000,
       "tag": "0072_project_vendors",
       "breakpoints": true
+    },
+    {
+      "idx": 73,
+      "version": "7",
+      "when": 1783600090000,
+      "tag": "0073_task_vendor_assignees",
+      "breakpoints": true
     }
   ]
 }
