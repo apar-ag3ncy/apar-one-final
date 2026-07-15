@@ -810,6 +810,65 @@ export async function listEmployeeProjectTasks(
   );
 }
 
+/**
+ * Deliverables handed over to a VENDOR — i.e. assigned to them via
+ * project_task_assignees.vendorId (0073), the "handover" the founder brief
+ * describes (§6.5). Same shape + ordering as the employee list; backs the
+ * vendor window's Priorities tab (§6.3, Pending vs Completed).
+ */
+export type VendorProjectTaskRow = EmployeeProjectTaskRow;
+
+export async function listVendorProjectTasks(
+  vendorId: string,
+): Promise<readonly VendorProjectTaskRow[]> {
+  await getActorContext();
+  const parsedVendorId = z.string().uuid().parse(vendorId);
+
+  const statusOrder = sql<number>`case ${projectTasks.status}
+    when 'todo' then 0 when 'in_progress' then 1 when 'done' then 2 else 3 end`;
+
+  const rows = await db
+    .select({
+      taskId: projectTasks.id,
+      title: projectTasks.title,
+      status: projectTasks.status,
+      priority: projectTasks.priority,
+      source: projectTasks.source,
+      projectId: projectTasks.projectId,
+      projectName: projects.name,
+      projectCode: projects.code,
+      dueOn: projectTasks.dueOn,
+      completedAt: projectTasks.completedAt,
+    })
+    .from(projectTasks)
+    .innerJoin(projects, eq(projects.id, projectTasks.projectId))
+    .where(
+      and(
+        sql`exists (
+          select 1 from project_task_assignees a
+          where a.task_id = ${projectTasks.id} and a.vendor_id = ${parsedVendorId}
+        )`,
+        isNull(projectTasks.deletedAt),
+      ),
+    )
+    .orderBy(asc(statusOrder), desc(projectTasks.updatedAt));
+
+  return rows.map(
+    (r): VendorProjectTaskRow => ({
+      taskId: r.taskId,
+      title: r.title,
+      status: r.status as ProjectTaskStatus,
+      priority: (r.priority as ProjectTaskPriority | null) ?? null,
+      source: (r.source as ProjectTaskSource | null) ?? null,
+      projectId: r.projectId,
+      projectName: r.projectName,
+      projectCode: r.projectCode,
+      dueOn: r.dueOn,
+      completedAt: r.completedAt ? r.completedAt.toISOString() : null,
+    }),
+  );
+}
+
 /* -------------------------------------------------------------------------- */
 /* Internal helpers (not exported — 'use server' allows only async exports)   */
 /* -------------------------------------------------------------------------- */

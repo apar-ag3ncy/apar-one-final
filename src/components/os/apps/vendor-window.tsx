@@ -26,6 +26,10 @@ import {
   type VendorStats,
 } from '@/lib/server/entities/vendor-stats';
 import { getVendorStatement, type Statement } from '@/lib/server/ledger/statements';
+import {
+  listVendorProjectTasks,
+  type VendorProjectTaskRow,
+} from '@/lib/server/entities/project-tasks';
 import { getVendor } from '@/lib/server-stub/entity-actions';
 import type { Vendor } from '@/components/vendors/types';
 import { osActions } from '@/lib/os/store';
@@ -40,6 +44,7 @@ export type VendorWindowProps = {
 type VendorTab =
   | 'overview'
   | 'stats'
+  | 'priorities'
   | 'contacts'
   | 'addresses'
   | 'bank'
@@ -53,6 +58,7 @@ type VendorTab =
 const TAB_LABELS: Record<VendorTab, string> = {
   overview: 'Overview',
   stats: 'Statistics',
+  priorities: 'Priorities',
   contacts: 'Contacts',
   addresses: 'Addresses',
   bank: 'Bank accounts',
@@ -118,6 +124,7 @@ export function VendorWindow({ vendorId, onClose }: VendorWindowProps) {
   const tabs: readonly VendorTab[] = [
     'overview',
     'stats',
+    'priorities',
     'contacts',
     'addresses',
     'bank',
@@ -151,6 +158,7 @@ export function VendorWindow({ vendorId, onClose }: VendorWindowProps) {
           <OverviewBody vendor={vendor} contacts={contacts} onOpenTab={setTab} />
         ) : null}
         {tab === 'stats' ? <StatsBody vendorId={vendor.id} /> : null}
+        {tab === 'priorities' ? <PrioritiesBody vendorId={vendor.id} /> : null}
         {tab === 'contacts' ? (
           <ContactsSection
             entityType="vendor"
@@ -503,6 +511,129 @@ function StatsBody({ vendorId }: { vendorId: string }) {
             })}
           </div>
         )}
+      </OsCard>
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Priorities — deliverables handed over to this vendor (§6.3 / §6.5)          */
+/* -------------------------------------------------------------------------- */
+
+const PRIORITY_META: Record<string, { label: string; bg: string; fg: string }> = {
+  urgent_important: { label: 'Urgent & Important', bg: '#6e1a1a', fg: '#f0a2a2' },
+  urgent: { label: 'Urgent', bg: '#7a4e17', fg: '#e7c980' },
+  important: { label: 'Important', bg: '#1a3b6e', fg: '#9ec2f0' },
+  nice: { label: 'Nice / later', bg: '#3a3a3a', fg: '#bdbdbd' },
+};
+
+function PrioritiesBody({ vendorId }: { vendorId: string }) {
+  const [tasks, setTasks] = useState<readonly VendorProjectTaskRow[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      setTasks(null);
+      setError(null);
+    });
+    listVendorProjectTasks(vendorId)
+      .then((t) => {
+        if (!cancelled) setTasks(t);
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) setError(e instanceof Error ? e.message : 'Failed to load priorities');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [vendorId]);
+
+  if (error) {
+    return <p style={{ fontSize: 13, color: 'var(--text-error, #c33)', margin: 0 }}>{error}</p>;
+  }
+  if (!tasks) {
+    return <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>Loading priorities…</div>;
+  }
+
+  const pending = tasks.filter((t) => t.status !== 'done');
+  const completed = tasks.filter((t) => t.status === 'done');
+
+  const openProject = (t: VendorProjectTaskRow) =>
+    osActions.openWindow({
+      app: 'projects',
+      entityId: t.projectId,
+      title: t.projectName,
+      position: 'beside-focused',
+    });
+
+  const renderTask = (t: VendorProjectTaskRow, i: number) => {
+    const pr = t.priority ? PRIORITY_META[t.priority] : null;
+    return (
+      <div
+        key={t.taskId}
+        onClick={() => openProject(t)}
+        title={`Open ${t.projectName}`}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 12,
+          padding: '9px 0',
+          borderTop: i === 0 ? 'none' : '1px solid var(--border)',
+          cursor: 'pointer',
+          fontSize: 13,
+        }}
+      >
+        <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
+          <span
+            style={{
+              fontWeight: 600,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {t.title}
+          </span>
+          <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>
+            {t.projectName}
+            {t.projectCode ? ` · ${t.projectCode}` : ''}
+            {t.dueOn ? ` · due ${t.dueOn}` : ''}
+            {t.completedAt ? ` · done ${t.completedAt.slice(0, 10)}` : ''}
+          </span>
+        </div>
+        {pr ? (
+          <span
+            className="pill"
+            style={{ background: pr.bg, color: pr.fg, flexShrink: 0, whiteSpace: 'nowrap' }}
+          >
+            <span className="dot" style={{ background: pr.fg }} />
+            {pr.label}
+          </span>
+        ) : null}
+      </div>
+    );
+  };
+
+  const emptyNote = (msg: string) => (
+    <p style={{ fontSize: 13, color: 'var(--text-muted)', fontStyle: 'italic', margin: 0 }}>
+      {msg}
+    </p>
+  );
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <OsCard title={`Pending (${pending.length})`}>
+        {pending.length === 0
+          ? emptyNote('Nothing pending — no open deliverables handed to this vendor.')
+          : pending.map(renderTask)}
+      </OsCard>
+      <OsCard title={`Completed (${completed.length})`}>
+        {completed.length === 0
+          ? emptyNote('No completed deliverables yet.')
+          : completed.map(renderTask)}
       </OsCard>
     </div>
   );
