@@ -862,7 +862,16 @@ export function VendorsApp({
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                     <div
                       className="avatar"
-                      style={{ width: 28, height: 28, fontSize: 10, background: '#5B6677' }}
+                      // Square with a slight radius — matches the Clients board
+                      // so entity directories read consistently (§8, never
+                      // circular). The .avatar default is a 50% circle.
+                      style={{
+                        width: 28,
+                        height: 28,
+                        fontSize: 10,
+                        background: '#5B6677',
+                        borderRadius: 6,
+                      }}
                     >
                       {initials(v.name)}
                     </div>
