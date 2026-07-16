@@ -18,6 +18,7 @@ export * from './project_vendors';
 export * from './deliverable_categories';
 export * from './project_tasks';
 export * from './project_task_assignees';
+export * from './project_task_followups';
 
 // Polymorphic children
 export * from './entity_contacts';

@@ -11,6 +11,7 @@ import {
   employees,
   projectMembers,
   projectTaskAssignees,
+  projectTaskFollowups,
   projectTasks,
   projectVendors,
   projects,
@@ -345,7 +346,16 @@ export async function removeProjectVendor(input: { id: string }): Promise<void> 
 /* Project deliverables (table: project_tasks)                                */
 /* -------------------------------------------------------------------------- */
 
-export type ProjectTaskStatus = 'todo' | 'in_progress' | 'done';
+export type ProjectTaskStatus =
+  | 'todo'
+  | 'in_progress'
+  | 'done'
+  // Extra manual statuses (0075). 'done' shows as "Completed" in the UI; the
+  // delayed statuses are still OPEN (no completedAt); 'cancelled' is closed but
+  // not completed.
+  | 'little_delayed'
+  | 'delayed'
+  | 'cancelled';
 
 /** Eisenhower priority tag (0070). null = no priority set. */
 export type ProjectTaskPriority = 'urgent_important' | 'urgent' | 'important' | 'nice';
@@ -353,7 +363,14 @@ export type ProjectTaskPriority = 'urgent_important' | 'urgent' | 'important' | 
 /** Who the deliverable came from (0070). null on legacy rows. */
 export type ProjectTaskSource = 'apar' | 'vendor';
 
-const ProjectTaskStatusSchema = z.enum(['todo', 'in_progress', 'done']);
+const ProjectTaskStatusSchema = z.enum([
+  'todo',
+  'in_progress',
+  'done',
+  'little_delayed',
+  'delayed',
+  'cancelled',
+]);
 const ProjectTaskPrioritySchema = z.enum(['urgent_important', 'urgent', 'important', 'nice']);
 const ProjectTaskSourceSchema = z.enum(['apar', 'vendor']);
 const ProjectTaskIdSchema = z.string().uuid();
@@ -765,7 +782,9 @@ export async function listEmployeeProjectTasks(
 
   // Order by status (todo → in_progress → done) then most-recently touched.
   const statusOrder = sql<number>`case ${projectTasks.status}
-    when 'todo' then 0 when 'in_progress' then 1 when 'done' then 2 else 3 end`;
+    when 'todo' then 0 when 'in_progress' then 1
+    when 'little_delayed' then 2 when 'delayed' then 3
+    when 'done' then 4 when 'cancelled' then 5 else 6 end`;
 
   const rows = await db
     .select({
@@ -825,7 +844,9 @@ export async function listVendorProjectTasks(
   const parsedVendorId = z.string().uuid().parse(vendorId);
 
   const statusOrder = sql<number>`case ${projectTasks.status}
-    when 'todo' then 0 when 'in_progress' then 1 when 'done' then 2 else 3 end`;
+    when 'todo' then 0 when 'in_progress' then 1
+    when 'little_delayed' then 2 when 'delayed' then 3
+    when 'done' then 4 when 'cancelled' then 5 else 6 end`;
 
   const rows = await db
     .select({
@@ -867,6 +888,86 @@ export async function listVendorProjectTasks(
       completedAt: r.completedAt ? r.completedAt.toISOString() : null,
     }),
   );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Deliverable follow-ups (table: project_task_followups)                     */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * One follow-up note in a deliverable's history thread (0076). Ordered oldest
+ * → newest, so the array reads as a chronological thread.
+ */
+export type TaskFollowupRow = {
+  id: string;
+  note: string;
+  createdBy: string | null;
+  /** ISO string. */
+  createdAt: string;
+};
+
+export async function listTaskFollowups(taskId: string): Promise<readonly TaskFollowupRow[]> {
+  await getActorContext();
+  const parsedTaskId = ProjectTaskIdSchema.parse(taskId);
+
+  const rows = await db
+    .select({
+      id: projectTaskFollowups.id,
+      note: projectTaskFollowups.note,
+      createdBy: projectTaskFollowups.createdBy,
+      createdAt: projectTaskFollowups.createdAt,
+    })
+    .from(projectTaskFollowups)
+    .where(eq(projectTaskFollowups.taskId, parsedTaskId))
+    .orderBy(asc(projectTaskFollowups.createdAt));
+
+  return rows.map(
+    (r): TaskFollowupRow => ({
+      id: r.id,
+      note: r.note,
+      createdBy: r.createdBy,
+      createdAt: r.createdAt.toISOString(),
+    }),
+  );
+}
+
+const AddTaskFollowupSchema = z.object({
+  taskId: z.string().uuid(),
+  note: z.string().trim().min(1).max(4000),
+});
+
+export async function addTaskFollowup(input: {
+  taskId: string;
+  note: string;
+}): Promise<{ id: string }> {
+  const ctx = await getActorContext();
+  // Follow-ups live under a project's deliverable; reuse the same write
+  // capability as createProjectTask (there's no dedicated task capability).
+  requireCapability(ctx, 'update_client');
+  const parsed = AddTaskFollowupSchema.parse(input);
+
+  const [inserted] = await db
+    .insert(projectTaskFollowups)
+    .values({
+      taskId: parsed.taskId,
+      note: parsed.note,
+      createdBy: ctx.userId,
+    })
+    .returning({ id: projectTaskFollowups.id });
+
+  if (!inserted) {
+    throw new AppError('internal', 'project_task_followups insert returned no row');
+  }
+
+  await logAudit({
+    actorId: ctx.userId,
+    entityType: 'project',
+    entityId: parsed.taskId,
+    action: 'insert',
+    changes: { followup: { taskId: parsed.taskId, note: parsed.note } },
+  });
+
+  return { id: inserted.id };
 }
 
 /* -------------------------------------------------------------------------- */

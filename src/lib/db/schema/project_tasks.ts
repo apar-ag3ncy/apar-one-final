@@ -5,7 +5,16 @@ import { deliverableCategories } from './deliverable_categories';
 import { employees } from './employees';
 import { projects } from './projects';
 
-export const projectTaskStatusEnum = pgEnum('project_task_status', ['todo', 'in_progress', 'done']);
+export const projectTaskStatusEnum = pgEnum('project_task_status', [
+  'todo',
+  'in_progress',
+  'done',
+  // Extra manual statuses (0075). 'done' is labelled "Completed" in the UI;
+  // the delayed statuses are still OPEN (they don't stamp completedAt).
+  'little_delayed',
+  'delayed',
+  'cancelled',
+]);
 
 /**
  * A lightweight per-project deliverable board (surfaced as "Deliverables" in
