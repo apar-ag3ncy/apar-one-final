@@ -39,6 +39,21 @@ export const TASK_PRIORITY_OPTIONS: ReadonlyArray<{ value: ProjectTaskPriority; 
   { value: 'nice', label: '🧊 Nice / later' },
 ];
 
+/** PROJECT-level priority (§4.2) — distinct from the deliverable priority above. */
+export type ProjectPriority = 'urgent' | 'high' | 'normal' | 'low';
+
+/** Display metadata for the project priority pill/chip. `rank` sorts the board
+ *  (higher floats up); external projects add a further bump at the call site. */
+export const PROJECT_PRIORITY_META: Record<
+  ProjectPriority,
+  { label: string; bg: string; fg: string; rank: number }
+> = {
+  urgent: { label: 'Urgent', bg: 'rgba(214,58,31,0.16)', fg: '#d6431f', rank: 3 },
+  high: { label: 'High', bg: 'rgba(208,138,30,0.16)', fg: '#d08a1e', rank: 2 },
+  normal: { label: 'Normal', bg: 'rgba(120,120,120,0.16)', fg: 'var(--text-muted)', rank: 1 },
+  low: { label: 'Low', bg: 'rgba(90,120,220,0.14)', fg: '#5a78dc', rank: 0 },
+};
+
 /** DB status → OS kanban column. Cancelled rolls into Completed. */
 export function dbStatusToCol(status: ProjectStatus): ProjectCol {
   switch (status) {

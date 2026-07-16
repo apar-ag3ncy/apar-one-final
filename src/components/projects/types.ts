@@ -29,6 +29,10 @@ export type Project = {
   /** Raw DB enum — fed to the inline status changer so the dropdown reflects
    *  the underlying state rather than the collapsed UI label. */
   dbStatus: ProjectDbStatus;
+  /** Project priority + external flag + owning department (§4.2). */
+  priority: 'urgent' | 'high' | 'normal' | 'low';
+  isExternal: boolean;
+  department: string | null;
   billingModel: BillingModel;
   leadEmployeeId: string | null;
   leadName: string;

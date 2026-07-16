@@ -1,6 +1,6 @@
 'use server';
 
-import { and, desc, eq, inArray, isNull, ne, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, ne, sql, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { logActivity } from '@/lib/activity';
@@ -12,6 +12,7 @@ import {
   entityContacts,
   invoiceLines,
   invoices,
+  projectFollowups,
   projects,
   transactions,
 } from '@/lib/db/schema';
@@ -262,6 +263,11 @@ export async function hardDeleteProjects(ids: readonly string[]): Promise<{
 const ProjectStatusEnum = z.enum(['pitch', 'won', 'active', 'on_hold', 'completed', 'cancelled']);
 export type ProjectStatus = z.infer<typeof ProjectStatusEnum>;
 
+// NOT exported — a `'use server'` module may only export async functions. The
+// enum is internal; the type export below is fine (types are erased at runtime).
+const ProjectPriorityEnum = z.enum(['urgent', 'high', 'normal', 'low']);
+export type ProjectPriority = z.infer<typeof ProjectPriorityEnum>;
+
 const CreateProjectSchema = z.object({
   clientId: z.string().uuid(),
   leadEmployeeId: z.string().uuid().nullable().optional(),
@@ -273,13 +279,19 @@ const CreateProjectSchema = z.object({
   name: z.string().min(1).max(200),
   code: z.string().max(60).nullable().optional(),
   status: ProjectStatusEnum.default('pitch'),
+  /** Priority + external flag + department (§4.2). */
+  priority: ProjectPriorityEnum.default('normal'),
+  isExternal: z.boolean().default(false),
+  department: z.string().trim().max(120).nullable().optional(),
   feePaise: z.bigint().nonnegative().default(0n),
   startedOn: z.string().nullable().optional(),
   targetEndOn: z.string().nullable().optional(),
   notes: z.string().max(2000).nullable().optional(),
 });
 
-export type CreateProjectInput = z.infer<typeof CreateProjectSchema>;
+// z.input (not z.infer): fields with defaults (priority, isExternal, status,
+// feePaise) stay OPTIONAL for callers — createProject parses and applies them.
+export type CreateProjectInput = z.input<typeof CreateProjectSchema>;
 
 /**
  * Generate the next 'PRJ-NNNN' project code by scanning the auto series
@@ -375,9 +387,14 @@ export async function createProject(input: CreateProjectInput): Promise<{ id: st
       name: parsed.name,
       code,
       status: parsed.status,
+      priority: parsed.priority,
+      isExternal: parsed.isExternal,
+      department: parsed.department?.trim() ? parsed.department.trim() : null,
       feePaise: parsed.feePaise,
       startedOn: parsed.startedOn ?? null,
       targetEndOn: parsed.targetEndOn ?? null,
+      // Stamp completion date up front if a project is created already-completed.
+      completedOn: parsed.status === 'completed' ? sql`CURRENT_DATE` : null,
       notes: parsed.notes ?? null,
       createdBy: ctx.userId,
       updatedBy: ctx.userId,
@@ -417,6 +434,9 @@ const UpdateProjectSchema = z.object({
   name: z.string().min(1).max(200).optional(),
   code: z.string().max(60).nullable().optional(),
   status: ProjectStatusEnum.optional(),
+  priority: ProjectPriorityEnum.optional(),
+  isExternal: z.boolean().optional(),
+  department: z.string().trim().max(120).nullable().optional(),
   feePaise: z.bigint().nonnegative().optional(),
   startedOn: z.string().nullable().optional(),
   targetEndOn: z.string().nullable().optional(),
@@ -430,20 +450,41 @@ export async function updateProject(id: string, patch: UpdateProjectInput): Prom
   requireCapability(ctx, 'update_client');
   const parsed = UpdateProjectSchema.parse(patch);
 
+  // The patch is partial, so read the current row up front — we need its status
+  // (to stamp/clear completedOn on a status transition, §2.2.8), its priority
+  // (to detect a change and append a POC follow-up, §4.2), and its client +
+  // client-contact name (to validate the POC and describe the follow-up).
+  const [current] = await db
+    .select({
+      clientId: projects.clientId,
+      status: projects.status,
+      priority: projects.priority,
+      clientContactName: sql<
+        string | null
+      >`(select name from entity_contacts where id = ${projects.clientContactId})`,
+    })
+    .from(projects)
+    .where(and(eq(projects.id, id), isNull(projects.deletedAt)))
+    .limit(1);
+  if (!current) throw new AppError('not_found', 'Project not found.', { detail: { id } });
+
   if (parsed.clientContactId) {
     // Validate against the project's EFFECTIVE client (the patched one when
     // the client is changing in the same call).
-    let clientId = parsed.clientId;
-    if (!clientId) {
-      const [current] = await db
-        .select({ clientId: projects.clientId })
-        .from(projects)
-        .where(and(eq(projects.id, id), isNull(projects.deletedAt)))
-        .limit(1);
-      clientId = current?.clientId;
-    }
+    const clientId = parsed.clientId ?? current.clientId;
     if (clientId) await assertClientContact(parsed.clientContactId, clientId);
   }
+
+  // completedOn crosses the 'completed' boundary: stamp today when entering
+  // 'completed', clear it when leaving. Otherwise leave the column alone.
+  const completedOnPatch: { completedOn?: SQL | null } =
+    parsed.status === 'completed' && current.status !== 'completed'
+      ? { completedOn: sql`CURRENT_DATE` }
+      : parsed.status !== undefined &&
+          parsed.status !== 'completed' &&
+          current.status === 'completed'
+        ? { completedOn: null }
+        : {};
 
   await db
     .update(projects)
@@ -457,13 +498,33 @@ export async function updateProject(id: string, patch: UpdateProjectInput): Prom
       ...(parsed.name !== undefined ? { name: parsed.name } : {}),
       ...(parsed.code !== undefined ? { code: parsed.code } : {}),
       ...(parsed.status !== undefined ? { status: parsed.status } : {}),
+      ...(parsed.priority !== undefined ? { priority: parsed.priority } : {}),
+      ...(parsed.isExternal !== undefined ? { isExternal: parsed.isExternal } : {}),
+      ...(parsed.department !== undefined
+        ? { department: parsed.department?.trim() ? parsed.department.trim() : null }
+        : {}),
       ...(parsed.feePaise !== undefined ? { feePaise: parsed.feePaise } : {}),
       ...(parsed.startedOn !== undefined ? { startedOn: parsed.startedOn } : {}),
       ...(parsed.targetEndOn !== undefined ? { targetEndOn: parsed.targetEndOn } : {}),
       ...(parsed.notes !== undefined ? { notes: parsed.notes } : {}),
+      ...completedOnPatch,
       updatedBy: ctx.userId,
     })
     .where(and(eq(projects.id, id), isNull(projects.deletedAt)));
+
+  // A priority change is worth a follow-up thread entry — the POC should be
+  // told the project's urgency shifted (§4.2).
+  if (parsed.priority !== undefined && parsed.priority !== current.priority) {
+    const poc = current.clientContactName
+      ? ` — POC ${current.clientContactName} to follow up.`
+      : '';
+    await db.insert(projectFollowups).values({
+      projectId: id,
+      note: `Priority changed ${current.priority} → ${parsed.priority}.${poc}`,
+      kind: 'priority_change',
+      createdBy: ctx.userId,
+    });
+  }
 
   await logAudit({
     actorId: ctx.userId,
@@ -510,6 +571,10 @@ export type ProjectListRow = {
    */
   linkedInvoiceCount: number;
   status: ProjectStatus;
+  /** Priority + external flag + department (§4.2). */
+  priority: ProjectPriority;
+  isExternal: boolean;
+  department: string | null;
   feePaise: bigint;
   startedOn: string | null;
   targetEndOn: string | null;
@@ -562,6 +627,9 @@ function projectListSelect() {
         )
     )`,
     status: projects.status,
+    priority: projects.priority,
+    isExternal: projects.isExternal,
+    department: projects.department,
     feePaise: projects.feePaise,
     startedOn: projects.startedOn,
     targetEndOn: projects.targetEndOn,
@@ -588,6 +656,9 @@ type ProjectListDbRow = {
   subFeeSumPaise: string;
   linkedInvoiceCount: number;
   status: ProjectStatus;
+  priority: string;
+  isExternal: boolean;
+  department: string | null;
   feePaise: bigint;
   startedOn: string | null;
   targetEndOn: string | null;
@@ -613,6 +684,9 @@ function mapProjectListRow(r: ProjectListDbRow): ProjectListRow {
     subFeeSumPaise: BigInt(r.subFeeSumPaise ?? '0'),
     linkedInvoiceCount: r.linkedInvoiceCount,
     status: r.status,
+    priority: (r.priority as ProjectPriority) ?? 'normal',
+    isExternal: r.isExternal,
+    department: r.department,
     feePaise: r.feePaise,
     startedOn: r.startedOn,
     targetEndOn: r.targetEndOn,

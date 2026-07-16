@@ -62,6 +62,11 @@ import {
   type ProjectListRow,
 } from '@/lib/server/entities/projects';
 import {
+  addProjectFollowup,
+  listProjectFollowups,
+  type ProjectFollowupRow,
+} from '@/lib/server/entities/project-followups';
+import {
   linkInvoiceToProject,
   listInvoicesForProject,
   listUnattributedInvoicesForClient,
@@ -78,12 +83,14 @@ import { InvoiceComposerDialog } from '@/components/entity/billing/invoice-compo
 import {
   colToDbStatus,
   dbStatusToCol,
+  PROJECT_PRIORITY_META,
   TASK_PRIORITY_EMOJI,
   TASK_PRIORITY_OPTIONS,
 } from '@/lib/project-status';
 import { toast } from 'sonner';
 import { osActions } from '@/lib/os/store';
 import { isAssignableEmployee } from '@/lib/employee-badges';
+import { departmentLabel } from '@/components/employees/types';
 import { navigateBesideFocused } from './navigate';
 import { openInvoiceById, openTransactionOrInvoice } from './open-invoice';
 import { Modal } from './os-modal-kit';
@@ -335,6 +342,9 @@ function Header({
         clientId: input.clientId,
         leadEmployeeId: input.leadEmployeeId ?? null,
         clientContactId: input.clientContactId ?? null,
+        priority: input.priority,
+        isExternal: input.isExternal,
+        department: input.department,
         ...(input.code && input.code !== project.code ? { code: input.code } : {}),
         ...(input.col !== dbStatusToCol(project.dbStatus)
           ? { status: colToDbStatus(input.col) }
@@ -432,6 +442,37 @@ function Header({
               Unlinked
             </span>
           ) : null}
+          {project.isExternal ? (
+            <span
+              className="pill"
+              title="External project — came from outside Apar."
+              style={{ background: 'rgba(90,120,220,0.16)', color: '#5a78dc' }}
+            >
+              <span className="dot" style={{ background: '#5a78dc' }} />
+              External
+            </span>
+          ) : null}
+          {project.priority && project.priority !== 'normal' ? (
+            <span
+              className="pill"
+              title={`Priority: ${PROJECT_PRIORITY_META[project.priority].label}`}
+              style={{
+                background: PROJECT_PRIORITY_META[project.priority].bg,
+                color: PROJECT_PRIORITY_META[project.priority].fg,
+              }}
+            >
+              <span
+                className="dot"
+                style={{ background: PROJECT_PRIORITY_META[project.priority].fg }}
+              />
+              {PROJECT_PRIORITY_META[project.priority].label}
+            </span>
+          ) : null}
+          {project.department ? (
+            <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+              {departmentLabel(project.department)}
+            </span>
+          ) : null}
           <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
             DB state: {PROJECT_DB_STATUS_LABELS[project.dbStatus]}
           </span>
@@ -470,6 +511,9 @@ function Header({
             clientContactName: project.clientContactName,
             col: dbStatusToCol(project.dbStatus),
             fee: project.feePaise,
+            priority: project.priority,
+            isExternal: project.isExternal,
+            department: project.department,
             parentProjectId: project.parentProjectId,
             subProjectCount: project.subProjectCount,
           }}
@@ -533,6 +577,11 @@ function OverviewBody({
             ['Lead', project.leadName],
             ['POC (account manager)', project.clientContactName ?? '—'],
             ['Status', PROJECT_DB_STATUS_LABELS[project.dbStatus]],
+            [
+              'Priority',
+              `${PROJECT_PRIORITY_META[project.priority ?? 'normal'].label}${project.isExternal ? ' · External' : ''}`,
+            ],
+            ['Department', project.department ? departmentLabel(project.department) : '—'],
             hasSubs
               ? ['Total (sub-projects)', formatINRPaise(subTotal)]
               : ['Fee', formatINRPaise(project.feePaise)],
@@ -560,6 +609,7 @@ function OverviewBody({
           ]}
         />
       </OsCard>
+      <ProjectFollowupsCard projectId={project.id} canEdit={canEdit} />
       {!isSubProject ? (
         <OsCard title={`Sub-projects${hasSubs ? ` (${subs.length})` : ''}`}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -670,6 +720,9 @@ function OverviewBody({
                   name: input.name,
                   code: input.code || null,
                   status: colToDbStatus(input.col),
+                  priority: input.priority,
+                  isExternal: input.isExternal,
+                  department: input.department,
                   feePaise: input.fee,
                 });
                 toast.success('Sub-project created.');
@@ -697,6 +750,142 @@ function OverviewBody({
         </OsCard>
       ) : null}
     </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* POC follow-ups (§4.2)                                                        */
+/* -------------------------------------------------------------------------- */
+
+function formatFollowupDate(iso: string): string {
+  const d = new Date(iso);
+  return d.toLocaleDateString('en-IN', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  });
+}
+
+/**
+ * POC follow-up thread on the project (§4.2). Priority changes are appended
+ * automatically (kind 'priority_change'); users add manual follow-ups here.
+ */
+function ProjectFollowupsCard({ projectId, canEdit }: { projectId: string; canEdit: boolean }) {
+  const [rows, setRows] = useState<readonly ProjectFollowupRow[] | null>(null);
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  function reload() {
+    listProjectFollowups(projectId)
+      .then((r) => setRows(r))
+      .catch(() => setRows([]));
+  }
+
+  useEffect(() => {
+    let cancelled = false;
+    listProjectFollowups(projectId)
+      .then((r) => {
+        if (!cancelled) setRows(r);
+      })
+      .catch(() => {
+        if (!cancelled) setRows([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId]);
+
+  async function add() {
+    const n = note.trim();
+    if (!n || busy) return;
+    setBusy(true);
+    try {
+      await addProjectFollowup({ projectId, note: n });
+      setNote('');
+      reload();
+      toast.success('Follow-up added.');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not add follow-up');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <OsCard title="POC follow-ups">
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {rows === null ? (
+          <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0 }}>Loading…</p>
+        ) : rows.length === 0 ? (
+          <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0 }}>
+            No follow-ups yet. Priority changes are logged here automatically; add your own to track
+            what the POC was told.
+          </p>
+        ) : (
+          <ul
+            style={{
+              listStyle: 'none',
+              margin: 0,
+              padding: 0,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 6,
+            }}
+          >
+            {rows.map((r) => (
+              <li
+                key={r.id}
+                style={{
+                  display: 'flex',
+                  gap: 10,
+                  fontSize: 13,
+                  padding: '6px 10px',
+                  border: '1px solid var(--border)',
+                  borderRadius: 8,
+                  alignItems: 'flex-start',
+                  background: r.kind === 'priority_change' ? 'rgba(214,58,31,0.06)' : 'transparent',
+                }}
+              >
+                {r.kind === 'priority_change' ? (
+                  <span title="Automatic — priority changed" style={{ fontSize: 12 }}>
+                    ⚑
+                  </span>
+                ) : null}
+                <span style={{ flex: 1, minWidth: 0, whiteSpace: 'pre-wrap' }}>{r.note}</span>
+                <span style={{ color: 'var(--text-muted)', fontSize: 11, whiteSpace: 'nowrap' }}>
+                  {formatFollowupDate(r.createdAt)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+        {canEdit ? (
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input
+              className="input"
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  void add();
+                }
+              }}
+              placeholder="Add a follow-up note…"
+              style={{ flex: 1 }}
+            />
+            <button
+              className="btn primary"
+              type="button"
+              disabled={busy || !note.trim()}
+              onClick={() => void add()}
+            >
+              Add
+            </button>
+          </div>
+        ) : null}
+      </div>
+    </OsCard>
   );
 }
 

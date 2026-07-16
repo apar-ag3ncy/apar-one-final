@@ -98,7 +98,7 @@ import {
   sendActivityDigestNow,
   type ActivityDigestConfigView,
 } from '@/lib/server/entities/activity-digest';
-import { colToDbStatus, dbStatusToCol } from '@/lib/project-status';
+import { colToDbStatus, dbStatusToCol, PROJECT_PRIORITY_META } from '@/lib/project-status';
 import { toast } from 'sonner';
 
 /* -------------------------------------------------------------------------- */
@@ -1234,6 +1234,7 @@ export function ProjectsApp({
   canDelete?: boolean;
 }) {
   const [search, setSearch] = useState('');
+  const [deptFilter, setDeptFilter] = useState<string>('');
   const [showNew, setShowNew] = useState(false);
   const [newCol, setNewCol] = useState<(typeof PROJECT_COLS)[number]>('Proposed');
   const [editing, setEditing] = useState<Project | null>(null);
@@ -1263,6 +1264,9 @@ export function ProjectsApp({
       lead: r.leadName ? initials(r.leadName) : '—',
       col: dbStatusToCol(r.status),
       fee: r.feePaise,
+      priority: r.priority,
+      isExternal: r.isExternal,
+      department: r.department,
     };
   }
 
@@ -1304,6 +1308,9 @@ export function ProjectsApp({
     code?: string;
     col: (typeof PROJECT_COLS)[number];
     fee: bigint;
+    priority?: 'urgent' | 'high' | 'normal' | 'low';
+    isExternal?: boolean;
+    department?: string | null;
   }) {
     if (!input.clientId) {
       toast.error('Pick a client.');
@@ -1318,6 +1325,9 @@ export function ProjectsApp({
         name: input.name,
         code: input.code?.trim() ? input.code.trim() : null,
         status: colToDbStatus(input.col),
+        priority: input.priority,
+        isExternal: input.isExternal,
+        department: input.department,
         feePaise: input.fee,
       });
       toast.success('Project created.');
@@ -1338,6 +1348,9 @@ export function ProjectsApp({
       code?: string;
       col?: (typeof PROJECT_COLS)[number];
       fee?: bigint;
+      priority?: 'urgent' | 'high' | 'normal' | 'low';
+      isExternal?: boolean;
+      department?: string | null;
     },
   ) {
     try {
@@ -1353,6 +1366,9 @@ export function ProjectsApp({
           ? { code: patch.code.trim() }
           : {}),
         ...(patch.col !== undefined ? { status: colToDbStatus(patch.col) } : {}),
+        ...(patch.priority !== undefined ? { priority: patch.priority } : {}),
+        ...(patch.isExternal !== undefined ? { isExternal: patch.isExternal } : {}),
+        ...(patch.department !== undefined ? { department: patch.department } : {}),
         ...(patch.fee !== undefined ? { feePaise: patch.fee } : {}),
       });
       await reload();
@@ -1383,9 +1399,15 @@ export function ProjectsApp({
     }
   }
 
+  // Distinct departments across live projects — feeds the department-focus filter (§4.2).
+  const projectDepartments = Array.from(
+    new Set(data.projects.map((p) => p.department).filter((d): d is string => Boolean(d))),
+  ).sort((a, b) => a.localeCompare(b));
+
   const q = search.toLowerCase();
   const visible = data.projects.filter((p) => {
     if (p.parentProjectId) return false; // top-level cards only
+    if (deptFilter && p.department !== deptFilter) return false;
     if (!q) return true;
     const selfMatch =
       p.name.toLowerCase().includes(q) ||
@@ -1419,6 +1441,22 @@ export function ProjectsApp({
             onChange={(e) => setSearch(e.target.value)}
           />
         </div>
+        {projectDepartments.length > 0 ? (
+          <select
+            className="input"
+            value={deptFilter}
+            onChange={(e) => setDeptFilter(e.target.value)}
+            title="Department-wise focus (§4.2)"
+            style={{ maxWidth: 180 }}
+          >
+            <option value="">All departments</option>
+            {projectDepartments.map((d) => (
+              <option key={d} value={d}>
+                {departmentLabel(d)}
+              </option>
+            ))}
+          </select>
+        ) : null}
         <button
           className="btn primary"
           type="button"
@@ -1435,7 +1473,13 @@ export function ProjectsApp({
       </div>
       <div className="kanban">
         {PROJECT_COLS.map((col) => {
-          const items = visible.filter((p) => p.col === col);
+          // External + urgent projects float to the top of each column (§4.2).
+          const rankOf = (p: Project) =>
+            (p.isExternal ? 10 : 0) + PROJECT_PRIORITY_META[p.priority ?? 'normal'].rank;
+          const items = visible
+            .filter((p) => p.col === col)
+            .slice()
+            .sort((a, b) => rankOf(b) - rankOf(a));
           return (
             <div key={col} className="kanban-col">
               <div className="kanban-col-head">
@@ -1505,6 +1549,38 @@ export function ProjectsApp({
                           }}
                         >
                           Unlinked
+                        </span>
+                      ) : null}
+                      {p.isExternal ? (
+                        <span
+                          title="External project — came from outside Apar."
+                          style={{
+                            fontSize: 9.5,
+                            fontWeight: 600,
+                            padding: '1px 6px',
+                            borderRadius: 999,
+                            background: 'rgba(90,120,220,0.16)',
+                            color: '#5a78dc',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          External
+                        </span>
+                      ) : null}
+                      {p.priority && p.priority !== 'normal' ? (
+                        <span
+                          title={`Priority: ${PROJECT_PRIORITY_META[p.priority].label}`}
+                          style={{
+                            fontSize: 9.5,
+                            fontWeight: 600,
+                            padding: '1px 6px',
+                            borderRadius: 999,
+                            background: PROJECT_PRIORITY_META[p.priority].bg,
+                            color: PROJECT_PRIORITY_META[p.priority].fg,
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          {PROJECT_PRIORITY_META[p.priority].label}
                         </span>
                       ) : null}
                     </div>
@@ -1642,6 +1718,9 @@ export function ProjectsApp({
                 leadEmployeeId: input.leadEmployeeId ?? null,
                 accountManagerId: input.accountManagerId ?? null,
                 clientContactId: input.clientContactId ?? null,
+                priority: input.priority,
+                isExternal: input.isExternal,
+                department: input.department,
                 ...(input.code && input.code !== editing.code ? { code: input.code } : {}),
                 // Only send status when the column actually changed — the
                 // col↔status map is lossy (won→Proposed→pitch,
