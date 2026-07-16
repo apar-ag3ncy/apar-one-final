@@ -650,9 +650,10 @@ export type ListInvoicesFilters = {
   offset?: number;
 };
 
-export async function listInvoices(
-  filters: ListInvoicesFilters = {},
-): Promise<{ rows: Array<typeof invoices.$inferSelect>; total: number }> {
+export async function listInvoices(filters: ListInvoicesFilters = {}): Promise<{
+  rows: Array<typeof invoices.$inferSelect & { amendmentCount: number }>;
+  total: number;
+}> {
   const ctx = await getActorContext();
   requireCapability(ctx, 'create_invoice');
 
@@ -685,7 +686,36 @@ export async function listInvoices(
     .from(invoices)
     .where(where);
   const total = totalRow?.count ?? 0;
-  return { rows, total };
+
+  // Amendment depth per invoice (chain length beyond the original) so the UI can
+  // show "Amended ×N". One recursive CTE walks `amended_from_invoice_id` from
+  // each root downward; scoped to the client when filtering by one (an amendment
+  // chain never crosses clients). depth 0 = original, depth N = the Nth reissue.
+  const anchorWhere = filters.clientId
+    ? sql`WHERE client_id = ${filters.clientId} AND amended_from_invoice_id IS NULL`
+    : sql`WHERE amended_from_invoice_id IS NULL`;
+  const recursiveWhere = filters.clientId ? sql`WHERE i.client_id = ${filters.clientId}` : sql``;
+  const depthResult = await db.execute<{ id: string; depth: number }>(sql`
+    WITH RECURSIVE chain AS (
+      SELECT id, amended_from_invoice_id, 0 AS depth
+      FROM invoices
+      ${anchorWhere}
+      UNION ALL
+      SELECT i.id, i.amended_from_invoice_id, c.depth + 1
+      FROM invoices i
+      JOIN chain c ON i.amended_from_invoice_id = c.id
+      ${recursiveWhere}
+    )
+    SELECT id::text AS id, depth FROM chain WHERE depth > 0
+  `);
+  const depthRows = Array.isArray(depthResult)
+    ? (depthResult as { id: string; depth: number }[])
+    : [];
+  const depthById = new Map<string, number>();
+  for (const r of depthRows) depthById.set(r.id, Number(r.depth));
+
+  const rowsWithCount = rows.map((r) => ({ ...r, amendmentCount: depthById.get(r.id) ?? 0 }));
+  return { rows: rowsWithCount, total };
 }
 
 /** Convenience: today's date in IST for clients that need a default. */

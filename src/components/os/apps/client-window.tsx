@@ -694,11 +694,6 @@ function OverviewBody({
           value={String(contacts.length)}
           onClick={() => onOpenTab('contacts')}
         />
-        <Kpi
-          label="Documents"
-          value={String(client.documentsCount ?? 0)}
-          onClick={() => onOpenTab('documents')}
-        />
       </div>
       <OsCard title="Profile">
         <DetailGrid

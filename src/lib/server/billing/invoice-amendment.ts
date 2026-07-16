@@ -1,10 +1,11 @@
 'use server';
 
-import { asc, eq } from 'drizzle-orm';
+import { and, asc, eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { logAudit } from '@/lib/audit';
 import { db } from '@/lib/db/client';
+import { auditLog } from '@/lib/db/schema/audit_log';
 import { invoiceLines } from '@/lib/db/schema/invoice_lines';
 import { invoices } from '@/lib/db/schema/invoices';
 import { AppError } from '@/lib/errors';
@@ -211,6 +212,15 @@ export async function amendInvoice(invoiceId: string, reason: string): Promise<A
   return { invoiceId: newDraft.id, documentNumber: newDraft.documentNumber, alreadyPending: false };
 }
 
+/** One line of an invoice at a point in the amendment chain — for track-changes diffs. */
+export type InvoiceAmendmentChainLine = {
+  lineNo: number;
+  description: string;
+  qty: number;
+  ratePaise: string;
+  taxAmountPaise: string;
+};
+
 export type InvoiceAmendmentChainEntry = {
   id: string;
   documentNumber: string;
@@ -218,6 +228,10 @@ export type InvoiceAmendmentChainEntry = {
   documentDate: string;
   capturedTotalPaise: string;
   isCurrent: boolean;
+  /** Amendment reason captured when THIS version was reissued (null for the original). */
+  reason: string | null;
+  placeOfSupply: string | null;
+  lines: InvoiceAmendmentChainLine[];
 };
 
 /**
@@ -241,6 +255,7 @@ export async function getInvoiceAmendmentChain(
     state: invoices.state,
     documentDate: invoices.documentDate,
     capturedTotalPaise: invoices.capturedTotalPaise,
+    placeOfSupply: invoices.placeOfSupply,
     amendedFromInvoiceId: invoices.amendedFromInvoiceId,
   };
 
@@ -281,12 +296,71 @@ export async function getInvoiceAmendmentChain(
     cursor = child;
   }
 
-  return [...back, ...fwd].map((n) => ({
+  const ordered = [...back, ...fwd];
+  const nodeIds = ordered.map((n) => n.id);
+
+  // Per-version line items (for the field-level diff) — one batched query.
+  const lineRows =
+    nodeIds.length > 0
+      ? await db
+          .select({
+            invoiceId: invoiceLines.invoiceId,
+            lineNo: invoiceLines.lineNo,
+            description: invoiceLines.description,
+            qty: invoiceLines.qty,
+            ratePaise: invoiceLines.ratePaise,
+            capturedTaxAmountPaise: invoiceLines.capturedTaxAmountPaise,
+          })
+          .from(invoiceLines)
+          .where(inArray(invoiceLines.invoiceId, nodeIds))
+          .orderBy(asc(invoiceLines.lineNo))
+      : [];
+  const linesByInvoice = new Map<string, InvoiceAmendmentChainLine[]>();
+  for (const l of lineRows) {
+    const arr = linesByInvoice.get(l.invoiceId) ?? [];
+    arr.push({
+      lineNo: l.lineNo,
+      description: l.description,
+      qty: l.qty,
+      ratePaise: String(l.ratePaise),
+      taxAmountPaise: String(l.capturedTaxAmountPaise),
+    });
+    linesByInvoice.set(l.invoiceId, arr);
+  }
+
+  // The amendment reason for each reissued version lives in the audit trail:
+  // amendInvoice writes entity_type='invoices' / action='insert' with a
+  // `reason` in `changes`, keyed to the reissue's id. The root has none.
+  const reasonRows =
+    nodeIds.length > 0
+      ? await db
+          .select({ entityId: auditLog.entityId, changes: auditLog.changes })
+          .from(auditLog)
+          .where(
+            and(
+              eq(auditLog.entityType, 'invoices'),
+              eq(auditLog.action, 'insert'),
+              inArray(auditLog.entityId, nodeIds),
+            ),
+          )
+      : [];
+  const reasonByInvoice = new Map<string, string>();
+  for (const r of reasonRows) {
+    const changes = (r.changes ?? {}) as Record<string, unknown>;
+    const reason = typeof changes.reason === 'string' ? changes.reason : null;
+    // Keep the first non-empty reason we see for a given reissue id.
+    if (reason && !reasonByInvoice.has(r.entityId)) reasonByInvoice.set(r.entityId, reason);
+  }
+
+  return ordered.map((n) => ({
     id: n.id,
     documentNumber: n.documentNumber,
     state: n.state,
     documentDate: String(n.documentDate).slice(0, 10),
     capturedTotalPaise: String(n.capturedTotalPaise),
     isCurrent: n.state !== 'void',
+    reason: reasonByInvoice.get(n.id) ?? null,
+    placeOfSupply: n.placeOfSupply ?? null,
+    lines: linesByInvoice.get(n.id) ?? [],
   }));
 }
