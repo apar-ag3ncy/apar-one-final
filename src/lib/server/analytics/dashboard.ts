@@ -43,6 +43,14 @@ export type DashboardMetrics = {
   officeSpendByVendor: { vendor: string; paise: string }[];
   salaryByDepartment: { department: string; paise: string }[];
   salaryByGrade: { grade: string; paise: string }[];
+  /** Top 12 employees by total salary paid (§2.1a). */
+  salaryByEmployee: { employee: string; paise: string }[];
+  /** Projects grouped into pipeline stages — a point-in-time snapshot (§2.2.6). */
+  pitchFunnel: { stage: string; count: number }[];
+  /** Average completed-project turnover in days (start → completed), or null (§2.2.8). */
+  avgTurnoverDays: number | null;
+  /** Recent completed projects with their start→completed duration in days (§2.2.8). */
+  projectTurnover: { code: string; name: string; days: number }[];
 };
 
 function rowsOf<T>(result: unknown): T[] {
@@ -273,6 +281,71 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
     paise: r.total,
   }));
 
+  // Employee-wise total salary paid — top 12 (the full list lives in the Salary
+  // Book). Same salary_payments source as the dept/grade splits (§2.1a).
+  const empSalaryRows = await db.execute<{ name: string; total: string }>(sql`
+    SELECT e.full_name AS name, COALESCE(SUM(sp.amount_paise), 0)::text AS total
+    FROM salary_payments sp
+    JOIN employees e ON e.id = sp.employee_id
+    WHERE sp.deleted_at IS NULL
+    GROUP BY e.id, e.full_name
+    ORDER BY SUM(sp.amount_paise) DESC
+    LIMIT 12
+  `);
+  const salaryByEmployee = rowsOf<{ name: string; total: string }>(empSalaryRows).map((r) => ({
+    employee: r.name,
+    paise: r.total,
+  }));
+
+  // Pipeline funnel — a point-in-time snapshot of where projects currently sit
+  // (project status IS the funnel: pitch → won → active/on_hold → completed),
+  // plus cancelled as drop-off. NOT a cohort conversion rate (§2.2.6).
+  const statusRows = await db.execute<{ status: string; count: string }>(sql`
+    SELECT status::text AS status, COUNT(*)::text AS count
+    FROM projects
+    WHERE deleted_at IS NULL
+    GROUP BY status
+  `);
+  const statusCount = new Map<string, number>();
+  for (const r of rowsOf<{ status: string; count: string }>(statusRows)) {
+    statusCount.set(r.status, Number(r.count));
+  }
+  const pitchFunnel = [
+    { stage: 'Pitch', count: statusCount.get('pitch') ?? 0 },
+    { stage: 'Won', count: statusCount.get('won') ?? 0 },
+    {
+      stage: 'In progress',
+      count: (statusCount.get('active') ?? 0) + (statusCount.get('on_hold') ?? 0),
+    },
+    { stage: 'Completed', count: statusCount.get('completed') ?? 0 },
+    { stage: 'Cancelled', count: statusCount.get('cancelled') ?? 0 },
+  ];
+
+  // Avg project turnover — days from started_on to completed_on over completed
+  // projects (completed_on backfilled in 0077). date − date = integer days (§2.2.8).
+  const turnoverAvgRows = await db.execute<{ avg: string | null }>(sql`
+    SELECT AVG(completed_on - started_on)::numeric(10,1)::text AS avg
+    FROM projects
+    WHERE status = 'completed' AND deleted_at IS NULL
+      AND completed_on IS NOT NULL AND started_on IS NOT NULL
+      AND completed_on >= started_on
+  `);
+  const avgTurnoverRaw = rowsOf<{ avg: string | null }>(turnoverAvgRows)[0]?.avg ?? null;
+  const avgTurnoverDays = avgTurnoverRaw !== null ? Number(avgTurnoverRaw) : null;
+
+  const turnoverRows = await db.execute<{ code: string | null; name: string; days: string }>(sql`
+    SELECT code, name, (completed_on - started_on)::text AS days
+    FROM projects
+    WHERE status = 'completed' AND deleted_at IS NULL
+      AND completed_on IS NOT NULL AND started_on IS NOT NULL
+      AND completed_on >= started_on
+    ORDER BY completed_on DESC
+    LIMIT 8
+  `);
+  const projectTurnover = rowsOf<{ code: string | null; name: string; days: string }>(
+    turnoverRows,
+  ).map((r) => ({ code: r.code ?? '—', name: r.name, days: Number(r.days) }));
+
   return {
     fyLabel,
     revenueMonthPaise,
@@ -294,6 +367,10 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
     officeSpendByVendor,
     salaryByDepartment,
     salaryByGrade,
+    salaryByEmployee,
+    pitchFunnel,
+    avgTurnoverDays,
+    projectTurnover,
   };
 }
 
