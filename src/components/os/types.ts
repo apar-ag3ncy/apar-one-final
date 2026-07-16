@@ -25,6 +25,7 @@ export type AppId =
   | 'accounts'
   | 'ledger'
   | 'reports'
+  | 'dashboard'
   | 'trash'
   | 'office'
   | 'settings'

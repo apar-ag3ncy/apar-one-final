@@ -30,6 +30,7 @@ export type AppCapability =
   | 'app.attendance.view'
   | 'app.ledger.view'
   | 'app.reports.view'
+  | 'app.dashboard.view'
   | 'app.office.view'
   | 'app.settings.view'
   | 'app.admin_console.view';
@@ -92,6 +93,12 @@ export const APP_REGISTRY: Readonly<Record<AppId, AppRegistryEntry>> = {
     showInDock: false, // lives inside a launcher (Accounts)
     minimumCapability: 'app.reports.view',
     defaultSize: { width: 1000, height: 620 },
+  },
+  dashboard: {
+    id: 'dashboard',
+    showInDock: true, // standalone company-metrics dock app
+    minimumCapability: 'app.dashboard.view',
+    defaultSize: { width: 1100, height: 720 },
   },
   office: {
     id: 'office',

@@ -46,6 +46,7 @@ export const PERMISSIONED_APPS: readonly Exclude<AppId, 'admin_console'>[] = [
   'attendance',
   'ledger',
   'reports',
+  'dashboard',
   'office',
   'settings',
 ] as const;
@@ -82,7 +83,7 @@ export function can(user: User, appId: AppId, action: keyof AppPermission): bool
   // live inside it) — it has no permission row of its own; it is usable
   // whenever any member app is. Real access checks stay per member app.
   if (appId === 'accounts') {
-    return (['clients', 'vendors', 'ledger', 'reports'] as const).some((id) =>
+    return (['clients', 'vendors', 'ledger', 'reports', 'dashboard'] as const).some((id) =>
       can(user, id, action),
     );
   }
