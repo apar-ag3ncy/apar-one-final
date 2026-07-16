@@ -263,7 +263,9 @@ export async function hardDeleteProjects(ids: readonly string[]): Promise<{
 const ProjectStatusEnum = z.enum(['pitch', 'won', 'active', 'on_hold', 'completed', 'cancelled']);
 export type ProjectStatus = z.infer<typeof ProjectStatusEnum>;
 
-export const ProjectPriorityEnum = z.enum(['urgent', 'high', 'normal', 'low']);
+// NOT exported — a `'use server'` module may only export async functions. The
+// enum is internal; the type export below is fine (types are erased at runtime).
+const ProjectPriorityEnum = z.enum(['urgent', 'high', 'normal', 'low']);
 export type ProjectPriority = z.infer<typeof ProjectPriorityEnum>;
 
 const CreateProjectSchema = z.object({
