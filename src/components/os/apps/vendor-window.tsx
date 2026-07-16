@@ -31,6 +31,7 @@ import {
   type VendorProjectTaskRow,
 } from '@/lib/server/entities/project-tasks';
 import { getVendor } from '@/lib/server-stub/entity-actions';
+import { TASK_PRIORITY_EMOJI } from '@/lib/project-status';
 import type { Vendor } from '@/components/vendors/types';
 import { osActions } from '@/lib/os/store';
 import { formatINR } from '../format';
@@ -520,12 +521,8 @@ function StatsBody({ vendorId }: { vendorId: string }) {
 /* Priorities — deliverables handed over to this vendor (§6.3 / §6.5)          */
 /* -------------------------------------------------------------------------- */
 
-const PRIORITY_META: Record<string, { label: string; bg: string; fg: string }> = {
-  urgent_important: { label: 'Urgent & Important', bg: '#6e1a1a', fg: '#f0a2a2' },
-  urgent: { label: 'Urgent', bg: '#7a4e17', fg: '#e7c980' },
-  important: { label: 'Important', bg: '#1a3b6e', fg: '#9ec2f0' },
-  nice: { label: 'Nice / later', bg: '#3a3a3a', fg: '#bdbdbd' },
-};
+// Priority shown as the founder's emoji scale (🔥🔥🔥 / 🔥🔥 / 🧊) via the
+// shared TASK_PRIORITY_EMOJI map, same as the project & employee windows.
 
 function PrioritiesBody({ vendorId }: { vendorId: string }) {
   const [tasks, setTasks] = useState<readonly VendorProjectTaskRow[] | null>(null);
@@ -569,7 +566,7 @@ function PrioritiesBody({ vendorId }: { vendorId: string }) {
     });
 
   const renderTask = (t: VendorProjectTaskRow, i: number) => {
-    const pr = t.priority ? PRIORITY_META[t.priority] : null;
+    const pr = t.priority ? TASK_PRIORITY_EMOJI[t.priority] : null;
     return (
       <div
         key={t.taskId}
@@ -606,11 +603,19 @@ function PrioritiesBody({ vendorId }: { vendorId: string }) {
         </div>
         {pr ? (
           <span
-            className="pill"
-            style={{ background: pr.bg, color: pr.fg, flexShrink: 0, whiteSpace: 'nowrap' }}
+            title={pr.tip}
+            aria-label={pr.label}
+            style={{
+              flexShrink: 0,
+              fontSize: 12,
+              lineHeight: 1,
+              padding: '1px 6px',
+              borderRadius: 999,
+              border: '1px solid var(--border)',
+              whiteSpace: 'nowrap',
+            }}
           >
-            <span className="dot" style={{ background: pr.fg }} />
-            {pr.label}
+            {pr.emoji}
           </span>
         ) : null}
       </div>

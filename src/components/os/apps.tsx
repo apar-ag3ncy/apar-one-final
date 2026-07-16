@@ -1907,6 +1907,17 @@ export function EmployeesApp({
   const activeGroup = visible.filter((e) => e.status === 'active');
   const inactiveGroup = visible.filter((e) => e.status !== 'active');
 
+  // Within Active, split by leadership role (from the free-text designation)
+  // so Managers and Team Leaders each get their own section above the rest of
+  // the team. Empty role sections are skipped in the render below.
+  const activeManagers = activeGroup.filter(
+    (e) => designationLeadKind(e.designation) === 'manager',
+  );
+  const activeTeamLeaders = activeGroup.filter(
+    (e) => designationLeadKind(e.designation) === 'team_leader',
+  );
+  const activeMembers = activeGroup.filter((e) => designationLeadKind(e.designation) === null);
+
   // One card render, shared by both groups. Footer action bar is always
   // visible (not hover-revealed): Edit + Active/Inactive toggle (canEdit) and
   // Delete/Archive (canDelete). stopPropagation keeps the buttons from opening
@@ -2413,13 +2424,33 @@ export function EmployeesApp({
           </div>
         ) : (
           <>
-            <EmployeeGroup
-              label="Active"
-              count={activeGroup.length}
-              empty="No active teammates match these filters."
-            >
-              {activeGroup.map((e) => renderCard(e))}
-            </EmployeeGroup>
+            {activeManagers.length > 0 ? (
+              <EmployeeGroup
+                label="Managers"
+                count={activeManagers.length}
+                empty="No managers match these filters."
+              >
+                {activeManagers.map((e) => renderCard(e))}
+              </EmployeeGroup>
+            ) : null}
+            {activeTeamLeaders.length > 0 ? (
+              <EmployeeGroup
+                label="Team Leaders"
+                count={activeTeamLeaders.length}
+                empty="No team leaders match these filters."
+              >
+                {activeTeamLeaders.map((e) => renderCard(e))}
+              </EmployeeGroup>
+            ) : null}
+            {activeMembers.length > 0 ? (
+              <EmployeeGroup
+                label="Team Members"
+                count={activeMembers.length}
+                empty="No team members match these filters."
+              >
+                {activeMembers.map((e) => renderCard(e))}
+              </EmployeeGroup>
+            ) : null}
             <EmployeeGroup
               label="Inactive"
               count={inactiveGroup.length}
