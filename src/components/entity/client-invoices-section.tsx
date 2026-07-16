@@ -48,6 +48,7 @@ import {
   amendInvoice,
   getInvoiceAmendmentChain,
   type InvoiceAmendmentChainEntry,
+  type InvoiceAmendmentChainLine,
 } from '@/lib/server/billing/invoice-amendment';
 import { convertProformaToInvoice } from '@/lib/server/billing/proforma-conversion';
 import {
@@ -460,7 +461,15 @@ export function ClientInvoicesSection({
                               title="Reissued by amendment — view the amendment history"
                               aria-label="View amendment history"
                             >
-                              <StatusBadge tone="warning" label="Amended" dot={false} />
+                              <StatusBadge
+                                tone="warning"
+                                label={
+                                  inv.amendmentCount > 0
+                                    ? `Amended ×${inv.amendmentCount}`
+                                    : 'Amended'
+                                }
+                                dot={false}
+                              />
                             </button>
                           ) : null}
                         </div>
@@ -824,8 +833,45 @@ function AmendInvoiceDialog({
 /* -------------------------------------------------------------------------- */
 
 /**
+ * Field-level line diff between two consecutive chain versions, keyed by line
+ * number: `+` added, `−` removed, `~` changed (qty or rate). Description-only
+ * changes also surface as `~`.
+ */
+function describeLineDiff(
+  prev: readonly InvoiceAmendmentChainLine[],
+  curr: readonly InvoiceAmendmentChainLine[],
+): string[] {
+  const out: string[] = [];
+  const prevByNo = new Map(prev.map((l) => [l.lineNo, l]));
+  const currByNo = new Map(curr.map((l) => [l.lineNo, l]));
+  for (const l of curr) {
+    const p = prevByNo.get(l.lineNo);
+    if (!p) {
+      out.push(`+ ${l.description} · ${l.qty} × ${formatINR(BigInt(l.ratePaise))}`);
+    } else if (
+      p.description !== l.description ||
+      p.qty !== l.qty ||
+      p.ratePaise !== l.ratePaise ||
+      p.taxAmountPaise !== l.taxAmountPaise
+    ) {
+      out.push(
+        `~ ${l.description}: ${p.qty} × ${formatINR(BigInt(p.ratePaise))} → ${l.qty} × ${formatINR(
+          BigInt(l.ratePaise),
+        )}`,
+      );
+    }
+  }
+  for (const p of prev) {
+    if (!currByNo.has(p.lineNo)) out.push(`− ${p.description} (removed)`);
+  }
+  return out;
+}
+
+/**
  * Scrollable list of the full amendment chain (oldest → newest) for an amended
- * invoice. The live (non-deleted) tip is marked "Current".
+ * invoice. The live (non-deleted) tip is marked "Current". Each reissue beyond
+ * the original shows its captured amendment reason and a field-level diff
+ * (total, place of supply, line changes) versus the version it replaced.
  */
 function AmendmentHistoryDialog({
   target,
@@ -861,12 +907,13 @@ function AmendmentHistoryDialog({
 
   return (
     <Dialog open={target !== null} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>Amendment history</DialogTitle>
           <DialogDescription>
             The full chain of amendments, oldest first. The current invoice is the live
-            (non-deleted) one; earlier entries were reversed on reissue.
+            (non-deleted) one; earlier entries were reversed on reissue. Each reissue shows why it
+            was amended and what changed.
           </DialogDescription>
         </DialogHeader>
 
@@ -880,22 +927,60 @@ function AmendmentHistoryDialog({
         ) : chain.length === 0 ? (
           <div className="text-muted-foreground text-sm">No amendment history.</div>
         ) : (
-          <ul className="max-h-80 divide-y overflow-y-auto rounded-md border">
-            {chain.map((entry) => {
+          <ul className="max-h-96 divide-y overflow-y-auto rounded-md border">
+            {chain.map((entry, i) => {
               const state = entry.state as InvoiceRow['state'];
+              const prev = i > 0 ? chain[i - 1] : null;
+              const totalChanged =
+                prev != null && prev.capturedTotalPaise !== entry.capturedTotalPaise;
+              const posChanged =
+                prev != null && (prev.placeOfSupply ?? '') !== (entry.placeOfSupply ?? '');
+              const lineChanges = prev != null ? describeLineDiff(prev.lines, entry.lines) : [];
               return (
-                <li key={entry.id} className="flex items-center justify-between gap-3 px-3 py-2">
-                  <div className="flex min-w-0 items-center gap-2">
-                    <span className="truncate text-sm font-medium">{entry.documentNumber}</span>
-                    <StatusBadge tone={STATE_TONE[state]} label={STATE_LABEL[state]} dot={false} />
-                    {entry.isCurrent ? (
-                      <StatusBadge tone="success" label="Current" dot={false} />
-                    ) : null}
+                <li key={entry.id} className="flex flex-col gap-1.5 px-3 py-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <span className="truncate text-sm font-medium">{entry.documentNumber}</span>
+                      <StatusBadge
+                        tone={STATE_TONE[state]}
+                        label={STATE_LABEL[state]}
+                        dot={false}
+                      />
+                      {i === 0 ? <StatusBadge tone="neutral" label="Original" dot={false} /> : null}
+                      {entry.isCurrent ? (
+                        <StatusBadge tone="success" label="Current" dot={false} />
+                      ) : null}
+                    </div>
+                    <div className="text-muted-foreground shrink-0 text-right text-xs">
+                      <div>{formatINR(BigInt(entry.capturedTotalPaise))}</div>
+                      <div>{entry.documentDate}</div>
+                    </div>
                   </div>
-                  <div className="text-muted-foreground shrink-0 text-right text-xs">
-                    <div>{formatINR(BigInt(entry.capturedTotalPaise))}</div>
-                    <div>{entry.documentDate}</div>
-                  </div>
+                  {entry.reason ? (
+                    <div className="text-muted-foreground text-xs">
+                      <span className="font-medium">Reason:</span> {entry.reason}
+                    </div>
+                  ) : null}
+                  {prev != null && (totalChanged || posChanged || lineChanges.length > 0) ? (
+                    <div className="text-muted-foreground bg-muted/40 rounded px-2 py-1 text-[11px] leading-relaxed">
+                      <div className="mb-0.5 font-medium">Changes vs {prev.documentNumber}</div>
+                      {totalChanged ? (
+                        <div>
+                          Total: {formatINR(BigInt(prev.capturedTotalPaise))} →{' '}
+                          {formatINR(BigInt(entry.capturedTotalPaise))}
+                        </div>
+                      ) : null}
+                      {posChanged ? (
+                        <div>
+                          Place of supply: {prev.placeOfSupply ?? '—'} →{' '}
+                          {entry.placeOfSupply ?? '—'}
+                        </div>
+                      ) : null}
+                      {lineChanges.map((c, ci) => (
+                        <div key={ci}>{c}</div>
+                      ))}
+                    </div>
+                  ) : null}
                 </li>
               );
             })}
