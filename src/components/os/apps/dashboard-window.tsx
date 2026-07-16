@@ -12,6 +12,7 @@ import { useState } from 'react';
 import { ChartCard, MoneyBarChart, MoneyLineChart, MoneyPieChart } from '@/components/charts';
 import { formatINR, formatPaiseForInput, parseRupeesToPaise } from '@/components/shared/format-inr';
 import { useCurrentUser } from '@/lib/client/use-current-user';
+import { osActions } from '@/lib/os/store';
 import { getDashboardMetrics, type DashboardMetrics } from '@/lib/server/analytics/dashboard';
 import { saveRevenueTargets } from '@/lib/server/settings/revenue-targets';
 
@@ -143,6 +144,12 @@ function DashboardBody({ metrics }: { metrics: DashboardMetrics }) {
     name: g.grade,
     salary: Number(g.paise),
   }));
+  const empSalaryData = metrics.salaryByEmployee.map((e) => ({
+    name: e.employee,
+    salary: Number(e.paise),
+  }));
+  const funnelMax = Math.max(1, ...metrics.pitchFunnel.map((s) => s.count));
+  const turnoverMax = Math.max(1, ...metrics.projectTurnover.map((p) => p.days));
 
   const recruitsSub =
     metrics.newRecruitsByType.length > 0
@@ -195,7 +202,14 @@ function DashboardBody({ metrics }: { metrics: DashboardMetrics }) {
           value={metrics.avgProjectsPerEmployee.toFixed(1)}
           sub="members per live project ÷ headcount"
         />
+        <MetricTile
+          label="Avg project turnover"
+          value={metrics.avgTurnoverDays !== null ? `${metrics.avgTurnoverDays} days` : '—'}
+          sub="start → completed"
+        />
       </div>
+
+      <SalaryDirectory metrics={metrics} />
 
       {/* Charts */}
       <div
@@ -286,25 +300,280 @@ function DashboardBody({ metrics }: { metrics: DashboardMetrics }) {
         </ChartCard>
 
         <ChartCard
-          title="Cold-pitch → conversion funnel"
-          empty
-          emptyTitle="Coming soon"
-          emptyDescription="Pitch-to-win tracking isn't captured yet."
-          height={220}
+          title="Salary by employee"
+          description="Top 12 by disbursed salary"
+          empty={empSalaryData.length === 0}
         >
-          <div />
+          <MoneyBarChart
+            data={empSalaryData}
+            xKey="name"
+            series={[{ dataKey: 'salary', name: 'Salary' }]}
+          />
         </ChartCard>
 
         <ChartCard
-          title="Avg project turnover time"
-          empty
-          emptyTitle="Coming soon"
-          emptyDescription="Project start/close durations aren't tracked yet."
+          title="Projects by pipeline stage"
+          description="Where projects currently sit (snapshot)"
+          empty={metrics.pitchFunnel.every((s) => s.count === 0)}
           height={220}
         >
-          <div />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '4px 2px' }}>
+            {metrics.pitchFunnel.map((s, i) => (
+              <div key={s.stage} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <span style={{ width: 92, fontSize: 12, color: 'var(--text-muted)' }}>
+                  {s.stage}
+                </span>
+                <div
+                  style={{ flex: 1, height: 18, background: 'var(--content-2)', borderRadius: 4 }}
+                >
+                  <div
+                    style={{
+                      width: `${Math.max(2, (s.count / funnelMax) * 100)}%`,
+                      height: '100%',
+                      borderRadius: 4,
+                      background: `var(--chart-${(i % 5) + 1}, #E63A1F)`,
+                    }}
+                  />
+                </div>
+                <span
+                  style={{
+                    width: 28,
+                    textAlign: 'right',
+                    fontSize: 13,
+                    fontVariantNumeric: 'tabular-nums',
+                  }}
+                >
+                  {s.count}
+                </span>
+              </div>
+            ))}
+          </div>
+        </ChartCard>
+
+        <ChartCard
+          title="Avg project turnover"
+          description={
+            metrics.avgTurnoverDays !== null
+              ? `${metrics.avgTurnoverDays} days on average · recent completed`
+              : 'Recent completed projects'
+          }
+          empty={metrics.projectTurnover.length === 0}
+          emptyTitle="No completed projects yet"
+          emptyDescription="Mark a project Completed to see its start→completed duration here."
+          height={220}
+        >
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '4px 2px' }}>
+            {metrics.projectTurnover.map((p) => (
+              <div key={p.code + p.name} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <span
+                  style={{
+                    width: 120,
+                    fontSize: 12,
+                    color: 'var(--text-muted)',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}
+                  title={p.name}
+                >
+                  {p.name}
+                </span>
+                <div
+                  style={{ flex: 1, height: 18, background: 'var(--content-2)', borderRadius: 4 }}
+                >
+                  <div
+                    style={{
+                      width: `${Math.max(2, (p.days / turnoverMax) * 100)}%`,
+                      height: '100%',
+                      borderRadius: 4,
+                      background: 'var(--chart-2, #2E8F5A)',
+                    }}
+                  />
+                </div>
+                <span
+                  style={{
+                    width: 52,
+                    textAlign: 'right',
+                    fontSize: 12,
+                    fontVariantNumeric: 'tabular-nums',
+                  }}
+                >
+                  {p.days}d
+                </span>
+              </div>
+            ))}
+          </div>
         </ChartCard>
       </div>
+    </div>
+  );
+}
+
+/* ── Salary directory (§2.1b) ──────────────────────────────────────────────
+   Employees / Departments / Grades tabs, each a list with an inline share-of-
+   payroll detail and an "Open in Salary Book" drill-in to the ledger window. */
+function SalaryDirectory({ metrics }: { metrics: DashboardMetrics }) {
+  const [tab, setTab] = useState<'employees' | 'departments' | 'grades'>('employees');
+  const [selected, setSelected] = useState<string | null>(null);
+
+  const rows: { key: string; label: string; paise: string }[] =
+    tab === 'employees'
+      ? metrics.salaryByEmployee.map((e) => ({
+          key: e.employee,
+          label: e.employee,
+          paise: e.paise,
+        }))
+      : tab === 'departments'
+        ? metrics.salaryByDepartment.map((d) => ({
+            key: d.department,
+            label: d.department,
+            paise: d.paise,
+          }))
+        : metrics.salaryByGrade.map((g) => ({ key: g.grade, label: g.grade, paise: g.paise }));
+
+  const total = rows.reduce((sum, r) => sum + Number(r.paise), 0);
+
+  return (
+    <div
+      style={{
+        border: '1px solid var(--border)',
+        borderRadius: 12,
+        background: 'var(--content)',
+        overflow: 'hidden',
+      }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 10,
+          padding: '10px 14px',
+          borderBottom: '1px solid var(--border)',
+        }}
+      >
+        <span className="font-display" style={{ fontSize: 14, flex: 1 }}>
+          Salary directory
+        </span>
+        <div
+          role="tablist"
+          style={{
+            display: 'inline-flex',
+            border: '1px solid var(--border)',
+            borderRadius: 8,
+            overflow: 'hidden',
+          }}
+        >
+          {(
+            [
+              ['employees', 'Employees'],
+              ['departments', 'Departments'],
+              ['grades', 'Grades'],
+            ] as const
+          ).map(([v, label]) => (
+            <button
+              key={v}
+              type="button"
+              role="tab"
+              aria-selected={tab === v}
+              onClick={() => {
+                setTab(v);
+                setSelected(null);
+              }}
+              className="btn"
+              style={{
+                border: 'none',
+                borderRadius: 0,
+                fontSize: 12,
+                background: tab === v ? 'var(--apar-red, #E63A1F)' : 'transparent',
+                color: tab === v ? '#fff' : 'inherit',
+              }}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+      {rows.length === 0 ? (
+        <p style={{ fontSize: 13, color: 'var(--text-muted)', padding: 16, margin: 0 }}>
+          No salary payments recorded yet.
+        </p>
+      ) : (
+        <ul
+          style={{
+            listStyle: 'none',
+            margin: 0,
+            padding: 8,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 2,
+          }}
+        >
+          {rows.map((r) => {
+            const share = total > 0 ? (Number(r.paise) / total) * 100 : 0;
+            const open = selected === r.key;
+            return (
+              <li key={r.key}>
+                <button
+                  type="button"
+                  onClick={() => setSelected(open ? null : r.key)}
+                  style={{
+                    width: '100%',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 10,
+                    padding: '7px 10px',
+                    borderRadius: 8,
+                    background: open ? 'var(--content-2)' : 'transparent',
+                    border: 'none',
+                    color: 'var(--text)',
+                    cursor: 'pointer',
+                    fontSize: 13,
+                    textAlign: 'left',
+                  }}
+                >
+                  <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {r.label}
+                  </span>
+                  <span style={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>
+                    {formatINR(BigInt(r.paise))}
+                  </span>
+                </button>
+                {open ? (
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: 10,
+                      padding: '4px 12px 8px',
+                      fontSize: 12,
+                      color: 'var(--text-muted)',
+                    }}
+                  >
+                    <span>{share.toFixed(1)}% of payroll shown here</span>
+                    <button
+                      type="button"
+                      className="btn"
+                      onClick={() =>
+                        osActions.openWindow({
+                          app: 'ledger',
+                          entityId: 'salary-book',
+                          title: 'Salary book',
+                          position: 'beside-focused',
+                        })
+                      }
+                      style={{ fontSize: 12, padding: '3px 10px' }}
+                    >
+                      Open in Salary book →
+                    </button>
+                  </div>
+                ) : null}
+              </li>
+            );
+          })}
+        </ul>
+      )}
     </div>
   );
 }
