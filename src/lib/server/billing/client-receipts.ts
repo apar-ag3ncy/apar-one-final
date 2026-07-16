@@ -21,6 +21,10 @@ import { requireCapability } from '@/lib/rbac';
 import { getActorContext } from '@/lib/server/actor';
 import { createDraftTransaction, postTransaction, reverseTransaction } from '@/lib/server/ledger';
 import { getClientStatement } from '@/lib/server/ledger/statements';
+import {
+  transactionAmendmentChain,
+  type TransactionAmendmentChainEntry,
+} from './transaction-amendment-chain';
 
 import { renderPaymentReceiptPdf, type PaymentReceiptPdfData } from './pdf/payment-receipt';
 import { uploadBillingPdf } from './pdf/upload';
@@ -423,6 +427,8 @@ export type ClientReceiptRow = {
   amountPaise: bigint;
   /** The stored receipt-voucher PDF (the txn's source document) — for view/download. */
   sourceDocumentId: string | null;
+  /** Set on a reissued receipt to the original it amended (§7.2). */
+  amendedFromTransactionId: string | null;
   allocations: ClientReceiptAllocationRow[];
 };
 
@@ -437,6 +443,7 @@ export async function listClientReceipts(clientId: string): Promise<readonly Cli
     status: string;
     amount: string;
     source_document_id: string | null;
+    amended_from_transaction_id: string | null;
   }>(sql`
     SELECT
       t.id::text AS id,
@@ -444,6 +451,7 @@ export async function listClientReceipts(clientId: string): Promise<readonly Cli
       t.txn_date::text AS txn_date,
       t.status::text AS status,
       t.source_document_id::text AS source_document_id,
+      t.amended_from_transaction_id::text AS amended_from_transaction_id,
       COALESCE((
         SELECT SUM(p.amount_paise) FROM postings p
         WHERE p.transaction_id = t.id AND p.side = 'debit'
@@ -509,8 +517,138 @@ export async function listClientReceipts(clientId: string): Promise<readonly Cli
     status: p.status,
     amountPaise: BigInt(p.amount ?? '0'),
     sourceDocumentId: p.source_document_id,
+    amendedFromTransactionId: p.amended_from_transaction_id,
     allocations: allocByPayment.get(p.id) ?? [],
   }));
+}
+
+/* -------------------------------------------------------------------------- */
+/* Amend & reissue + amendment history (§7.2)                                  */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Amend & reissue a posted client receipt (§7.2): reverse the original, record a
+ * corrected receipt, and link the reissue back to the original via
+ * `amendedFromTransactionId` so the two rows form an amendment chain. Mirrors the
+ * invoice amend flow. NON-atomic across the reverse + reissue by design (each is
+ * its own immutable posting); the link UPDATE is safe on a posted row because the
+ * immutability trigger only guards its enumerated columns, not this new one.
+ */
+export async function amendClientReceipt(
+  originalTransactionId: string,
+  input: RecordClientReceiptInput,
+  reason: string,
+): Promise<RecordClientReceiptResult> {
+  const ctx = await getActorContext();
+  requireCapability(ctx, 'receive_payment');
+  requireCapability(ctx, 'reverse_transaction');
+  const originalId = z.string().uuid().parse(originalTransactionId);
+  if (reason.trim().length < 10) {
+    throw new AppError('validation', 'Amendment reason must be at least 10 characters.');
+  }
+
+  // 1) Reverse the original posting.
+  await reverseTransaction(ctx, {
+    transactionId: originalId,
+    reason: `Amended & reissued: ${reason.trim()}`.slice(0, 200),
+  });
+
+  // 2) Record the corrected receipt.
+  const result = await recordClientReceipt(input);
+
+  // 3) Link the reissue back to the original (post-hoc; not a trigger-guarded column).
+  await db
+    .update(transactions)
+    .set({ amendedFromTransactionId: originalId })
+    .where(eq(transactions.id, result.transactionId));
+
+  // 4) Capture the reason in the audit trail so the history dialog can show it.
+  await logAudit({
+    actorId: ctx.userId,
+    entityType: 'transactions',
+    entityId: result.transactionId,
+    action: 'insert',
+    changes: { amendedFrom: originalId, reason: reason.trim(), kind: 'client_receipt_amend' },
+  });
+
+  return result;
+}
+
+export async function getReceiptAmendmentChain(
+  transactionId: string,
+): Promise<readonly TransactionAmendmentChainEntry[]> {
+  await getActorContext();
+  const id = z.string().uuid().parse(transactionId);
+  // Receipt labels are the receipt-voucher number; crcpt refs carry no number,
+  // so fall back to the raw ref (the UI mainly keys on date + amount + status).
+  return transactionAmendmentChain(id, (ref) => ref);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Bulk record (§7.3)                                                          */
+/* -------------------------------------------------------------------------- */
+
+export type BulkRecordResult = {
+  recorded: number;
+  failed: number;
+  errors: { row: number; message: string }[];
+};
+
+const BulkReceiptRowSchema = z.object({
+  paymentDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  totalPaise: z.bigint().positive(),
+  tdsPaise: z.bigint().nonnegative().default(0n),
+  gstPaise: z.bigint().nonnegative().default(0n),
+  mode: z.enum(['bank', 'cash']).default('bank'),
+  transferMethod: z.enum(['neft', 'rtgs', 'imps', 'upi', 'cheque']).nullish(),
+  autoAllocate: z.boolean().default(true),
+  notes: z.string().trim().max(2000).nullish(),
+});
+
+const RecordClientReceiptsBulkSchema = z.object({
+  clientId: z.string().uuid(),
+  bankAccountId: z.string().uuid().nullish(),
+  rows: z.array(BulkReceiptRowSchema).min(1).max(50),
+});
+
+export type RecordClientReceiptsBulkInput = z.input<typeof RecordClientReceiptsBulkSchema>;
+
+/**
+ * Bulk-record client receipts (§7.3): loop the single-receipt engine per row so
+ * each renders its voucher, posts to the ledger and auto-allocates FIFO.
+ * Sequential (FIFO must see prior rows) and non-atomic — a bad row is reported
+ * and skipped, never aborting the batch (office-import contract).
+ */
+export async function recordClientReceiptsBulk(
+  input: RecordClientReceiptsBulkInput,
+): Promise<BulkRecordResult> {
+  const ctx = await getActorContext();
+  requireCapability(ctx, 'receive_payment');
+  const v = RecordClientReceiptsBulkSchema.parse(input);
+
+  const errors: { row: number; message: string }[] = [];
+  let recorded = 0;
+  for (let i = 0; i < v.rows.length; i++) {
+    const r = v.rows[i]!;
+    try {
+      await recordClientReceipt({
+        clientId: v.clientId,
+        mode: r.mode,
+        transferMethod: r.transferMethod ?? null,
+        bankAccountId: r.mode === 'bank' ? (v.bankAccountId ?? null) : null,
+        paymentDate: r.paymentDate,
+        totalPaise: r.totalPaise,
+        tdsPaise: r.tdsPaise,
+        gstPaise: r.gstPaise,
+        notes: r.notes ?? null,
+        autoAllocate: r.autoAllocate,
+      });
+      recorded += 1;
+    } catch (e) {
+      errors.push({ row: i + 1, message: e instanceof Error ? e.message : 'Failed to record' });
+    }
+  }
+  return { recorded, failed: errors.length, errors };
 }
 
 export type OpenInvoiceRow = {

@@ -96,6 +96,14 @@ export const transactions = pgTable(
     reversedBy: uuid().references(() => users.id, { onDelete: 'set null' }),
     reversesId: uuid(),
     correctionForId: uuid(), // partner-only post-close correction link
+    /**
+     * Amend & reissue link (0078, §7.2). Set on the REISSUED transaction to the
+     * original it replaces, so receipts / vendor payments carry the same
+     * amendment-history chain the invoices do. Plain uuid() (like reversesId) to
+     * avoid a self-referential FK in the schema; the column is not in the
+     * posted-immutability trigger's whitelist so it can be set after posting.
+     */
+    amendedFromTransactionId: uuid(),
 
     sourceKind: transactionSourceKindEnum().notNull(),
     sourceDocumentId: uuid().references(() => documents.id, {
@@ -138,6 +146,7 @@ export const transactions = pgTable(
     index().on(t.incurredByEmployeeId, t.txnDate.desc()),
     index().on(t.projectId, t.txnDate.desc()),
     index().on(t.reversesId),
+    index().on(t.amendedFromTransactionId),
     index().on(t.sourceDocumentId),
   ],
 );
