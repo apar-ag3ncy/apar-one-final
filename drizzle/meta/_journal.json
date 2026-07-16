@@ -547,6 +547,13 @@
       "when": 1784000090000,
       "tag": "0077_project_priority_external_department",
       "breakpoints": true
+    },
+    {
+      "idx": 78,
+      "version": "7",
+      "when": 1784100090000,
+      "tag": "0078_transaction_amendments",
+      "breakpoints": true
     }
   ]
 }

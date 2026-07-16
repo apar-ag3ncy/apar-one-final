@@ -11,7 +11,7 @@ import { EmptyState } from '@/components/shared/empty-state';
 import { DateField } from '@/components/shared/date-field';
 import { StatusBadge } from '@/components/shared/status-badge';
 import { formatINR } from '@/components/shared/format-inr';
-import { rupeesToPaise } from '@/lib/money';
+import { paiseToRupees, rupeesToPaise } from '@/lib/money';
 import {
   listAgencyBankAccounts,
   type AgencyBankAccountRow,
@@ -19,15 +19,19 @@ import {
 import { listBankAccounts, type BankAccountRow } from '@/lib/server/entities/bank-accounts';
 import { useEntityMutation } from '@/components/os/auth/entity-mutation-gate';
 import {
+  amendVendorPayment,
   getVendorPayablesByProject,
+  getVendorPaymentAmendmentChain,
   listOpenBillsForVendor,
   listVendorPayments,
   recordVendorPayment,
+  recordVendorPaymentsBulk,
   reverseVendorPayment,
   type OpenBillRow,
   type PayableByProjectRow,
   type VendorPaymentRow,
 } from '@/lib/server/billing/vendor-payments';
+import type { TransactionAmendmentChainEntry } from '@/lib/server/billing/transaction-amendment-chain';
 
 type DueState = { rows: readonly PayableByProjectRow[]; totalPaise: bigint };
 
@@ -50,9 +54,14 @@ export function VendorPaymentsSection({
   const [error, setError] = useState<string | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [reversing, setReversing] = useState<{ id: string; amount: bigint } | null>(null);
+  const [amending, setAmending] = useState<VendorPaymentRow | null>(null);
+  const [historyTarget, setHistoryTarget] = useState<VendorPaymentRow | null>(null);
+  const [bulkOpen, setBulkOpen] = useState(false);
   // OS read-only bridge — permissive outside the OS. Recording a payment is an
   // edit; reversing a posted payment is destructive (delete grant).
   const { canEdit, canDelete } = useEntityMutation();
+  // Amend & reissue reverses the original + records a fresh one, so it needs both.
+  const canAmend = canEdit && canDelete;
 
   async function reload() {
     try {
@@ -110,10 +119,15 @@ export function VendorPaymentsSection({
             <span className="text-muted-foreground text-xs font-normal">({payments.length})</span>
           </CardTitle>
           {canEdit ? (
-            <Button size="sm" onClick={() => setFormOpen(true)}>
-              <PlusIcon className="mr-1.5 size-4" aria-hidden />
-              Record payment
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button size="sm" variant="outline" onClick={() => setBulkOpen(true)}>
+                Bulk record
+              </Button>
+              <Button size="sm" onClick={() => setFormOpen(true)}>
+                <PlusIcon className="mr-1.5 size-4" aria-hidden />
+                Record payment
+              </Button>
+            </div>
           ) : null}
         </CardHeader>
         <CardContent className="p-0">
@@ -136,6 +150,16 @@ export function VendorPaymentsSection({
                           label={p.status}
                           dot={false}
                         />
+                        {p.amendedFromTransactionId ? (
+                          <button
+                            type="button"
+                            onClick={() => setHistoryTarget(p)}
+                            title="Reissued by amendment — view history"
+                            aria-label="View amendment history"
+                          >
+                            <StatusBadge tone="warning" label="Amended" dot={false} />
+                          </button>
+                        ) : null}
                       </div>
                       {p.allocations.length > 0 ? (
                         <ul className="text-muted-foreground flex flex-col gap-0.5 text-xs">
@@ -163,18 +187,31 @@ export function VendorPaymentsSection({
                         {formatINR(p.amountPaise)}
                       </div>
                       <div className="text-muted-foreground text-xs">{formatDate(p.txnDate)}</div>
-                      {p.status === 'posted' && canDelete ? (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="h-7 px-2"
-                          onClick={() =>
-                            setReversing({ id: p.transactionId, amount: p.amountPaise })
-                          }
-                        >
-                          Reverse
-                        </Button>
-                      ) : null}
+                      <div className="flex items-center gap-1.5">
+                        {p.status === 'posted' && canAmend ? (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-7 px-2"
+                            onClick={() => setAmending(p)}
+                            title="Reverse this payment and reissue a corrected one"
+                          >
+                            Amend
+                          </Button>
+                        ) : null}
+                        {p.status === 'posted' && canDelete ? (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-7 px-2"
+                            onClick={() =>
+                              setReversing({ id: p.transactionId, amount: p.amountPaise })
+                            }
+                          >
+                            Reverse
+                          </Button>
+                        ) : null}
+                      </div>
                     </div>
                   </div>
                 </li>
@@ -205,6 +242,427 @@ export function VendorPaymentsSection({
           void reload();
         }}
       />
+
+      <RecordVendorPaymentDialog
+        open={amending !== null}
+        onOpenChange={(o) => !o && setAmending(null)}
+        vendorId={vendorId}
+        vendorName={vendorName}
+        amendOf={
+          amending ? { id: amending.transactionId, amountPaise: amending.amountPaise } : null
+        }
+        onRecorded={() => {
+          setAmending(null);
+          void reload();
+        }}
+      />
+
+      <PaymentHistoryDialog
+        target={historyTarget}
+        onOpenChange={(o) => !o && setHistoryTarget(null)}
+      />
+
+      <BulkRecordPaymentsModal
+        open={bulkOpen}
+        onOpenChange={setBulkOpen}
+        vendorId={vendorId}
+        vendorName={vendorName}
+        onRecorded={() => {
+          setBulkOpen(false);
+          void reload();
+        }}
+      />
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Amendment history dialog (§7.2)                                             */
+/* -------------------------------------------------------------------------- */
+
+function PaymentHistoryDialog({
+  target,
+  onOpenChange,
+}: {
+  target: VendorPaymentRow | null;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const [chain, setChain] = useState<readonly TransactionAmendmentChainEntry[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!target) return;
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      setChain(null);
+      setError(null);
+    });
+    getVendorPaymentAmendmentChain(target.transactionId)
+      .then((c) => !cancelled && setChain(c))
+      .catch((e: unknown) => !cancelled && setError(e instanceof Error ? e.message : 'Failed'));
+    return () => {
+      cancelled = true;
+    };
+  }, [target]);
+
+  if (!target) return null;
+
+  return (
+    <div
+      className="os-modal-overlay"
+      style={modalOverlayStyle}
+      onMouseDown={() => onOpenChange(false)}
+    >
+      <div
+        className="os-modal"
+        style={{ ...modalBoxStyle, width: 480 }}
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <div className="os-modal-head" style={modalHeadStyle}>
+          <div className="font-display" style={{ fontSize: 18 }}>
+            Amendment history
+          </div>
+          <button
+            type="button"
+            className="btn"
+            onClick={() => onOpenChange(false)}
+            aria-label="Close"
+          >
+            ×
+          </button>
+        </div>
+        <div style={{ padding: 18 }}>
+          {error ? (
+            <p style={{ fontSize: 13, color: 'var(--text-error, #c33)' }}>{error}</p>
+          ) : chain === null ? (
+            <Skeleton className="h-24 w-full" />
+          ) : chain.length === 0 ? (
+            <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>No amendment history.</p>
+          ) : (
+            <ul
+              style={{
+                listStyle: 'none',
+                margin: 0,
+                padding: 0,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 6,
+                maxHeight: 360,
+                overflowY: 'auto',
+              }}
+            >
+              {chain.map((e, i) => (
+                <li
+                  key={e.transactionId}
+                  style={{
+                    border: '1px solid var(--border, #e5e7eb)',
+                    borderRadius: 8,
+                    padding: '8px 10px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 3,
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                      <StatusBadge
+                        tone={i === 0 ? 'neutral' : e.isCurrent ? 'success' : 'warning'}
+                        label={i === 0 ? 'Original' : e.isCurrent ? 'Current' : 'Reversed'}
+                        dot={false}
+                      />
+                      <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                        {formatDate(e.txnDate)}
+                      </span>
+                    </div>
+                    <span style={{ fontSize: 13, fontVariantNumeric: 'tabular-nums' }}>
+                      {formatINR(BigInt(e.amountPaise))}
+                    </span>
+                  </div>
+                  {e.reason ? (
+                    <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                      <strong>Reason:</strong> {e.reason}
+                    </div>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'flex-end',
+            padding: '12px 18px 14px',
+            borderTop: '1px solid var(--border, #e5e7eb)',
+          }}
+        >
+          <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>
+            Close
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Bulk record payments (§7.3)                                                 */
+/* -------------------------------------------------------------------------- */
+
+type BulkVendorRow = { date: string; amount: string; tds: string; mode: 'bank' | 'cash' };
+
+function BulkRecordPaymentsModal({
+  open,
+  onOpenChange,
+  vendorId,
+  vendorName,
+  onRecorded,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  vendorId: string;
+  vendorName: string;
+  onRecorded: () => void;
+}) {
+  const [banks, setBanks] = useState<readonly AgencyBankAccountRow[]>([]);
+  const [bankAccountId, setBankAccountId] = useState('');
+  const [rows, setRows] = useState<BulkVendorRow[]>([]);
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      setRows([{ date: todayISO(), amount: '', tds: '', mode: 'bank' }]);
+    });
+    listAgencyBankAccounts()
+      .then((b) => {
+        if (cancelled) return;
+        setBanks(b);
+        if (b[0]) setBankAccountId(b[0].id);
+      })
+      .catch(() => !cancelled && setBanks([]));
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
+
+  if (!open) return null;
+
+  function updateRow(i: number, patch: Partial<BulkVendorRow>) {
+    setRows((prev) => prev.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
+  }
+
+  async function submit() {
+    const parsed: {
+      paymentDate: string;
+      totalPaise: bigint;
+      tdsPaise: bigint;
+      mode: 'bank' | 'cash';
+    }[] = [];
+    try {
+      for (const r of rows) {
+        const total = parsePaise(r.amount);
+        if (total <= 0n) continue;
+        parsed.push({
+          paymentDate: r.date,
+          totalPaise: total,
+          tdsPaise: parsePaise(r.tds),
+          mode: r.mode,
+        });
+      }
+    } catch {
+      toast.error('Enter valid amounts.');
+      return;
+    }
+    if (parsed.length === 0) {
+      toast.error('Add at least one row with an amount.');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const res = await recordVendorPaymentsBulk({ vendorId, bankAccountId, rows: parsed });
+      if (res.failed === 0) {
+        toast.success(`Recorded ${res.recorded} payment${res.recorded === 1 ? '' : 's'}.`);
+      } else {
+        toast.warning(
+          `Recorded ${res.recorded}; ${res.failed} failed (row ${res.errors[0]?.row}: ${res.errors[0]?.message}).`,
+        );
+      }
+      onRecorded();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Bulk record failed.');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div
+      className="os-modal-overlay"
+      style={modalOverlayStyle}
+      onMouseDown={() => !submitting && onOpenChange(false)}
+    >
+      <div className="os-modal" style={modalBoxStyle} onMouseDown={(e) => e.stopPropagation()}>
+        <div className="os-modal-head" style={modalHeadStyle}>
+          <div className="font-display" style={{ fontSize: 18 }}>
+            Bulk record payments — {vendorName}
+          </div>
+          <button
+            type="button"
+            className="btn"
+            onClick={() => onOpenChange(false)}
+            disabled={submitting}
+            aria-label="Close"
+          >
+            ×
+          </button>
+        </div>
+        <div
+          style={{
+            flex: 1,
+            minHeight: 0,
+            padding: 18,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 12,
+            overflowY: 'auto',
+          }}
+        >
+          <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0 }}>
+            Each row posts a payment and auto-applies it FIFO to the vendor&apos;s oldest open
+            bills. Up to 50 rows.
+          </p>
+          <div className="os-field">
+            <span className="os-field-label">From our bank account (for bank rows)</span>
+            <select
+              value={bankAccountId}
+              onChange={(e) => setBankAccountId(e.target.value)}
+              disabled={submitting}
+              style={osInputStyle}
+            >
+              <option value="">Pick a bank</option>
+              {banks.map((b) => (
+                <option key={b.id} value={b.id}>
+                  {b.label} ••{b.accountLast4}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: '150px 1fr 1fr 110px 32px',
+                gap: 8,
+                fontSize: 11,
+                color: 'var(--text-muted)',
+                textTransform: 'uppercase',
+                letterSpacing: '0.04em',
+              }}
+            >
+              <span>Date</span>
+              <span>Amount ₹</span>
+              <span>TDS ₹</span>
+              <span>Mode</span>
+              <span />
+            </div>
+            {rows.map((r, i) => (
+              <div
+                key={i}
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: '150px 1fr 1fr 110px 32px',
+                  gap: 8,
+                  alignItems: 'center',
+                }}
+              >
+                <DateField
+                  value={r.date}
+                  onChange={(next) => updateRow(i, { date: next })}
+                  disabled={submitting}
+                  clearable={false}
+                />
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  placeholder="0.00"
+                  value={r.amount}
+                  onChange={(e) => updateRow(i, { amount: e.target.value })}
+                  disabled={submitting}
+                  style={osInputStyle}
+                />
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  placeholder="0.00"
+                  value={r.tds}
+                  onChange={(e) => updateRow(i, { tds: e.target.value })}
+                  disabled={submitting}
+                  style={osInputStyle}
+                />
+                <select
+                  value={r.mode}
+                  onChange={(e) => updateRow(i, { mode: e.target.value as 'bank' | 'cash' })}
+                  disabled={submitting}
+                  style={osInputStyle}
+                >
+                  <option value="bank">Bank</option>
+                  <option value="cash">Cash</option>
+                </select>
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={() => setRows((prev) => prev.filter((_, idx) => idx !== i))}
+                  disabled={submitting || rows.length === 1}
+                  aria-label="Remove row"
+                  style={{ padding: '4px 8px' }}
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
+          <button
+            type="button"
+            className="btn"
+            style={{ alignSelf: 'flex-start' }}
+            onClick={() =>
+              setRows((prev) =>
+                prev.length >= 50
+                  ? prev
+                  : [...prev, { date: todayISO(), amount: '', tds: '', mode: 'bank' }],
+              )
+            }
+            disabled={submitting || rows.length >= 50}
+          >
+            <PlusIcon className="mr-1 size-3.5" aria-hidden /> Add row
+          </button>
+        </div>
+        <div
+          style={{
+            display: 'flex',
+            gap: 8,
+            justifyContent: 'flex-end',
+            padding: '12px 18px 14px',
+            borderTop: '1px solid var(--border, #e5e7eb)',
+          }}
+        >
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => onOpenChange(false)}
+            disabled={submitting}
+          >
+            Cancel
+          </Button>
+          <Button size="sm" onClick={submit} disabled={submitting}>
+            {submitting ? 'Recording…' : 'Record all'}
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -323,12 +781,15 @@ function RecordVendorPaymentDialog({
   vendorId,
   vendorName,
   onRecorded,
+  amendOf = null,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   vendorId: string;
   vendorName: string;
   onRecorded: () => void;
+  /** When set, this is an "Amend & reissue" of a posted payment (§7.2). */
+  amendOf?: { id: string; amountPaise: bigint } | null;
 }) {
   const [ourBanks, setOurBanks] = useState<readonly AgencyBankAccountRow[]>([]);
   const [vendorBanks, setVendorBanks] = useState<readonly BankAccountRow[]>([]);
@@ -349,6 +810,8 @@ function RecordVendorPaymentDialog({
   const [tdsSection, setTdsSection] = useState('');
   const [gstRupees, setGstRupees] = useState('');
   const [allocs, setAllocs] = useState<Record<string, string>>({});
+  // Amend reason (§7.2) — only used when amendOf is set.
+  const [reason, setReason] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
@@ -363,11 +826,12 @@ function RecordVendorPaymentDialog({
       setBankAccountId('');
       setCounterpartyBankAccountId('');
       setPaymentDate(todayISO());
-      setAmountRupees('');
+      setAmountRupees(amendOf ? paiseToRupees(amendOf.amountPaise) : '');
       setTdsRupees('');
       setTdsSection('');
       setGstRupees('');
       setAllocs({});
+      setReason('');
     });
     listAgencyBankAccounts()
       .then((b) => {
@@ -385,6 +849,9 @@ function RecordVendorPaymentDialog({
     return () => {
       cancelled = true;
     };
+    // Open-transition guard: seed once when the dialog opens; amendOf is stable
+    // for the lifetime of an open amend and must NOT retrigger the reset.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, vendorId]);
 
   useEffect(() => {
@@ -449,27 +916,38 @@ function RecordVendorPaymentDialog({
       return;
     }
 
+    if (amendOf && reason.trim().length < 10) {
+      toast.error('Enter an amendment reason of at least 10 characters.');
+      return;
+    }
+
+    const paymentInput = {
+      vendorId,
+      mode,
+      transferMethod: mode === 'bank' && transferMethod ? transferMethod : null,
+      chequeNumber:
+        mode === 'bank' && transferMethod === 'cheque' ? chequeNumber.trim() || null : null,
+      chequeDate: mode === 'bank' && transferMethod === 'cheque' ? chequeDate || null : null,
+      bankAccountId: mode === 'bank' ? bankAccountId : null,
+      counterpartyBankAccountId:
+        mode === 'bank' && counterpartyBankAccountId ? counterpartyBankAccountId : null,
+      paymentDate,
+      totalPaise,
+      tdsPaise,
+      tdsSection: tdsSection.trim() || null,
+      gstPaise,
+      allocations,
+    };
+
     setSubmitting(true);
     try {
-      const result = await recordVendorPayment({
-        vendorId,
-        mode,
-        transferMethod: mode === 'bank' && transferMethod ? transferMethod : null,
-        chequeNumber:
-          mode === 'bank' && transferMethod === 'cheque' ? chequeNumber.trim() || null : null,
-        chequeDate: mode === 'bank' && transferMethod === 'cheque' ? chequeDate || null : null,
-        bankAccountId: mode === 'bank' ? bankAccountId : null,
-        counterpartyBankAccountId:
-          mode === 'bank' && counterpartyBankAccountId ? counterpartyBankAccountId : null,
-        paymentDate,
-        totalPaise,
-        tdsPaise,
-        tdsSection: tdsSection.trim() || null,
-        gstPaise,
-        allocations,
-      });
+      const result = amendOf
+        ? await amendVendorPayment(amendOf.id, paymentInput, reason.trim())
+        : await recordVendorPayment(paymentInput);
       toast.success(
-        `Payment posted (${result.voucherNumber}) — ${formatINR(result.allocatedPaise)} applied.`,
+        amendOf
+          ? `Amended — payment ${result.voucherNumber} reissued.`
+          : `Payment posted (${result.voucherNumber}) — ${formatINR(result.allocatedPaise)} applied.`,
       );
       onRecorded();
     } catch (e) {
@@ -490,7 +968,7 @@ function RecordVendorPaymentDialog({
       <div className="os-modal" style={modalBoxStyle} onMouseDown={(e) => e.stopPropagation()}>
         <div className="os-modal-head" style={modalHeadStyle}>
           <div className="font-display" style={{ fontSize: 18 }}>
-            Record money paid — {vendorName}
+            {amendOf ? 'Amend & reissue payment' : 'Record money paid'} — {vendorName}
           </div>
           <button
             type="button"
@@ -514,6 +992,24 @@ function RecordVendorPaymentDialog({
             overflowY: 'auto',
           }}
         >
+          {amendOf ? (
+            <div className="os-field">
+              <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '0 0 8px' }}>
+                Reverses the original payment and posts a corrected one, linked as an amendment.
+                Give a reason (≥10 characters).
+              </p>
+              <span className="os-field-label">Amendment reason</span>
+              <textarea
+                rows={2}
+                placeholder="e.g. Wrong amount recorded — corrected per bank statement"
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                disabled={submitting}
+                style={{ ...osInputStyle, resize: 'vertical', minHeight: 48 }}
+              />
+            </div>
+          ) : null}
+
           <div style={{ display: 'flex', gap: 8 }}>
             {(['bank', 'cash'] as const).map((m) => (
               <button
@@ -792,7 +1288,13 @@ function RecordVendorPaymentDialog({
             onClick={submit}
             disabled={submitting || (mode === 'bank' && !bankAccountId)}
           >
-            {submitting ? 'Recording…' : 'Record & post'}
+            {submitting
+              ? amendOf
+                ? 'Reissuing…'
+                : 'Recording…'
+              : amendOf
+                ? 'Reverse & reissue'
+                : 'Record & post'}
           </Button>
         </div>
       </div>

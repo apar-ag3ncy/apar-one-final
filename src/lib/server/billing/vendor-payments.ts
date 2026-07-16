@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 
+import { logAudit } from '@/lib/audit';
 import { db } from '@/lib/db/client';
 import {
   bankAccounts,
@@ -21,6 +22,10 @@ import { createDraftTransaction, postTransaction, reverseTransaction } from '@/l
 import { allocateVendorPayment } from './bill-allocations';
 import { renderPaymentVoucherPdf, type PaymentVoucherPdfData } from './pdf/payment-voucher';
 import { uploadBillingPdf } from './pdf/upload';
+import {
+  transactionAmendmentChain,
+  type TransactionAmendmentChainEntry,
+} from './transaction-amendment-chain';
 
 /**
  * Vendor-side counterpart to `recordManualReceipt` (receipts.ts). Records money
@@ -363,6 +368,8 @@ export type VendorPaymentRow = {
   txnDate: string;
   status: string;
   amountPaise: bigint;
+  /** Set on a reissued payment to the original it amended (§7.2). */
+  amendedFromTransactionId: string | null;
   allocations: VendorPaymentAllocationRow[];
 };
 
@@ -377,12 +384,14 @@ export async function listVendorPayments(vendorId: string): Promise<readonly Ven
     txn_date: string;
     status: string;
     amount: string;
+    amended_from_transaction_id: string | null;
   }>(sql`
     SELECT
       t.id::text AS id,
       t.external_ref,
       t.txn_date::text AS txn_date,
       t.status::text AS status,
+      t.amended_from_transaction_id::text AS amended_from_transaction_id,
       COALESCE((
         SELECT SUM(p.amount_paise) FROM postings p
         WHERE p.transaction_id = t.id AND p.side = 'debit'
@@ -447,8 +456,124 @@ export async function listVendorPayments(vendorId: string): Promise<readonly Ven
     txnDate: p.txn_date,
     status: p.status,
     amountPaise: BigInt(p.amount ?? '0'),
+    amendedFromTransactionId: p.amended_from_transaction_id,
     allocations: allocByPayment.get(p.id) ?? [],
   }));
+}
+
+/* -------------------------------------------------------------------------- */
+/* Amend & reissue + amendment history + bulk (§7.2/7.3)                       */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Amend & reissue a posted vendor payment (§7.2): reverse the original, record a
+ * corrected payment, and link the reissue back via `amendedFromTransactionId`.
+ * Mirrors amendClientReceipt. NOTE (per the reverse caveat): if the original was
+ * allocated to a bill, reversal does not undo the bill_allocations, so amend is
+ * safest on unallocated payments — the reissue's FIFO can otherwise over-apply.
+ */
+export async function amendVendorPayment(
+  originalTransactionId: string,
+  input: RecordVendorPaymentInput,
+  reason: string,
+): Promise<RecordVendorPaymentResult> {
+  const ctx = await getActorContext();
+  requireCapability(ctx, 'post_transaction');
+  requireCapability(ctx, 'reverse_transaction');
+  const originalId = z.string().uuid().parse(originalTransactionId);
+  if (reason.trim().length < 10) {
+    throw new AppError('validation', 'Amendment reason must be at least 10 characters.');
+  }
+
+  await reverseTransaction(ctx, {
+    transactionId: originalId,
+    reason: `Amended & reissued: ${reason.trim()}`.slice(0, 200),
+  });
+
+  const result = await recordVendorPayment(input);
+
+  await db
+    .update(transactions)
+    .set({ amendedFromTransactionId: originalId })
+    .where(eq(transactions.id, result.transactionId));
+
+  await logAudit({
+    actorId: ctx.userId,
+    entityType: 'transactions',
+    entityId: result.transactionId,
+    action: 'insert',
+    changes: { amendedFrom: originalId, reason: reason.trim(), kind: 'vendor_payment_amend' },
+  });
+
+  return result;
+}
+
+export async function getVendorPaymentAmendmentChain(
+  transactionId: string,
+): Promise<readonly TransactionAmendmentChainEntry[]> {
+  await getActorContext();
+  const id = z.string().uuid().parse(transactionId);
+  return transactionAmendmentChain(id, (ref) => billDocNumber(ref));
+}
+
+export type VendorBulkRecordResult = {
+  recorded: number;
+  failed: number;
+  errors: { row: number; message: string }[];
+};
+
+const BulkVendorPaymentRowSchema = z.object({
+  paymentDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  totalPaise: z.bigint().positive(),
+  tdsPaise: z.bigint().nonnegative().default(0n),
+  gstPaise: z.bigint().nonnegative().default(0n),
+  mode: z.enum(['bank', 'cash']).default('bank'),
+  transferMethod: z.enum(['neft', 'rtgs', 'imps', 'upi', 'cheque']).nullish(),
+  notes: z.string().trim().max(2000).nullish(),
+});
+
+const RecordVendorPaymentsBulkSchema = z.object({
+  vendorId: z.string().uuid(),
+  bankAccountId: z.string().uuid().nullish(),
+  rows: z.array(BulkVendorPaymentRowSchema).min(1).max(50),
+});
+
+export type RecordVendorPaymentsBulkInput = z.input<typeof RecordVendorPaymentsBulkSchema>;
+
+/**
+ * Bulk-record vendor payments (§7.3): loop the single-payment engine per row so
+ * each renders its voucher, posts to the ledger and auto-allocates FIFO.
+ * Sequential + non-atomic — a bad row is reported and skipped, never aborting.
+ */
+export async function recordVendorPaymentsBulk(
+  input: RecordVendorPaymentsBulkInput,
+): Promise<VendorBulkRecordResult> {
+  const ctx = await getActorContext();
+  requireCapability(ctx, 'post_transaction');
+  const v = RecordVendorPaymentsBulkSchema.parse(input);
+
+  const errors: { row: number; message: string }[] = [];
+  let recorded = 0;
+  for (let i = 0; i < v.rows.length; i++) {
+    const r = v.rows[i]!;
+    try {
+      await recordVendorPayment({
+        vendorId: v.vendorId,
+        mode: r.mode,
+        transferMethod: r.transferMethod ?? null,
+        bankAccountId: r.mode === 'bank' ? (v.bankAccountId ?? null) : null,
+        paymentDate: r.paymentDate,
+        totalPaise: r.totalPaise,
+        tdsPaise: r.tdsPaise,
+        gstPaise: r.gstPaise,
+        notes: r.notes ?? null,
+      });
+      recorded += 1;
+    } catch (e) {
+      errors.push({ row: i + 1, message: e instanceof Error ? e.message : 'Failed to record' });
+    }
+  }
+  return { recorded, failed: errors.length, errors };
 }
 
 export type OpenBillRow = {
