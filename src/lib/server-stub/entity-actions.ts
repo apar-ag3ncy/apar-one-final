@@ -444,6 +444,9 @@ const PROJECT_LIST_COLUMNS = {
   clientName: clients.name,
   clientArchived: clients.isArchived,
   status: projects.status,
+  priority: projects.priority,
+  isExternal: projects.isExternal,
+  department: projects.department,
   feePaise: projects.feePaise,
   isArchived: projects.isArchived,
   startedOn: projects.startedOn,
@@ -495,6 +498,9 @@ type ProjectListRowResult = {
   clientName: string | null;
   clientArchived: boolean | null;
   status: 'pitch' | 'won' | 'active' | 'on_hold' | 'completed' | 'cancelled';
+  priority: string;
+  isExternal: boolean;
+  department: string | null;
   feePaise: bigint;
   isArchived: boolean;
   startedOn: string | null;
@@ -523,6 +529,9 @@ function rowToProject(r: ProjectListRowResult): Project {
     clientArchived: r.clientArchived ?? true,
     status: mapProjectStatus(r.status, r.isArchived),
     dbStatus: r.status,
+    priority: (r.priority as Project['priority']) ?? 'normal',
+    isExternal: r.isExternal,
+    department: r.department,
     billingModel: FALLBACK_BILLING,
     leadEmployeeId: r.leadEmployeeId,
     leadName: r.leadEmployeeName ?? '—',

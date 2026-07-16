@@ -67,6 +67,17 @@ export const projects = pgTable(
     name: text().notNull(),
     code: text(), // short code: 'LODHA-DIWALI-26'; auto 'PRJ-NNNN' when left blank (0063)
     status: projectStatusEnum().notNull().default('pitch'),
+    /**
+     * Project priority (§4.2) — urgent/high/normal/low. text + CHECK (in the
+     * SQL migration) to match the project_tasks priority pattern. External
+     * projects float above internal ones in the board by a sort rule, not by
+     * mutating this column.
+     */
+    priority: text().notNull().default('normal'),
+    /** Came from outside Apar (external) vs internal work (§4.2). */
+    isExternal: boolean().notNull().default(false),
+    /** Owning department, for the department-wise focus view (§4.2). */
+    department: text(),
     /** Captured SOW amount in paise. Apar doesn't compute — entered as-is. */
     feePaise: bigint({ mode: 'bigint' }).notNull().default(0n),
     startedOn: date(),
@@ -87,6 +98,8 @@ export const projects = pgTable(
     index().on(t.isArchived),
     index().on(t.parentProjectId),
     index().on(t.clientContactId),
+    index().on(t.priority),
+    index().on(t.department),
   ],
 );
 

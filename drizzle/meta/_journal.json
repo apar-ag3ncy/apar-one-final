@@ -540,6 +540,13 @@
       "when": 1783900090000,
       "tag": "0076_project_task_followups",
       "breakpoints": true
+    },
+    {
+      "idx": 77,
+      "version": "7",
+      "when": 1784000090000,
+      "tag": "0077_project_priority_external_department",
+      "breakpoints": true
     }
   ]
 }

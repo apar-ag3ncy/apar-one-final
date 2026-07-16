@@ -20,6 +20,7 @@ import {
 } from '@/lib/server-stub/entity-actions';
 import { listContacts } from '@/lib/server/entities/contacts';
 import { isAssignableEmployee } from '@/lib/employee-badges';
+import { KNOWN_DEPARTMENTS, departmentLabel } from '@/components/employees/types';
 import {
   createProject,
   listSubProjects,
@@ -33,6 +34,15 @@ import { Field, Modal } from './os-modal-kit';
 
 type Option = { id: string; name: string };
 
+export type ProjectPriorityValue = 'urgent' | 'high' | 'normal' | 'low';
+
+export const PROJECT_PRIORITY_OPTIONS: readonly { value: ProjectPriorityValue; label: string }[] = [
+  { value: 'urgent', label: 'Urgent' },
+  { value: 'high', label: 'High' },
+  { value: 'normal', label: 'Normal' },
+  { value: 'low', label: 'Low' },
+];
+
 export type ProjectFormSubmit = {
   name: string;
   client: string;
@@ -44,6 +54,9 @@ export type ProjectFormSubmit = {
   code: string;
   col: ProjectCol;
   fee: bigint;
+  priority: ProjectPriorityValue;
+  isExternal: boolean;
+  department: string | null;
 };
 
 export function ProjectFormModal({
@@ -97,6 +110,11 @@ export function ProjectFormModal({
   const [leadEmployeeId, setLeadEmployeeId] = useState<string>(initial?.leadEmployeeId ?? '');
   const [clientContactId, setClientContactId] = useState<string>(initial?.clientContactId ?? '');
   const [col, setCol] = useState<ProjectCol>(initial?.col ?? defaultCol);
+  const [priority, setPriority] = useState<ProjectPriorityValue>(initial?.priority ?? 'normal');
+  const [isExternal, setIsExternal] = useState<boolean>(initial?.isExternal ?? false);
+  const [department, setDepartment] = useState<string>(
+    initial?.department ? departmentLabel(initial.department) : '',
+  );
   const [fee, setFee] = useState(
     initial?.fee != null && initial.fee > 0n
       ? new Intl.NumberFormat('en-IN').format(initial.fee / 100n)
@@ -203,6 +221,9 @@ export function ProjectFormModal({
       code: code.trim(),
       col,
       fee: feePaise > 0n ? feePaise : 0n,
+      priority,
+      isExternal,
+      department: department.trim() || null,
     });
   };
 
@@ -254,6 +275,45 @@ export function ProjectFormModal({
               <option key={c}>{c}</option>
             ))}
           </select>
+        </Field>
+        <Field label="Priority" hint="External + urgent projects float to the top of the board.">
+          <select
+            value={priority}
+            onChange={(e) => setPriority(e.target.value as ProjectPriorityValue)}
+          >
+            {PROJECT_PRIORITY_OPTIONS.map((p) => (
+              <option key={p.value} value={p.value}>
+                {p.label}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field
+          label="Department"
+          hint="Owning team, for the department-wise focus view. Blank = unassigned."
+        >
+          <input
+            list="project-department-suggestions"
+            value={department}
+            onChange={(e) => setDepartment(e.target.value)}
+            placeholder="e.g. Design"
+          />
+          <datalist id="project-department-suggestions">
+            {KNOWN_DEPARTMENTS.map((d) => (
+              <option key={d} value={departmentLabel(d)} />
+            ))}
+          </datalist>
+        </Field>
+        <Field label="Source" hint="External projects come from outside Apar.">
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+            <input
+              type="checkbox"
+              checked={isExternal}
+              onChange={(e) => setIsExternal(e.target.checked)}
+              style={{ width: 'auto' }}
+            />
+            External project
+          </label>
         </Field>
         <Field label="Lead">
           <select value={leadEmployeeId} onChange={(e) => setLeadEmployeeId(e.target.value)}>
@@ -409,6 +469,9 @@ export function ProjectFormModal({
                   name: input.name,
                   code: input.code || null,
                   status: colToDbStatus(input.col),
+                  priority: input.priority,
+                  isExternal: input.isExternal,
+                  department: input.department,
                   feePaise: input.fee,
                 });
                 toast.success('Sub-project created.');

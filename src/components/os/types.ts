@@ -158,6 +158,10 @@ export type Project = {
   subFeeSumPaise?: Paise;
   /** Invoices linked to this project (header or line level, non-void). */
   linkedInvoiceCount?: number;
+  /** Project priority + external flag + owning department (§4.2). */
+  priority?: 'urgent' | 'high' | 'normal' | 'low';
+  isExternal?: boolean;
+  department?: string | null;
 };
 
 export type Employee = {
