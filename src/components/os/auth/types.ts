@@ -46,6 +46,7 @@ export const PERMISSIONED_APPS: readonly Exclude<AppId, 'admin_console'>[] = [
   'attendance',
   'ledger',
   'reports',
+  'dashboard',
   'office',
   'settings',
 ] as const;

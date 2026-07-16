@@ -65,6 +65,7 @@ import { SalaryBookWindow } from './apps/salary-book-window';
 import { ClientLedgerWindow } from './apps/client-ledger-window';
 import { VendorLedgerWindow } from './apps/vendor-ledger-window';
 import { UniversalLedgerWindow } from './apps/universal-ledger-window';
+import { DashboardWindow } from './apps/dashboard-window';
 import { OfficeApp } from './apps/office-app';
 import type { AppDef, AppId, Client, CmdAction, DockBounds, Vendor } from './types';
 
@@ -961,6 +962,8 @@ function Desktop({ signOut }: { signOut: () => void }) {
               }
               return <UniversalLedgerWindow />;
             }
+            case 'dashboard':
+              return <DashboardWindow />;
             case 'reports': {
               // Each report renders natively inside the OS (no new browser
               // tab). The catalog (no entityId) lists them; a slug entityId
