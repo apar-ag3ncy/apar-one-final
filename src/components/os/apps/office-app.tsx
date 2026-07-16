@@ -1217,6 +1217,62 @@ export function OfficeApp({
                 : 'This FY · salary book →'}
             </div>
           </button>
+
+          {/* Salaries to be paid — opens the attendance-prorated dues + bulk record */}
+          <button
+            type="button"
+            onClick={() =>
+              osActions.openWindow({
+                app: 'ledger',
+                entityId: 'salaries-to-be-paid',
+                title: 'Salaries to be paid',
+                position: 'beside-focused',
+              })
+            }
+            title="See each employee's salary due for the month and record it"
+            style={{
+              background: 'var(--content-2)',
+              border: '1px solid var(--border)',
+              borderRadius: 10,
+              padding: 12,
+              flex: '1 1 150px',
+              minWidth: 140,
+              maxWidth: 220,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 4,
+              textAlign: 'left',
+              cursor: 'pointer',
+              color: 'var(--text)',
+            }}
+          >
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                fontSize: 12,
+                fontWeight: 600,
+              }}
+            >
+              <span
+                style={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: '50%',
+                  background: '#7A5A17',
+                  flexShrink: 0,
+                }}
+              />
+              Salaries to be paid
+            </div>
+            <div className="font-display" style={{ fontSize: 16 }}>
+              Run payroll
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+              Attendance-prorated dues · record →
+            </div>
+          </button>
         </div>
       ) : null}
 

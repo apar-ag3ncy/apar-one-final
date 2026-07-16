@@ -62,6 +62,7 @@ import { OfficeLedgerWindow } from './apps/office-ledger-window';
 import { OfficeUtilitiesWindow } from './apps/office-utilities-window';
 import { TdsBookWindow } from './apps/tds-book-window';
 import { SalaryBookWindow } from './apps/salary-book-window';
+import { SalariesToBePaidWindow } from './apps/salaries-to-be-paid-window';
 import { ClientLedgerWindow } from './apps/client-ledger-window';
 import { VendorLedgerWindow } from './apps/vendor-ledger-window';
 import { UniversalLedgerWindow } from './apps/universal-ledger-window';
@@ -452,6 +453,16 @@ function Desktop({ signOut }: { signOut: () => void }) {
         label: 'Bank Reconciliation',
         hint: 'Finance',
         run: () => openApp('bank_recon'),
+      });
+      list.push({
+        icon: 'book',
+        label: 'Salaries to be paid',
+        hint: 'Payroll',
+        run: () =>
+          openApp('ledger', {
+            entityId: 'salaries-to-be-paid',
+            title: 'Salaries to be paid',
+          }),
       });
     }
     if (can(user, 'reports', 'view')) {
@@ -942,6 +953,9 @@ function Desktop({ signOut }: { signOut: () => void }) {
               }
               if (eid === 'salary-book') {
                 return <SalaryBookWindow />;
+              }
+              if (eid === 'salaries-to-be-paid') {
+                return <SalariesToBePaidWindow />;
               }
               if (eid === 'tds') {
                 return <TdsBookWindow />;

@@ -959,6 +959,98 @@ export async function recordSalaryPayment(
   return { id: row.id, transactionId };
 }
 
+const RecordSalaryPaymentsBulkSchema = z
+  .object({
+    paidOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'paid_on must be YYYY-MM-DD'),
+    /** Bulk supports cash / bank only — cheque carries per-payment numbers, so
+     *  cheque salaries stay on the single per-employee path. */
+    mode: z.enum(['bank', 'cash']).default('cash'),
+    bankAccountId: z.string().uuid().nullable().optional(),
+    notes: z.string().max(2000).nullable().optional(),
+    lines: z
+      .array(
+        z.object({
+          employeeId: z.string().uuid(),
+          amountPaise: PaiseBigInt.refine((v) => v > 0n, 'amount must be greater than 0'),
+          expectedAmountPaise: PaiseBigInt.nullable().optional(),
+          notes: z.string().max(2000).nullable().optional(),
+        }),
+      )
+      .min(1, 'Select at least one salary to record.')
+      .max(200, 'Record at most 200 salaries at once.'),
+  })
+  .refine((v) => v.mode === 'cash' || !!v.bankAccountId, {
+    message: 'Pick the bank account the salaries were paid from.',
+    path: ['bankAccountId'],
+  });
+
+export type RecordSalaryPaymentsBulkInput = z.input<typeof RecordSalaryPaymentsBulkSchema>;
+
+export type RecordSalaryPaymentsBulkResult = {
+  results: {
+    employeeId: string;
+    ok: boolean;
+    id?: string;
+    transactionId?: string;
+    error?: string;
+  }[];
+  postedCount: number;
+  /** Total paise actually posted (successful lines only), as a string. */
+  totalPaise: string;
+};
+
+/**
+ * Record many salary disbursements in one call — the "Record selected" action of
+ * the Salaries-to-be-Paid window. Loops the single-payment path so each line
+ * posts its own immutable double-entry txn (Dr 6100 / Cr 1110-or-1120).
+ *
+ * Deliberately NON-atomic: each posted txn is immutable, so a mid-batch failure
+ * can't be rolled back. Per-line failures are caught and returned in `results`
+ * rather than aborting the whole batch (mirrors the office-import contract).
+ */
+export async function recordSalaryPaymentsBulk(
+  input: RecordSalaryPaymentsBulkInput,
+): Promise<RecordSalaryPaymentsBulkResult> {
+  const ctx = await getActorContext();
+  // Fail fast on the caps the per-line path also checks, so an unauthorized
+  // operator gets one clean error instead of N identical ones.
+  requireCapability(ctx, 'manage_salary_structures');
+  requireCapability(ctx, 'post_transaction');
+  const parsed = RecordSalaryPaymentsBulkSchema.parse(input);
+
+  const results: RecordSalaryPaymentsBulkResult['results'] = [];
+  let postedCount = 0;
+  let totalPaise = 0n;
+  for (const line of parsed.lines) {
+    try {
+      const res = await recordSalaryPayment({
+        employeeId: line.employeeId,
+        paidOn: parsed.paidOn,
+        amountPaise: line.amountPaise,
+        expectedAmountPaise: line.expectedAmountPaise ?? line.amountPaise,
+        mode: parsed.mode,
+        bankAccountId: parsed.mode === 'bank' ? (parsed.bankAccountId ?? null) : null,
+        notes: line.notes ?? parsed.notes ?? null,
+      });
+      results.push({
+        employeeId: line.employeeId,
+        ok: true,
+        id: res.id,
+        transactionId: res.transactionId,
+      });
+      postedCount += 1;
+      totalPaise += line.amountPaise;
+    } catch (e) {
+      results.push({
+        employeeId: line.employeeId,
+        ok: false,
+        error: e instanceof Error ? e.message : 'Failed to record',
+      });
+    }
+  }
+  return { results, postedCount, totalPaise: totalPaise.toString() };
+}
+
 export async function listEmployeeSalaryPayments(
   employeeId: string,
 ): Promise<readonly SalaryPaymentRow[]> {
