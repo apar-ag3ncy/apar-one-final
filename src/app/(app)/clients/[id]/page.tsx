@@ -10,6 +10,7 @@ import {
 import { listContacts } from '@/lib/server/entities/contacts';
 import { getActorContext } from '@/lib/server/actor';
 import { hasCapability } from '@/lib/rbac';
+import { isAssignableEmployee } from '@/lib/employee-badges';
 import type { ClientStatus } from '@/types/api';
 import { ProfileHeader } from '@/components/entity/profile-header';
 import { ClientEditButton } from '@/components/clients/client-edit-button';
@@ -55,7 +56,9 @@ export default async function ClientDetailPage({ params }: Props) {
   const canHardDelete = actor.role === 'partner';
   const canEdit = hasCapability(actor, 'update_client');
 
-  const employeeOptions = employees.map((e) => ({ id: e.id, name: e.fullName }));
+  const employeeOptions = employees
+    .filter((e) => isAssignableEmployee(e.status))
+    .map((e) => ({ id: e.id, name: e.fullName }));
   const userOptions = users.map((u) => ({ id: u.id, name: u.fullName }));
 
   return (
