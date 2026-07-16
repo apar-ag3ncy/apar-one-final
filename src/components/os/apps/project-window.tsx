@@ -1801,7 +1801,11 @@ function AddTeamMatesDialog({
 const TASK_STATUSES: ReadonlyArray<{ value: ProjectTaskStatus; label: string }> = [
   { value: 'todo', label: 'To do' },
   { value: 'in_progress', label: 'In progress' },
-  { value: 'done', label: 'Done' },
+  // 'done' is the enum value; the founder's label for it is "Completed" (0075).
+  { value: 'done', label: 'Completed' },
+  { value: 'little_delayed', label: 'Little delayed' },
+  { value: 'delayed', label: 'Delayed' },
+  { value: 'cancelled', label: 'Cancelled' },
 ];
 
 // Priority is shown as an emoji scale (🔥🔥🔥 / 🔥🔥 / 🧊) via the shared

@@ -28,7 +28,10 @@ import {
 import { getVendorStatement, type Statement } from '@/lib/server/ledger/statements';
 import {
   listVendorProjectTasks,
+  listTaskFollowups,
+  addTaskFollowup,
   type VendorProjectTaskRow,
+  type TaskFollowupRow,
 } from '@/lib/server/entities/project-tasks';
 import { getVendor } from '@/lib/server-stub/entity-actions';
 import { TASK_PRIORITY_EMOJI } from '@/lib/project-status';
@@ -525,6 +528,7 @@ function StatsBody({ vendorId }: { vendorId: string }) {
 // shared TASK_PRIORITY_EMOJI map, same as the project & employee windows.
 
 function PrioritiesBody({ vendorId }: { vendorId: string }) {
+  const { canEdit } = useEntityMutation();
   const [tasks, setTasks] = useState<readonly VendorProjectTaskRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -554,73 +558,11 @@ function PrioritiesBody({ vendorId }: { vendorId: string }) {
     return <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>Loading priorities…</div>;
   }
 
-  const pending = tasks.filter((t) => t.status !== 'done');
+  // Pending = open work still on the vendor's plate. A cancelled deliverable is
+  // neither pending nor completed, so it drops out of both buckets (0075).
+  const pending = tasks.filter((t) => t.status !== 'done' && t.status !== 'cancelled');
   const completed = tasks.filter((t) => t.status === 'done');
-
-  const openProject = (t: VendorProjectTaskRow) =>
-    osActions.openWindow({
-      app: 'projects',
-      entityId: t.projectId,
-      title: t.projectName,
-      position: 'beside-focused',
-    });
-
-  const renderTask = (t: VendorProjectTaskRow, i: number) => {
-    const pr = t.priority ? TASK_PRIORITY_EMOJI[t.priority] : null;
-    return (
-      <div
-        key={t.taskId}
-        onClick={() => openProject(t)}
-        title={`Open ${t.projectName}`}
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          gap: 12,
-          padding: '9px 0',
-          borderTop: i === 0 ? 'none' : '1px solid var(--border)',
-          cursor: 'pointer',
-          fontSize: 13,
-        }}
-      >
-        <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
-          <span
-            style={{
-              fontWeight: 600,
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            {t.title}
-          </span>
-          <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>
-            {t.projectName}
-            {t.projectCode ? ` · ${t.projectCode}` : ''}
-            {t.dueOn ? ` · due ${t.dueOn}` : ''}
-            {t.completedAt ? ` · done ${t.completedAt.slice(0, 10)}` : ''}
-          </span>
-        </div>
-        {pr ? (
-          <span
-            title={pr.tip}
-            aria-label={pr.label}
-            style={{
-              flexShrink: 0,
-              fontSize: 12,
-              lineHeight: 1,
-              padding: '1px 6px',
-              borderRadius: 999,
-              border: '1px solid var(--border)',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            {pr.emoji}
-          </span>
-        ) : null}
-      </div>
-    );
-  };
+  const cancelledCount = tasks.filter((t) => t.status === 'cancelled').length;
 
   const emptyNote = (msg: string) => (
     <p style={{ fontSize: 13, color: 'var(--text-muted)', fontStyle: 'italic', margin: 0 }}>
@@ -633,13 +575,243 @@ function PrioritiesBody({ vendorId }: { vendorId: string }) {
       <OsCard title={`Pending (${pending.length})`}>
         {pending.length === 0
           ? emptyNote('Nothing pending — no open deliverables handed to this vendor.')
-          : pending.map(renderTask)}
+          : pending.map((t, i) => (
+              <VendorPriorityRow key={t.taskId} task={t} index={i} canEdit={canEdit} />
+            ))}
       </OsCard>
       <OsCard title={`Completed (${completed.length})`}>
         {completed.length === 0
           ? emptyNote('No completed deliverables yet.')
-          : completed.map(renderTask)}
+          : completed.map((t, i) => (
+              <VendorPriorityRow key={t.taskId} task={t} index={i} canEdit={canEdit} />
+            ))}
       </OsCard>
+      {cancelledCount > 0 ? (
+        <p style={{ fontSize: 12, color: 'var(--text-muted)', fontStyle: 'italic', margin: 0 }}>
+          {cancelledCount} cancelled deliverable{cancelledCount === 1 ? '' : 's'} (not shown).
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * One deliverable in the vendor's Priorities list, with an expandable follow-up
+ * thread (§7). The row header opens the project on click; a separate
+ * "Follow-ups" toggle reveals the thread. The thread is fetched LAZILY — only on
+ * first expand — so opening the tab doesn't fan out a request per task.
+ */
+function VendorPriorityRow({
+  task,
+  index,
+  canEdit,
+}: {
+  task: VendorProjectTaskRow;
+  index: number;
+  canEdit: boolean;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [followups, setFollowups] = useState<readonly TaskFollowupRow[] | null>(null);
+  const [threadError, setThreadError] = useState<string | null>(null);
+  const [note, setNote] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const pr = task.priority ? TASK_PRIORITY_EMOJI[task.priority] : null;
+
+  const loadThread = () => {
+    setThreadError(null);
+    listTaskFollowups(task.taskId)
+      .then((f) => setFollowups(f))
+      .catch((e: unknown) =>
+        setThreadError(e instanceof Error ? e.message : 'Failed to load follow-ups'),
+      );
+  };
+
+  const toggle = () => {
+    const next = !expanded;
+    setExpanded(next);
+    // Lazy: fetch the thread only the first time this row is opened.
+    if (next && followups === null) loadThread();
+  };
+
+  const openProject = () =>
+    osActions.openWindow({
+      app: 'projects',
+      entityId: task.projectId,
+      title: task.projectName,
+      position: 'beside-focused',
+    });
+
+  const submit = async () => {
+    const trimmed = note.trim();
+    if (!trimmed || saving) return;
+    setSaving(true);
+    try {
+      await addTaskFollowup({ taskId: task.taskId, note: trimmed });
+      setNote('');
+      loadThread();
+    } catch (e: unknown) {
+      setThreadError(e instanceof Error ? e.message : 'Failed to add follow-up');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const count = followups?.length ?? null;
+
+  return (
+    <div style={{ borderTop: index === 0 ? 'none' : '1px solid var(--border)', padding: '9px 0' }}>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 12,
+          fontSize: 13,
+        }}
+      >
+        <div
+          onClick={openProject}
+          title={`Open ${task.projectName}`}
+          style={{
+            minWidth: 0,
+            flex: 1,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 2,
+            cursor: 'pointer',
+          }}
+        >
+          <span
+            style={{
+              fontWeight: 600,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {task.title}
+          </span>
+          <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>
+            {task.projectName}
+            {task.projectCode ? ` · ${task.projectCode}` : ''}
+            {task.dueOn ? ` · due ${task.dueOn}` : ''}
+            {task.completedAt ? ` · done ${task.completedAt.slice(0, 10)}` : ''}
+          </span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+          {pr ? (
+            <span
+              title={pr.tip}
+              aria-label={pr.label}
+              style={{
+                fontSize: 12,
+                lineHeight: 1,
+                padding: '1px 6px',
+                borderRadius: 999,
+                border: '1px solid var(--border)',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {pr.emoji}
+            </span>
+          ) : null}
+          <button
+            type="button"
+            className="btn"
+            onClick={toggle}
+            aria-expanded={expanded}
+            title="Follow-ups"
+            style={{ fontSize: 12, whiteSpace: 'nowrap' }}
+          >
+            {expanded ? '▾' : '▸'} Follow-ups{count !== null ? ` (${count})` : ''}
+          </button>
+        </div>
+      </div>
+      {expanded ? (
+        <div
+          style={{ marginTop: 8, paddingLeft: 4, display: 'flex', flexDirection: 'column', gap: 8 }}
+        >
+          {threadError ? (
+            <p style={{ fontSize: 12, color: 'var(--text-error, #c33)', margin: 0 }}>
+              {threadError}
+            </p>
+          ) : null}
+          {followups === null && !threadError ? (
+            <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0 }}>
+              Loading follow-ups…
+            </p>
+          ) : null}
+          {followups !== null ? (
+            followups.length === 0 ? (
+              <p
+                style={{
+                  fontSize: 12,
+                  color: 'var(--text-muted)',
+                  fontStyle: 'italic',
+                  margin: 0,
+                }}
+              >
+                No follow-ups yet.
+              </p>
+            ) : (
+              <div
+                style={{
+                  maxHeight: 200,
+                  overflowY: 'auto',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 6,
+                }}
+              >
+                {followups.map((f) => (
+                  <div
+                    key={f.id}
+                    style={{ fontSize: 12, borderLeft: '2px solid var(--border)', paddingLeft: 8 }}
+                  >
+                    <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{f.note}</div>
+                    <div style={{ color: 'var(--text-muted)', fontSize: 11, marginTop: 2 }}>
+                      {f.createdBy ? `#${f.createdBy.slice(0, 8)} · ` : ''}
+                      {new Date(f.createdAt).toLocaleString('en-IN', {
+                        day: '2-digit',
+                        month: 'short',
+                        year: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )
+          ) : null}
+          {canEdit ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <textarea
+                className="input"
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                placeholder="Add a follow-up note…"
+                rows={2}
+                maxLength={4000}
+                disabled={saving}
+                style={{ fontSize: 12, resize: 'vertical' }}
+              />
+              <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={() => void submit()}
+                  disabled={saving || note.trim().length === 0}
+                  style={{ fontSize: 12 }}
+                >
+                  {saving ? 'Adding…' : 'Add follow-up'}
+                </button>
+              </div>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }

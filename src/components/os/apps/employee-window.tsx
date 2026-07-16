@@ -889,7 +889,11 @@ function EmployeeProjectCard({
 const TASK_STATUS_LABELS: Record<EmployeeProjectTaskRow['status'], string> = {
   todo: 'To do',
   in_progress: 'In progress',
-  done: 'Done',
+  // 'done' is the enum value; the founder's label for it is "Completed" (0075).
+  done: 'Completed',
+  little_delayed: 'Little delayed',
+  delayed: 'Delayed',
+  cancelled: 'Cancelled',
 };
 
 // Priority chip — shown as the founder's emoji scale (🔥🔥🔥 / 🔥🔥 / 🧊) via
@@ -919,6 +923,11 @@ const TASK_STATUS_TONE: Record<EmployeeProjectTaskRow['status'], { bg: string; f
   todo: { bg: '#3a3a3a', fg: '#bdbdbd' },
   in_progress: { bg: '#7a5a17', fg: '#e7c980' },
   done: { bg: '#1f6b3b', fg: '#a4d8b3' },
+  // Delayed statuses are still open — warning tones (amber → red) (0075).
+  little_delayed: { bg: '#7a4e17', fg: '#e7c980' },
+  delayed: { bg: '#6e1a1a', fg: '#f0a2a2' },
+  // Cancelled — muted/danger, reads as "closed, not completed".
+  cancelled: { bg: '#332727', fg: '#a58a8a' },
 };
 
 function TaskStatusBadge({ status }: { status: EmployeeProjectTaskRow['status'] }) {
