@@ -19,6 +19,7 @@ import {
   listEmployees as listDbEmployees,
 } from '@/lib/server-stub/entity-actions';
 import { listContacts } from '@/lib/server/entities/contacts';
+import { isAssignableEmployee } from '@/lib/employee-badges';
 import {
   createProject,
   listSubProjects,
@@ -75,7 +76,12 @@ export function ProjectFormModal({
       .then(([cs, es]) => {
         if (cancelled) return;
         setClientOptions(cs.map((c) => ({ id: c.id, name: c.name })));
-        setEmployeeOptions(es.map((e) => ({ id: e.id, name: e.fullName })));
+        // Don't offer separated/inactive people as a project lead.
+        setEmployeeOptions(
+          es
+            .filter((e) => isAssignableEmployee(e.status))
+            .map((e) => ({ id: e.id, name: e.fullName })),
+        );
       })
       .catch(() => {
         /* fall through to empty lists */

@@ -58,9 +58,13 @@ export function probationEndsOn(joinedOn: string | Date): string | null {
   return d.toISOString().slice(0, 10);
 }
 
+/** Employment types that serve a probation period — interns included, since
+ *  the founder treats them as probationary. Contractors/consultants are not. */
+const PROBATION_EMPLOYMENT_TYPES = new Set(['full_time', 'part_time', 'intern']);
+
 export type ProbationInput = {
   joinedOn: string | Date;
-  /** DB or UI employment type — probation applies to full/part-time only. */
+  /** DB or UI employment type — probation applies to full/part-time/intern. */
   employmentType: string;
   confirmedOn?: string | null;
   /** Employee status; separated/prospective people never show the chip. */
@@ -77,7 +81,7 @@ export function probationDaysLeft(
   today: string = todayIST(),
 ): number | null {
   if (input.confirmedOn) return null;
-  if (input.employmentType !== 'full_time' && input.employmentType !== 'part_time') return null;
+  if (!PROBATION_EMPLOYMENT_TYPES.has(input.employmentType)) return null;
   if (input.status === 'separated' || input.status === 'prospective') return null;
   const joined = toIsoDay(input.joinedOn);
   if (!joined || joined > today) return null;
@@ -92,6 +96,21 @@ export function probationDaysLeft(
 
 /** Suggested options wherever designation is edited (free text otherwise). */
 export const DESIGNATION_SUGGESTIONS: readonly string[] = ['Team Leader', 'Manager'];
+
+/* -------------------------------------------------------------------------- */
+/* Assignability                                                               */
+/* -------------------------------------------------------------------------- */
+
+/** Statuses that must NOT be offered when picking someone for active work
+ *  (project member / project lead / assignee). Separated + inactive have left;
+ *  prospective hasn't joined. on_leave / notice are still employed → allowed. */
+const NON_ASSIGNABLE_STATUSES = new Set(['separated', 'inactive', 'prospective']);
+
+/** True when this employee may be picked for active work. Unknown/absent
+ *  status defaults to allowed (don't hide someone we can't classify). */
+export function isAssignableEmployee(status?: string | null): boolean {
+  return status == null || !NON_ASSIGNABLE_STATUSES.has(status);
+}
 
 export type LeadDesignationKind = 'team_leader' | 'manager';
 

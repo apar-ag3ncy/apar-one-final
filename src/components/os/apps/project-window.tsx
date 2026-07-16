@@ -78,6 +78,7 @@ import { InvoiceComposerDialog } from '@/components/entity/billing/invoice-compo
 import { colToDbStatus, dbStatusToCol } from '@/lib/project-status';
 import { toast } from 'sonner';
 import { osActions } from '@/lib/os/store';
+import { isAssignableEmployee } from '@/lib/employee-badges';
 import { navigateBesideFocused } from './navigate';
 import { openInvoiceById, openTransactionOrInvoice } from './open-invoice';
 import { Modal } from './os-modal-kit';
@@ -1186,7 +1187,13 @@ function TeamBody({ projectId, canEdit }: { projectId: string; canEdit: boolean 
       .then(([m, emps, pv, vs]) => {
         if (cancelled) return;
         setMembers(m);
-        setEmployees(emps.map((e) => ({ id: e.id, name: e.fullName })));
+        // Only active/on-leave/notice people can be added — never separated or
+        // inactive ones (§ picker fix).
+        setEmployees(
+          emps
+            .filter((e) => isAssignableEmployee(e.status))
+            .map((e) => ({ id: e.id, name: e.fullName })),
+        );
         setVendorLinks(pv);
         setVendorOptions(vs.map((v) => ({ id: v.id, name: v.name })));
         setLoading(false);

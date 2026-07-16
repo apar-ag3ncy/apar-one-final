@@ -27,6 +27,7 @@ import {
 import type { Project, ProjectStatus } from '@/components/projects/types';
 import { useEntityMutation } from '../auth/entity-mutation-gate';
 import { useRealtimeActivity } from '@/lib/client/use-realtime-activity';
+import { isAssignableEmployee } from '@/lib/employee-badges';
 import { getEntityActivity } from '@/lib/server/entities/activity';
 import { listContacts, type ContactRow } from '@/lib/server/entities/contacts';
 import { getClientStatement, type Statement } from '@/lib/server/ledger/statements';
@@ -146,7 +147,9 @@ export function ClientWindow({ clientId, onClose }: ClientWindowProps) {
           client,
           contacts,
           projects,
-          employees: employees.map((e) => ({ id: e.id, name: e.fullName })),
+          employees: employees
+            .filter((e) => isAssignableEmployee(e.status))
+            .map((e) => ({ id: e.id, name: e.fullName })),
           users: users.map((u) => ({ id: u.id, name: u.fullName })),
         });
         if (client.logoDocumentId) {
