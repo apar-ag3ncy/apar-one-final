@@ -75,7 +75,12 @@ import {
   type CompanyBankAccountOption,
 } from '@/lib/server/settings/company';
 import { InvoiceComposerDialog } from '@/components/entity/billing/invoice-composer';
-import { colToDbStatus, dbStatusToCol } from '@/lib/project-status';
+import {
+  colToDbStatus,
+  dbStatusToCol,
+  TASK_PRIORITY_EMOJI,
+  TASK_PRIORITY_OPTIONS,
+} from '@/lib/project-status';
 import { toast } from 'sonner';
 import { osActions } from '@/lib/os/store';
 import { isAssignableEmployee } from '@/lib/employee-badges';
@@ -1799,18 +1804,9 @@ const TASK_STATUSES: ReadonlyArray<{ value: ProjectTaskStatus; label: string }> 
   { value: 'done', label: 'Done' },
 ];
 
-// Eisenhower priority tags (0070). Chip colour doubles as the select label
-// colour cue: red → orange → blue → gray, hottest first.
-const TASK_PRIORITIES: ReadonlyArray<{
-  value: ProjectTaskPriority;
-  label: string;
-  color: string;
-}> = [
-  { value: 'urgent_important', label: 'Urgent & Important', color: '#e5484d' },
-  { value: 'urgent', label: 'Urgent', color: '#f76b15' },
-  { value: 'important', label: 'Important', color: '#3b82f6' },
-  { value: 'nice', label: 'Nice / Not right now', color: '#8b8d98' },
-];
+// Priority is shown as an emoji scale (🔥🔥🔥 / 🔥🔥 / 🧊) via the shared
+// TASK_PRIORITY_EMOJI map; the picker offers the founder's 3 tiers via
+// TASK_PRIORITY_OPTIONS (both from '@/lib/project-status').
 
 const TASK_SOURCES: ReadonlyArray<{ value: ProjectTaskSource; label: string; short: string }> = [
   { value: 'apar', label: 'From Apar', short: 'Apar' },
@@ -2104,7 +2100,7 @@ function TasksBody({
 
   const renderTask = (t: ProjectTaskRow) => {
     const done = t.status === 'done';
-    const priority = t.priority ? TASK_PRIORITIES.find((p) => p.value === t.priority) : undefined;
+    const priority = t.priority ? TASK_PRIORITY_EMOJI[t.priority] : undefined;
     const source = t.source ? TASK_SOURCES.find((s) => s.value === t.source) : undefined;
     return (
       <li
@@ -2131,18 +2127,19 @@ function TasksBody({
           {t.title}
           {priority ? (
             <span
+              title={priority.tip}
+              aria-label={priority.label}
               style={{
                 marginLeft: 8,
-                fontSize: 10,
-                fontWeight: 600,
-                padding: '1px 7px',
+                fontSize: 12,
+                lineHeight: 1,
+                padding: '1px 6px',
                 borderRadius: 999,
-                border: `1px solid ${priority.color}`,
-                color: priority.color,
+                border: '1px solid var(--border)',
                 whiteSpace: 'nowrap',
               }}
             >
-              {priority.label}
+              {priority.emoji}
             </span>
           ) : null}
           {t.categoryName ? (
@@ -2225,10 +2222,10 @@ function TasksBody({
               value={t.priority ?? ''}
               onChange={(e) => void changePriority(t.id, e.target.value)}
               disabled={busy}
-              title="Priority (Eisenhower)"
+              title="Priority"
             >
               <option value="">No priority</option>
-              {TASK_PRIORITIES.map((p) => (
+              {TASK_PRIORITY_OPTIONS.map((p) => (
                 <option key={p.value} value={p.value}>
                   {p.label}
                 </option>
@@ -2383,10 +2380,10 @@ function TasksBody({
             className="input"
             value={draftPriority}
             onChange={(e) => setDraftPriority(e.target.value)}
-            title="Priority (Eisenhower — optional)"
+            title="Priority (optional)"
           >
             <option value="">No priority</option>
-            {TASK_PRIORITIES.map((p) => (
+            {TASK_PRIORITY_OPTIONS.map((p) => (
               <option key={p.value} value={p.value}>
                 {p.label}
               </option>

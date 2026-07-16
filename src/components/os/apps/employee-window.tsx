@@ -31,6 +31,7 @@ import { listContacts, type ContactRow } from '@/lib/server/entities/contacts';
 import { getEmployeeSummary, type EmployeeSummary } from '@/lib/server/entities/employee-summary';
 import { getEmployeeKpis, type EmployeeKpis } from '@/lib/server/entities/employee-kpis';
 import { isNewJoiner, probationDaysLeft } from '@/lib/employee-badges';
+import { TASK_PRIORITY_EMOJI } from '@/lib/project-status';
 import { addEmployeeAchievement } from '@/lib/server/entities/employee-achievements';
 import {
   listEmployeeProjects,
@@ -891,34 +892,25 @@ const TASK_STATUS_LABELS: Record<EmployeeProjectTaskRow['status'], string> = {
   done: 'Done',
 };
 
-// Eisenhower priority chip (0070) — same palette as the Deliverables tab in
-// the project window: red / orange / blue / gray, hottest first.
-const TASK_PRIORITY_CHIP: Record<
-  NonNullable<EmployeeProjectTaskRow['priority']>,
-  { label: string; color: string }
-> = {
-  urgent_important: { label: 'Urgent & Important', color: '#e5484d' },
-  urgent: { label: 'Urgent', color: '#f76b15' },
-  important: { label: 'Important', color: '#3b82f6' },
-  nice: { label: 'Nice / Not right now', color: '#8b8d98' },
-};
-
+// Priority chip — shown as the founder's emoji scale (🔥🔥🔥 / 🔥🔥 / 🧊) via
+// the shared TASK_PRIORITY_EMOJI map, same as the project & vendor windows.
 function TaskPriorityChip({ priority }: { priority: EmployeeProjectTaskRow['priority'] }) {
   if (!priority) return null;
-  const chip = TASK_PRIORITY_CHIP[priority];
+  const chip = TASK_PRIORITY_EMOJI[priority];
   return (
     <span
+      title={chip.tip}
+      aria-label={chip.label}
       style={{
-        fontSize: 10,
-        fontWeight: 600,
-        padding: '1px 7px',
+        fontSize: 12,
+        lineHeight: 1,
+        padding: '1px 6px',
         borderRadius: 999,
-        border: `1px solid ${chip.color}`,
-        color: chip.color,
+        border: '1px solid var(--border)',
         whiteSpace: 'nowrap',
       }}
     >
-      {chip.label}
+      {chip.emoji}
     </span>
   );
 }
