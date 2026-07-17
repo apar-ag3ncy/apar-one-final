@@ -36,11 +36,14 @@ import {
   DESIGNATION_SUGGESTIONS,
   LEAD_DESIGNATION_META,
   addMonthsDays,
-  designationLeadKind,
+  designationLeadKindWith,
   isNewJoiner,
   probationDaysLeft,
   splitMonthsDays,
+  type LeadRolePolicy,
 } from '@/lib/employee-badges';
+import { getTeamPolicy, saveTeamPolicy } from '@/lib/server/settings/team-policy';
+import type { TeamPolicy } from '@/lib/server/settings/team-policy-data';
 import { todayIST } from '@/lib/ist-date';
 import {
   ACCENTS,
@@ -1857,6 +1860,11 @@ export function EmployeesApp({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [confirmDel, setConfirmDel] = useState<DirRow | null>(null);
   const [togglingId, setTogglingId] = useState<string | null>(null);
+  // Cards (grouped directory) or the reporting-line org tree.
+  const [viewMode, setViewMode] = useState<'cards' | 'tree'>('cards');
+  // Settings-managed leadership roles + leave policy; null until loaded →
+  // the chips fall back to the built-in TL/Manager heuristic.
+  const [teamPolicy, setTeamPolicy] = useState<TeamPolicy | null>(null);
   // Today's resolved attendance, keyed by employeeId. Powers the per-card
   // "Attendance today" chip. Best-effort — stays empty if the fetch fails.
   const [attToday, setAttToday] = useState<Record<string, AttendanceStatus>>({});
@@ -1944,6 +1952,13 @@ export function EmployeesApp({
       .catch(() => {
         /* no chip if attendance can't be resolved */
       });
+    getTeamPolicy()
+      .then((p) => {
+        if (!cancelled) setTeamPolicy(p);
+      })
+      .catch(() => {
+        /* built-in TL/Manager heuristic when the policy can't be loaded */
+      });
     return () => {
       cancelled = true;
     };
@@ -1991,16 +2006,18 @@ export function EmployeesApp({
   const activeGroup = visible.filter((e) => e.status === 'active');
   const inactiveGroup = visible.filter((e) => e.status !== 'active');
 
-  // Within Active, split by leadership role (from the free-text designation)
-  // so Managers and Team Leaders each get their own section above the rest of
-  // the team. Empty role sections are skipped in the render below.
+  // Within Active, split by leadership role — matched against the
+  // settings-managed role lists (Settings → Team → Team policies), falling
+  // back to the built-in TL/Manager heuristic until the policy loads.
   const activeManagers = activeGroup.filter(
-    (e) => designationLeadKind(e.designation) === 'manager',
+    (e) => designationLeadKindWith(e.designation, teamPolicy) === 'manager',
   );
   const activeTeamLeaders = activeGroup.filter(
-    (e) => designationLeadKind(e.designation) === 'team_leader',
+    (e) => designationLeadKindWith(e.designation, teamPolicy) === 'team_leader',
   );
-  const activeMembers = activeGroup.filter((e) => designationLeadKind(e.designation) === null);
+  const activeMembers = activeGroup.filter(
+    (e) => designationLeadKindWith(e.designation, teamPolicy) === null,
+  );
 
   // One card render, shared by both groups. Footer action bar is always
   // visible (not hover-revealed): Edit + Active/Inactive toggle (canEdit) and
@@ -2023,7 +2040,7 @@ export function EmployeesApp({
       probationEndsOn: e.probationEndsOn ?? null,
       status: e.status,
     });
-    const leadKind = designationLeadKind(e.designation);
+    const leadKind = designationLeadKindWith(e.designation, teamPolicy);
     return (
       <div
         key={e.id}
@@ -2482,6 +2499,15 @@ export function EmployeesApp({
           onClick={() => setShowInactive((v) => !v)}
         />
         <span style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>Show inactive</span>
+        <button
+          type="button"
+          className={`btn ${viewMode === 'tree' ? 'primary' : ''}`}
+          onClick={() => setViewMode((v) => (v === 'tree' ? 'cards' : 'tree'))}
+          title="Reporting-line tree — who reports to whom"
+          aria-pressed={viewMode === 'tree'}
+        >
+          Org tree
+        </button>
       </div>
 
       <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
@@ -2507,6 +2533,8 @@ export function EmployeesApp({
               ? 'No teammates yet — click "Invite" to add the first.'
               : 'No teammates match these filters.'}
           </div>
+        ) : viewMode === 'tree' ? (
+          <OrgTreeView rows={visible} policy={teamPolicy} />
         ) : (
           <>
             {activeManagers.length > 0 ? (
@@ -2650,6 +2678,198 @@ function EmployeeGroup({
           {children}
         </div>
       )}
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Org tree — the reporting-line hierarchy                                     */
+/* -------------------------------------------------------------------------- */
+
+type OrgTreeNode = { e: DirRow; children: OrgTreeNode[] };
+
+/**
+ * Reporting-line tree built from `reportsTo`. Roots = teammates with no
+ * manager (or whose manager isn't in the visible set — filters/search can
+ * orphan a subtree; the orphan then shows as a root rather than vanishing).
+ * A reporting cycle (a→b→a) would otherwise drop both people, so any node
+ * found inside a cycle is promoted to a root. Managers sort before Team
+ * Leaders before everyone else at each level.
+ */
+function OrgTreeView({
+  rows,
+  policy,
+}: {
+  rows: readonly DirRow[];
+  policy: LeadRolePolicy | null;
+}) {
+  const byId = new Map<string, OrgTreeNode>(rows.map((e) => [e.id, { e, children: [] }]));
+  const roots: OrgTreeNode[] = [];
+  for (const node of byId.values()) {
+    const parent = node.e.reportsTo ? byId.get(node.e.reportsTo) : undefined;
+    if (!parent || parent === node) {
+      roots.push(node);
+      continue;
+    }
+    // Cycle guard: climb the manager chain from the parent; seeing this node
+    // again means attaching would create a loop — promote it to a root.
+    let p: OrgTreeNode | undefined = parent;
+    const seen = new Set<string>([node.e.id]);
+    let cyclic = false;
+    while (p) {
+      if (seen.has(p.e.id)) {
+        cyclic = true;
+        break;
+      }
+      seen.add(p.e.id);
+      p = p.e.reportsTo ? byId.get(p.e.reportsTo) : undefined;
+    }
+    if (cyclic) roots.push(node);
+    else parent.children.push(node);
+  }
+  const rank = (e: DirRow) => {
+    const kind = designationLeadKindWith(e.designation, policy);
+    return kind === 'manager' ? 0 : kind === 'team_leader' ? 1 : 2;
+  };
+  const sortNodes = (nodes: OrgTreeNode[]) => {
+    nodes.sort((a, b) => rank(a.e) - rank(b.e) || a.e.fullName.localeCompare(b.e.fullName));
+    nodes.forEach((n) => sortNodes(n.children));
+  };
+  sortNodes(roots);
+
+  return (
+    <div style={{ padding: '14px 20px 20px' }}>
+      <p style={{ margin: '0 0 10px', fontSize: 11.5, color: 'var(--text-muted)' }}>
+        Reporting lines — set each teammate&apos;s &quot;Reports to&quot; in their profile editor
+        to grow the tree. Click a person to open their profile.
+      </p>
+      {roots.map((n) => (
+        <OrgTreeRow key={n.e.id} node={n} depth={0} policy={policy} />
+      ))}
+    </div>
+  );
+}
+
+function OrgTreeRow({
+  node,
+  depth,
+  policy,
+}: {
+  node: OrgTreeNode;
+  depth: number;
+  policy: LeadRolePolicy | null;
+}) {
+  const e = node.e;
+  const leadKind = designationLeadKindWith(e.designation, policy);
+  const visibleName = e.displayName || e.fullName;
+  const inactive = e.status !== 'active';
+  return (
+    <div
+      style={
+        depth > 0
+          ? { marginLeft: 18, paddingLeft: 14, borderLeft: '1px solid var(--border)' }
+          : undefined
+      }
+    >
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={() => navigateBesideFocused({ type: 'employee', id: e.id })}
+        onKeyDown={(ev) => {
+          if (ev.key === 'Enter' || ev.key === ' ') {
+            ev.preventDefault();
+            navigateBesideFocused({ type: 'employee', id: e.id });
+          }
+        }}
+        title={`Open ${e.fullName}'s profile`}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 10,
+          padding: '7px 10px',
+          margin: '3px 0',
+          borderRadius: 10,
+          border: '1px solid var(--border)',
+          cursor: 'pointer',
+          maxWidth: 560,
+          opacity: inactive ? 0.6 : 1,
+          background: 'var(--content, transparent)',
+        }}
+      >
+        <div
+          className="avatar"
+          style={{ width: 30, height: 30, fontSize: 11, background: e.tone, borderRadius: 9 }}
+        >
+          {initials(visibleName)}
+        </div>
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              fontSize: 13,
+              fontWeight: 600,
+            }}
+          >
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {visibleName}
+            </span>
+            {leadKind ? (
+              <span
+                style={{
+                  fontSize: 9.5,
+                  fontWeight: 700,
+                  padding: '2px 7px',
+                  borderRadius: 999,
+                  color: LEAD_DESIGNATION_META[leadKind].color,
+                  background: `color-mix(in oklab, ${LEAD_DESIGNATION_META[leadKind].color} 14%, transparent)`,
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {LEAD_DESIGNATION_META[leadKind].label}
+              </span>
+            ) : null}
+            {e.payrollGrade ? (
+              <span
+                style={{
+                  fontSize: 9.5,
+                  fontWeight: 700,
+                  padding: '2px 6px',
+                  borderRadius: 6,
+                  border: '1px solid var(--border)',
+                  color: 'var(--text-muted)',
+                }}
+              >
+                {e.payrollGrade}
+              </span>
+            ) : null}
+            {inactive ? (
+              <span style={{ fontSize: 9.5, color: 'var(--text-muted)' }}>INACTIVE</span>
+            ) : null}
+          </div>
+          <div
+            style={{
+              fontSize: 11,
+              color: 'var(--text-muted)',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {[e.designation, departmentLabel(e.department)].filter((s) => s && s !== '—').join(' · ') ||
+              '—'}
+          </div>
+        </div>
+        {node.children.length > 0 ? (
+          <span style={{ fontSize: 10.5, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+            {node.children.length} report{node.children.length === 1 ? '' : 's'}
+          </span>
+        ) : null}
+      </div>
+      {node.children.map((c) => (
+        <OrgTreeRow key={c.e.id} node={c} depth={depth + 1} policy={policy} />
+      ))}
     </div>
   );
 }
@@ -4090,6 +4310,138 @@ function AccountPanel({
 const SENTINEL_USER_ID = '00000000-0000-0000-0000-000000000000';
 const TEAM_ROLES = ['admin', 'manager', 'accountant', 'employee', 'viewer'] as const;
 
+/**
+ * Settings → Team → Team policies. Three org-wide knobs stored in the
+ * key/value `settings` table (no migration):
+ *   - paid-leave days grantable per employee per month (enforced when a
+ *     leave is APPROVED in the attendance tab; Unpaid + statutory kinds
+ *     are never capped);
+ *   - which designations count as Team Leader / Manager (drives the TL and
+ *     Manager chips, the directory sections, and the Org tree).
+ * Read-only for non-admins; edits need `manage_company_profile` server-side.
+ */
+function TeamPoliciesCard({ canManage }: { canManage: boolean }) {
+  const [policy, setPolicy] = useState<TeamPolicy | null>(null);
+  const [paidLeaves, setPaidLeaves] = useState('');
+  const [tlRoles, setTlRoles] = useState('');
+  const [mgrRoles, setMgrRoles] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    getTeamPolicy()
+      .then((p) => {
+        if (cancelled) return;
+        setPolicy(p);
+        setPaidLeaves(String(p.paidLeavesPerMonth));
+        setTlRoles(p.teamLeaderRoles.join(', '));
+        setMgrRoles(p.managerialRoles.join(', '));
+      })
+      .catch(() => {
+        /* card stays hidden if the policy can't be loaded */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (!policy) return null;
+
+  const splitRoles = (s: string) =>
+    s
+      .split(',')
+      .map((r) => r.trim())
+      .filter(Boolean);
+
+  async function save() {
+    const days = Number.parseInt(paidLeaves, 10);
+    if (!Number.isInteger(days) || days < 0 || days > 31) {
+      toast.error('Paid leaves per month must be a whole number between 0 and 31.');
+      return;
+    }
+    const teamLeaderRoles = splitRoles(tlRoles);
+    const managerialRoles = splitRoles(mgrRoles);
+    if (teamLeaderRoles.length === 0 || managerialRoles.length === 0) {
+      toast.error('Keep at least one Team-leader role and one Managerial role.');
+      return;
+    }
+    setSaving(true);
+    try {
+      const res = await saveTeamPolicy({ paidLeavesPerMonth: days, teamLeaderRoles, managerialRoles });
+      if (!res.ok) {
+        toast.error(res.message);
+        return;
+      }
+      toast.success('Team policies saved.');
+      setPolicy({ paidLeavesPerMonth: days, teamLeaderRoles, managerialRoles });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not save the team policies.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="settings-row" style={{ alignItems: 'flex-start' }}>
+      <div style={{ flex: '0 0 220px' }}>
+        <div style={{ fontSize: 13, fontWeight: 600 }}>Team policies</div>
+        <div style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.5 }}>
+          Monthly paid-leave allowance and which designations count as Team Leader / Manager —
+          these drive the leave approvals, the directory sections, and the Org tree.
+        </div>
+      </div>
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 12, maxWidth: 460 }}>
+        <Field label="Paid leaves grantable per month (days)">
+          <input
+            type="number"
+            min={0}
+            max={31}
+            value={paidLeaves}
+            onChange={(e) => setPaidLeaves(e.target.value)}
+            disabled={!canManage || saving}
+            style={{ width: 110 }}
+          />
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
+            Applies to Earned / Casual / Sick / Comp-off approvals. Unpaid and maternity /
+            paternity leaves are never capped.
+          </div>
+        </Field>
+        <Field label="Team-leader roles">
+          <input
+            value={tlRoles}
+            onChange={(e) => setTlRoles(e.target.value)}
+            placeholder="Team Leader, TL"
+            disabled={!canManage || saving}
+          />
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
+            Comma-separated designations. A teammate whose designation contains one of these gets
+            the Team Leader chip.
+          </div>
+        </Field>
+        <Field label="Managerial roles">
+          <input
+            value={mgrRoles}
+            onChange={(e) => setMgrRoles(e.target.value)}
+            placeholder="Manager"
+            disabled={!canManage || saving}
+          />
+        </Field>
+        {canManage ? (
+          <div>
+            <button type="button" className="btn primary" onClick={() => void save()} disabled={saving}>
+              {saving ? 'Saving…' : 'Save policies'}
+            </button>
+          </div>
+        ) : (
+          <div style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>
+            Only admins can change these policies.
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function TeamPanel({ currentUserRole }: { currentUserRole?: 'super_admin' | 'admin' | 'user' }) {
   const [members, setMembers] = useState<readonly TeamMember[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -4150,6 +4502,7 @@ function TeamPanel({ currentUserRole }: { currentUserRole?: 'super_admin' | 'adm
 
   return (
     <div>
+      <TeamPoliciesCard canManage={canManage} />
       <div className="settings-row" style={{ alignItems: 'flex-start' }}>
         <div>
           <div className="label">Team members</div>
