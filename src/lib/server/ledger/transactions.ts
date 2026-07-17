@@ -1,12 +1,13 @@
 import 'server-only';
 
-import { eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, isNull } from 'drizzle-orm';
 
 import { logActivity } from '@/lib/activity';
 import { logAudit } from '@/lib/audit';
 import { db, type DbClient } from '@/lib/db/client';
 import { accounts } from '@/lib/db/schema/accounts';
 import { periods } from '@/lib/db/schema/periods';
+import { receiptAllocations } from '@/lib/db/schema/receipt_allocations';
 import { postings, transactions } from '@/lib/db/schema/transactions';
 import { AppError } from '@/lib/errors';
 import { hasCapability, requireCapability, type CurrentUserContext } from '@/lib/rbac';
@@ -401,6 +402,26 @@ export async function reverseTransaction(
         updatedBy: ctx.userId,
       })
       .where(eq(transactions.id, original.id));
+
+    // Reversing a client_invoice undoes its Dr 1200 receivable, so any receipt
+    // credit allocated to it must be RELEASED back to the client's unapplied
+    // pool — otherwise the allocation row keeps that credit "consumed" by a dead
+    // invoice (getClientUnappliedCredit and the sum-check trigger both count
+    // allocation rows). Soft-delete via deleted_at is the release marker (the
+    // amount_paise > 0 CHECK rules out zeroing); every read of receipt_allocations
+    // and the sum-check trigger (0080) filter deleted_at IS NULL, so the freed
+    // credit reappears in the pool and can be re-applied to the reissue.
+    if (original.kind === 'client_invoice') {
+      await tx
+        .update(receiptAllocations)
+        .set({ deletedAt: new Date(), updatedBy: ctx.userId })
+        .where(
+          and(
+            eq(receiptAllocations.clientInvoiceTxnId, original.id),
+            isNull(receiptAllocations.deletedAt),
+          ),
+        );
+    }
 
     await logActivity(
       {

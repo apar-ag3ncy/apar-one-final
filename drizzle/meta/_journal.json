@@ -561,6 +561,13 @@
       "when": 1785000090000,
       "tag": "0079_receipt_allocation_invoice_cap",
       "breakpoints": true
+    },
+    {
+      "idx": 80,
+      "version": "7",
+      "when": 1785100090000,
+      "tag": "0080_release_reversed_invoice_allocations",
+      "breakpoints": true
     }
   ]
 }

@@ -487,7 +487,8 @@ export async function getProjectPnlAll(args: {
     FROM receipt_allocations ra
     JOIN transactions inv ON inv.id = ra.client_invoice_txn_id
     JOIN transactions pay ON pay.id = ra.client_payment_txn_id
-    WHERE inv.project_id IS NOT NULL AND pay.status = 'posted' AND ${sql`pay.reverses_id IS NULL`}
+    WHERE inv.project_id IS NOT NULL AND ra.deleted_at IS NULL
+      AND pay.status = 'posted' AND ${sql`pay.reverses_id IS NULL`}
       AND pay.txn_date >= ${args.from}::date AND pay.txn_date <= ${args.to}::date
     GROUP BY inv.project_id
   `);
