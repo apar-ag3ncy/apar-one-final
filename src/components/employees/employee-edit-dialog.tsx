@@ -22,9 +22,7 @@ import { Label } from '@/components/ui/label';
 import {
   Select,
   SelectContent,
-  SelectGroup,
   SelectItem,
-  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
@@ -37,7 +35,11 @@ import {
   probationDaysLeft,
   splitMonthsDays,
 } from '@/lib/employee-badges';
-import { PAYROLL_GRADE_GROUPS, departmentLabel } from '@/components/employees/types';
+import {
+  allowedGradesFor,
+  departmentLabel,
+  expectedGradeKindFor,
+} from '@/components/employees/types';
 import type { Employee, EmploymentType, PayrollGrade } from '@/components/employees/types';
 
 const EMPLOYMENT_TYPES: readonly EmploymentType[] = [
@@ -242,8 +244,36 @@ export function EmployeeEditDialog({ employee }: { employee: Employee }) {
   });
 
   const employmentType = form.watch('employmentType');
-  const payrollGrade = form.watch('payrollGrade') ?? NO_GRADE;
+  // `||` (not `??`): an empty string must also collapse to the sentinel — a
+  // ''-valued Radix SelectItem throws and takes the whole page down.
+  const payrollGrade = form.watch('payrollGrade') || NO_GRADE;
   const onProbation = form.watch('onProbation');
+
+  // Category → grade-group coupling (mirrors the OS editor): Intern (type) → I;
+  // on probation → PA–PA+; otherwise → EA–EA+. Changing the category re-scopes
+  // the grade — interns get I automatically, a wrong-group grade is cleared.
+  //
+  // The grade assignment is DEFERRED one tick (setTimeout 0), never set in the
+  // same tick as the category: setting it synchronously renders the Radix
+  // Select with a value whose item isn't mounted yet (the old group's items
+  // are), and Radix then fires onValueChange('') — clobbering the assignment.
+  // After the deferral React has committed the new group's items, so the value
+  // resolves cleanly. Only user-driven category changes coerce; loading an
+  // employee never rewrites their stored grade.
+  const allowedGrades = allowedGradesFor(employmentType, onProbation);
+  const coerceGradeDeferred = (nextType: EmploymentType, nextProbation: boolean) => {
+    setTimeout(() => {
+      const current = form.getValues('payrollGrade') || NO_GRADE;
+      if (nextType === 'intern') {
+        if (current !== 'I') form.setValue('payrollGrade', 'I');
+        return;
+      }
+      const allowed = allowedGradesFor(nextType, nextProbation);
+      if (current !== NO_GRADE && !allowed.includes(current as PayrollGrade)) {
+        form.setValue('payrollGrade', NO_GRADE);
+      }
+    }, 0);
+  };
 
   // Live preview of the probation end date + days-left as the duration is typed.
   const previewMonths = Math.max(
@@ -329,7 +359,10 @@ export function EmployeeEditDialog({ employee }: { employee: Employee }) {
               <Label htmlFor="employee-type">Employment type</Label>
               <Select
                 value={employmentType}
-                onValueChange={(v) => form.setValue('employmentType', v as EmploymentType)}
+                onValueChange={(v) => {
+                  form.setValue('employmentType', v as EmploymentType);
+                  coerceGradeDeferred(v as EmploymentType, onProbation);
+                }}
               >
                 <SelectTrigger id="employee-type">
                   <SelectValue />
@@ -391,25 +424,36 @@ export function EmployeeEditDialog({ employee }: { employee: Employee }) {
 
           <div className="grid grid-cols-2 gap-3">
             <div className="grid gap-1.5">
-              <Label htmlFor="employee-payroll-grade">Payroll grade</Label>
+              <Label htmlFor="employee-payroll-grade">
+                Payroll grade{' '}
+                <span className="text-muted-foreground font-normal">
+                  ({expectedGradeKindFor(employmentType, onProbation)})
+                </span>
+              </Label>
               <Select value={payrollGrade} onValueChange={(v) => form.setValue('payrollGrade', v)}>
                 <SelectTrigger id="employee-payroll-grade">
                   <SelectValue placeholder="No grade" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value={NO_GRADE}>No grade</SelectItem>
-                  {PAYROLL_GRADE_GROUPS.map((g) => (
-                    <SelectGroup key={g.label}>
-                      <SelectLabel>{g.label}</SelectLabel>
-                      {g.grades.map((grade) => (
-                        <SelectItem key={grade} value={grade}>
-                          {grade}
-                        </SelectItem>
-                      ))}
-                    </SelectGroup>
+                  {allowedGrades.map((grade) => (
+                    <SelectItem key={grade} value={grade}>
+                      {grade}
+                    </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
+              {/* Only fixed-value items above — a dynamic-value SelectItem can
+                  transiently render with '' and Radix throws on that, killing
+                  the page. A stored grade from another group (legacy row) is
+                  surfaced as a hint instead; it stays saved until changed. */}
+              {payrollGrade !== NO_GRADE &&
+              !allowedGrades.includes(payrollGrade as PayrollGrade) ? (
+                <p className="text-muted-foreground text-xs">
+                  Current grade {payrollGrade} is from another group — pick a replacement above or
+                  change the category.
+                </p>
+              ) : null}
             </div>
             <div className="grid gap-1.5">
               <Label htmlFor="employee-notice-period">Notice period</Label>
@@ -432,7 +476,11 @@ export function EmployeeEditDialog({ employee }: { employee: Employee }) {
             <label className="flex items-center gap-2 text-sm">
               <Checkbox
                 checked={onProbation}
-                onCheckedChange={(v) => form.setValue('onProbation', v === true)}
+                onCheckedChange={(v) => {
+                  const checked = v === true;
+                  form.setValue('onProbation', checked);
+                  coerceGradeDeferred(employmentType, checked);
+                }}
                 disabled={submitting}
               />
               On probation

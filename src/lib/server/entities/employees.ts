@@ -21,6 +21,7 @@ import { requireCapability } from '@/lib/rbac';
 import { getActorContext } from '@/lib/server/actor';
 import { ensureDepartmentRegistered } from '@/lib/server/entities/department-registry';
 import { IFSC_RE, PAN_RE, last4, maskAadhaar, maskPAN } from '@/lib/validators';
+import { expectedGradeKindFor, payrollGradeKind } from '@/components/employees/types';
 
 /**
  * Employee write actions. Mirrors clients.ts and vendors.ts.
@@ -34,6 +35,24 @@ import { IFSC_RE, PAN_RE, last4, maskAadhaar, maskPAN } from '@/lib/validators';
 
 const EmployeeIdSchema = z.string().uuid();
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/**
+ * Category → grade-group rule (mirrors both editors): Intern employment type
+ * → the I grade; on probation (probation_ends_on set) → PA–PA+; otherwise →
+ * EA–EA+. Returns a user-facing error when the grade belongs to the wrong
+ * group, null when coherent (or no grade given).
+ */
+function gradeGroupError(
+  payrollGrade: string | null | undefined,
+  employmentType: string,
+  probationEndsOn: string | null | undefined,
+): string | null {
+  if (!payrollGrade) return null;
+  const expected = expectedGradeKindFor(employmentType, !!probationEndsOn);
+  const actual = payrollGradeKind(payrollGrade);
+  if (actual === expected) return null;
+  return `${payrollGrade} is a ${actual} grade — this teammate's category calls for a ${expected} grade (Intern → I, on probation → PA–PA+, employee → EA–EA+).`;
+}
 
 // Payroll grade levels (§1.1, migration 0071). The employee *type* is
 // derivable from the first letter — Intern (I), Probation (P…),
@@ -407,6 +426,10 @@ export async function createEmployee(input: CreateEmployeeInput): Promise<Create
   if (personalEmail && !EMAIL_RE.test(personalEmail)) {
     fieldErrors.personalEmail = 'Enter a valid personal email.';
   }
+  {
+    const gradeErr = gradeGroupError(v.payrollGrade, v.employmentType, v.probationEndsOn ?? null);
+    if (gradeErr) fieldErrors.payrollGrade = gradeErr;
+  }
   if (Object.keys(fieldErrors).length > 0) {
     return { ok: false, message: 'Please fix the highlighted fields.', errors: fieldErrors };
   }
@@ -773,6 +796,36 @@ export async function updateEmployee(input: UpdateEmployeeInput): Promise<Update
         message: 'That work email is already in use.',
         errors: { workEmail: 'Already used by another employee.' },
       };
+    }
+  }
+
+  // Category → grade-group coherence. Any change touching the grade, the
+  // employment type, or the probation flag is validated against the MERGED
+  // state (current row + patch) so no path can leave e.g. an Employee grade
+  // on an intern.
+  if (
+    v.payrollGrade !== undefined ||
+    v.employmentType !== undefined ||
+    v.probationEndsOn !== undefined
+  ) {
+    const [current] = await db
+      .select({
+        payrollGrade: employees.payrollGrade,
+        employmentType: employees.employmentType,
+        probationEndsOn: employees.probationEndsOn,
+      })
+      .from(employees)
+      .where(and(eq(employees.id, v.id), isNull(employees.deletedAt)))
+      .limit(1);
+    if (current) {
+      const gradeErr = gradeGroupError(
+        v.payrollGrade !== undefined ? v.payrollGrade : current.payrollGrade,
+        v.employmentType !== undefined ? v.employmentType : current.employmentType,
+        v.probationEndsOn !== undefined ? v.probationEndsOn : current.probationEndsOn,
+      );
+      if (gradeErr) {
+        return { ok: false, message: gradeErr, errors: { payrollGrade: gradeErr } };
+      }
     }
   }
 
