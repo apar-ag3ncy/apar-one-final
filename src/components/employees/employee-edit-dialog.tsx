@@ -8,6 +8,7 @@ import { z } from 'zod';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   Dialog,
   DialogContent,
@@ -30,7 +31,12 @@ import {
 import { Textarea } from '@/components/ui/textarea';
 import { updateEmployee, type UpdateEmployeeInput } from '@/lib/server/entities/employees';
 import { listDepartments } from '@/lib/server-stub/entity-actions';
-import { DESIGNATION_SUGGESTIONS } from '@/lib/employee-badges';
+import {
+  DESIGNATION_SUGGESTIONS,
+  addMonthsDays,
+  probationDaysLeft,
+  splitMonthsDays,
+} from '@/lib/employee-badges';
 import { PAYROLL_GRADE_GROUPS, departmentLabel } from '@/components/employees/types';
 import type { Employee, EmploymentType, PayrollGrade } from '@/components/employees/types';
 
@@ -73,12 +79,20 @@ const formSchema = z.object({
   personalEmail: z.string().max(200).optional(),
   phone: z.string().max(40).optional(),
   noticePeriodDays: z.string().max(40).optional(),
+  // Custom probation period (0081) — months/days from the joining date.
+  onProbation: z.boolean(),
+  probationMonths: z.string().max(4).optional(),
+  probationDays: z.string().max(4).optional(),
   notes: z.string().max(2000).optional(),
 });
 
 type FormValues = z.infer<typeof formSchema>;
 
 function toDefaults(employee: Employee): FormValues {
+  // Round-trip a stored probation end date back into the months/days inputs.
+  const prob = employee.probationEndsOn
+    ? splitMonthsDays(employee.joinedAt, employee.probationEndsOn)
+    : null;
   return {
     fullName: employee.fullName,
     designation: employee.designation ?? '',
@@ -89,6 +103,9 @@ function toDefaults(employee: Employee): FormValues {
     personalEmail: employee.personalEmail ?? '',
     phone: employee.phone ?? '',
     noticePeriodDays: employee.noticePeriodDays ?? '',
+    onProbation: !!employee.probationEndsOn,
+    probationMonths: prob && prob.months ? String(prob.months) : '',
+    probationDays: prob && prob.days ? String(prob.days) : '',
     notes: employee.notes ?? '',
   };
 }
@@ -132,6 +149,12 @@ export function EmployeeEditDialog({ employee }: { employee: Employee }) {
   }, [open]);
 
   const submit = form.handleSubmit(async (values) => {
+    const probMonths = Math.max(0, Number.parseInt(values.probationMonths || '0', 10) || 0);
+    const probDays = Math.max(0, Number.parseInt(values.probationDays || '0', 10) || 0);
+    if (values.onProbation && probMonths === 0 && probDays === 0) {
+      toast.error('Enter the probation length in months and/or days.');
+      return;
+    }
     setSubmitting(true);
     try {
       // Build a patch of only the changed fields.
@@ -168,6 +191,14 @@ export function EmployeeEditDialog({ employee }: { employee: Employee }) {
       }
       if ((values.noticePeriodDays ?? '') !== (employee.noticePeriodDays ?? '')) {
         patch.noticePeriodDays = values.noticePeriodDays ? values.noticePeriodDays : null;
+      }
+      // Custom probation end = joined_on + months + days; off → cleared to NULL.
+      const nextProbationEndsOn =
+        values.onProbation && (probMonths > 0 || probDays > 0)
+          ? addMonthsDays(employee.joinedAt, probMonths, probDays)
+          : null;
+      if (nextProbationEndsOn !== (employee.probationEndsOn ?? null)) {
+        patch.probationEndsOn = nextProbationEndsOn;
       }
       if ((values.notes ?? '') !== (employee.notes ?? '')) {
         patch.notes = values.notes ? values.notes : null;
@@ -212,6 +243,26 @@ export function EmployeeEditDialog({ employee }: { employee: Employee }) {
 
   const employmentType = form.watch('employmentType');
   const payrollGrade = form.watch('payrollGrade') ?? NO_GRADE;
+  const onProbation = form.watch('onProbation');
+
+  // Live preview of the probation end date + days-left as the duration is typed.
+  const previewMonths = Math.max(
+    0,
+    Number.parseInt(form.watch('probationMonths') || '0', 10) || 0,
+  );
+  const previewDays = Math.max(0, Number.parseInt(form.watch('probationDays') || '0', 10) || 0);
+  const probationPreviewDate =
+    onProbation && (previewMonths > 0 || previewDays > 0)
+      ? addMonthsDays(employee.joinedAt, previewMonths, previewDays)
+      : null;
+  const probationPreviewLeft = probationPreviewDate
+    ? probationDaysLeft({
+        joinedOn: employee.joinedAt,
+        employmentType: employee.employmentType,
+        probationEndsOn: probationPreviewDate,
+        confirmedOn: employee.confirmedOn ?? null,
+      })
+    : null;
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -374,6 +425,56 @@ export function EmployeeEditDialog({ employee }: { employee: Employee }) {
                 </p>
               ) : null}
             </div>
+          </div>
+
+          <div className="grid gap-1.5">
+            <Label>Probation</Label>
+            <label className="flex items-center gap-2 text-sm">
+              <Checkbox
+                checked={onProbation}
+                onCheckedChange={(v) => form.setValue('onProbation', v === true)}
+                disabled={submitting}
+              />
+              On probation
+            </label>
+            {onProbation ? (
+              <div className="flex flex-wrap items-center gap-2 text-sm">
+                <Input
+                  type="number"
+                  min={0}
+                  inputMode="numeric"
+                  className="w-20"
+                  placeholder="0"
+                  aria-label="Probation months"
+                  {...form.register('probationMonths')}
+                />
+                <span className="text-muted-foreground text-xs">months</span>
+                <Input
+                  type="number"
+                  min={0}
+                  inputMode="numeric"
+                  className="w-20"
+                  placeholder="0"
+                  aria-label="Probation days"
+                  {...form.register('probationDays')}
+                />
+                <span className="text-muted-foreground text-xs">days from joining</span>
+                {probationPreviewDate ? (
+                  <span className="text-muted-foreground text-xs">
+                    → ends{' '}
+                    {new Date(probationPreviewDate).toLocaleDateString('en-IN', {
+                      day: '2-digit',
+                      month: 'short',
+                      year: 'numeric',
+                    })}
+                    {probationPreviewLeft != null ? ` (${probationPreviewLeft}d left)` : ''}
+                  </span>
+                ) : null}
+              </div>
+            ) : null}
+            <p className="text-muted-foreground text-xs">
+              Overrides the default 6-month window; a confirmation date ends probation.
+            </p>
           </div>
 
           <div className="grid gap-1.5">
