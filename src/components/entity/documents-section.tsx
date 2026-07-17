@@ -268,6 +268,7 @@ export function DocumentsSection({
     try {
       await softDeleteDocument(doc.id);
       toast.success(`Moved "${doc.title ?? doc.originalFilename}" to Trash.`);
+      setConfirming(null);
       await reload.current();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Could not delete document');
@@ -544,10 +545,10 @@ export function DocumentsSection({
                           <Button
                             size="sm"
                             variant="ghost"
-                            onClick={() => void moveToTrash(doc)}
+                            onClick={() => setConfirming(doc)}
                             disabled={busyId === doc.id}
-                            aria-label="Move to Trash"
-                            title="Move to Trash"
+                            aria-label="Delete document"
+                            title="Delete (moves to Trash)"
                           >
                             <Trash2Icon className="size-4" aria-hidden />
                           </Button>
@@ -616,11 +617,22 @@ export function DocumentsSection({
       >
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Delete permanently?</DialogTitle>
+            <DialogTitle>
+              {mode === 'trash' ? 'Delete permanently?' : 'Delete document?'}
+            </DialogTitle>
             <DialogDescription>
-              &ldquo;{confirming?.title ?? confirming?.originalFilename}&rdquo; will be deleted for
-              good — the file is removed from storage and cannot be recovered. If it&apos;s attached
-              to a recorded bill or invoice, that copy is kept.
+              {mode === 'trash' ? (
+                <>
+                  &ldquo;{confirming?.title ?? confirming?.originalFilename}&rdquo; will be deleted
+                  for good — the file is removed from storage and cannot be recovered. If it&apos;s
+                  attached to a recorded bill or invoice, that copy is kept.
+                </>
+              ) : (
+                <>
+                  &ldquo;{confirming?.title ?? confirming?.originalFilename}&rdquo; will be moved to
+                  Trash. You can restore it from Trash any time.
+                </>
+              )}
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-1.5">
@@ -636,7 +648,7 @@ export function DocumentsSection({
               onChange={(e) => setConfirmText(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && confirmArmed && busyId === null && confirming) {
-                  void permanentlyDelete(confirming);
+                  void (mode === 'trash' ? permanentlyDelete(confirming) : moveToTrash(confirming));
                 }
               }}
               disabled={busyId !== null}
@@ -652,11 +664,14 @@ export function DocumentsSection({
             </Button>
             <Button
               variant="destructive"
-              onClick={() => confirming && void permanentlyDelete(confirming)}
+              onClick={() =>
+                confirming &&
+                void (mode === 'trash' ? permanentlyDelete(confirming) : moveToTrash(confirming))
+              }
               disabled={!confirmArmed || busyId !== null}
               title={confirmArmed ? undefined : 'Type "delete" to enable'}
             >
-              {busyId ? 'Deleting…' : 'Delete permanently'}
+              {busyId ? 'Deleting…' : mode === 'trash' ? 'Delete permanently' : 'Delete'}
             </Button>
           </DialogFooter>
         </DialogContent>
