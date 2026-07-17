@@ -9,6 +9,7 @@ import {
   PaletteIcon,
   PencilIcon,
   PlusIcon,
+  SearchIcon,
   StarIcon,
   Trash2Icon,
   UploadIcon,
@@ -86,6 +87,91 @@ const STATE_LABEL: Record<InvoiceRow['state'], string> = {
   void: 'Deleted',
 };
 
+/* -------------------------------------------------------------------------- */
+/* Filter + sort helpers for the invoice list                                 */
+/* -------------------------------------------------------------------------- */
+
+type DatePreset = 'all' | 'week' | 'month' | 'last-month' | 'quarter' | 'fy' | 'custom';
+
+const DATE_PRESET_LABEL: Record<DatePreset, string> = {
+  all: 'Any date',
+  week: 'This week',
+  month: 'This month',
+  'last-month': 'Last month',
+  quarter: 'This quarter',
+  fy: 'This financial year',
+  custom: 'Custom range…',
+};
+
+/** Resolve a preset (or custom from/to) to an inclusive [from, to] ISO range. */
+function dateRangeForPreset(
+  preset: DatePreset,
+  customFrom: string,
+  customTo: string,
+): { from: string | null; to: string | null } {
+  const iso = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = now.getMonth();
+  switch (preset) {
+    case 'week': {
+      const diffToMon = (now.getDay() + 6) % 7;
+      return {
+        from: iso(new Date(y, m, now.getDate() - diffToMon)),
+        to: iso(new Date(y, m, now.getDate() - diffToMon + 6)),
+      };
+    }
+    case 'month':
+      return { from: iso(new Date(y, m, 1)), to: iso(new Date(y, m + 1, 0)) };
+    case 'last-month':
+      return { from: iso(new Date(y, m - 1, 1)), to: iso(new Date(y, m, 0)) };
+    case 'quarter': {
+      const qs = Math.floor(m / 3) * 3;
+      return { from: iso(new Date(y, qs, 1)), to: iso(new Date(y, qs + 3, 0)) };
+    }
+    case 'fy': {
+      const startYear = m >= 3 ? y : y - 1;
+      return { from: iso(new Date(startYear, 3, 1)), to: iso(new Date(startYear + 1, 2, 31)) };
+    }
+    case 'custom':
+      return { from: customFrom || null, to: customTo || null };
+    default:
+      return { from: null, to: null };
+  }
+}
+
+type InvoiceStateFilter = 'all' | InvoiceRow['state'];
+
+const STATE_FILTER_LABEL: Record<InvoiceStateFilter, string> = {
+  all: 'All statuses',
+  draft: 'Draft',
+  sent: 'Sent',
+  partially_paid: 'Partially paid',
+  paid: 'Paid',
+  void: 'Deleted',
+};
+
+type InvoiceSortKey =
+  | 'date-desc'
+  | 'date-asc'
+  | 'amount-desc'
+  | 'amount-asc'
+  | 'number-desc'
+  | 'number-asc';
+
+const SORT_LABEL: Record<InvoiceSortKey, string> = {
+  'date-desc': 'Newest first',
+  'date-asc': 'Oldest first',
+  'amount-desc': 'Amount: high → low',
+  'amount-asc': 'Amount: low → high',
+  'number-desc': 'Number: Z → A',
+  'number-asc': 'Number: A → Z',
+};
+
+const selectClass =
+  'border-input bg-background h-9 rounded-md border px-2 text-sm shadow-sm focus-visible:ring-ring focus-visible:ring-1 focus-visible:outline-none';
+
 export type ClientInvoicesSectionProps = {
   clientId: string;
   clientName: string;
@@ -151,6 +237,22 @@ export function ClientInvoicesSection({
   const [uploadedDocs, setUploadedDocs] = useState<readonly UnrecordedInvoiceDocument[]>([]);
   const [uploadOpen, setUploadOpen] = useState(false);
   const [recordDocTarget, setRecordDocTarget] = useState<UnrecordedInvoiceDocument | null>(null);
+
+  // Filter + sort controls for the invoice list.
+  const [query, setQuery] = useState('');
+  const [stateFilter, setStateFilter] = useState<InvoiceStateFilter>('all');
+  const [datePreset, setDatePreset] = useState<DatePreset>('all');
+  const [customFrom, setCustomFrom] = useState('');
+  const [customTo, setCustomTo] = useState('');
+  const [sortKey, setSortKey] = useState<InvoiceSortKey>('date-desc');
+
+  function clearFilters() {
+    setQuery('');
+    setStateFilter('all');
+    setDatePreset('all');
+    setCustomFrom('');
+    setCustomTo('');
+  }
 
   const reloadInvoices = useCallback(async () => {
     const data = await listInvoices({ clientId });
@@ -283,13 +385,58 @@ export function ClientInvoicesSection({
     );
   }
 
+  // Apply the toolbar filters + sort. Filtering keeps the full `rows` set for
+  // conversion-trail lookups; only the rendered list uses `visibleRows`.
+  const { from: dateFrom, to: dateTo } = dateRangeForPreset(datePreset, customFrom, customTo);
+  const qlc = query.trim().toLowerCase();
+  const filtersActive = qlc !== '' || stateFilter !== 'all' || datePreset !== 'all';
+  const visibleRows = rows
+    .filter((inv) => {
+      if (stateFilter !== 'all' && inv.state !== stateFilter) return false;
+      const day = inv.documentDate.slice(0, 10);
+      if (dateFrom && day < dateFrom) return false;
+      if (dateTo && day > dateTo) return false;
+      if (qlc) {
+        const hay = `${inv.documentNumber} ${inv.notes ?? ''}`.toLowerCase();
+        if (!hay.includes(qlc)) return false;
+      }
+      return true;
+    })
+    .sort((a, b) => {
+      switch (sortKey) {
+        case 'date-asc':
+          return a.documentDate.localeCompare(b.documentDate);
+        case 'amount-desc':
+          return a.capturedTotalPaise < b.capturedTotalPaise
+            ? 1
+            : a.capturedTotalPaise > b.capturedTotalPaise
+              ? -1
+              : 0;
+        case 'amount-asc':
+          return a.capturedTotalPaise < b.capturedTotalPaise
+            ? -1
+            : a.capturedTotalPaise > b.capturedTotalPaise
+              ? 1
+              : 0;
+        case 'number-asc':
+          return a.documentNumber.localeCompare(b.documentNumber);
+        case 'number-desc':
+          return b.documentNumber.localeCompare(a.documentNumber);
+        case 'date-desc':
+        default:
+          return b.documentDate.localeCompare(a.documentDate);
+      }
+    });
+
   return (
     <>
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle className="text-base">
             Invoices{' '}
-            <span className="text-muted-foreground text-xs font-normal">({rows.length})</span>
+            <span className="text-muted-foreground text-xs font-normal">
+              ({filtersActive ? `${visibleRows.length} of ${rows.length}` : rows.length})
+            </span>
           </CardTitle>
           <div className="flex items-center gap-2">
             {canManageThemes ? (
@@ -335,6 +482,84 @@ export function ClientInvoicesSection({
           </div>
         ) : null}
         <CardContent className="p-0">
+          {rows.length > 0 ? (
+            <div className="flex flex-wrap items-center gap-2 border-b px-4 py-3">
+              <div className="relative min-w-[160px] flex-1">
+                <SearchIcon
+                  className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2"
+                  aria-hidden
+                />
+                <Input
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Search by invoice number or note…"
+                  className="h-9 pl-8"
+                  aria-label="Search invoices"
+                />
+              </div>
+              <select
+                className={selectClass}
+                value={stateFilter}
+                onChange={(e) => setStateFilter(e.target.value as InvoiceStateFilter)}
+                aria-label="Filter by status"
+              >
+                {(Object.keys(STATE_FILTER_LABEL) as InvoiceStateFilter[])
+                  .filter((s) => s !== 'void')
+                  .map((s) => (
+                    <option key={s} value={s}>
+                      {STATE_FILTER_LABEL[s]}
+                    </option>
+                  ))}
+              </select>
+              <select
+                className={selectClass}
+                value={datePreset}
+                onChange={(e) => setDatePreset(e.target.value as DatePreset)}
+                aria-label="Filter by date"
+              >
+                {(Object.keys(DATE_PRESET_LABEL) as DatePreset[]).map((p) => (
+                  <option key={p} value={p}>
+                    {DATE_PRESET_LABEL[p]}
+                  </option>
+                ))}
+              </select>
+              {datePreset === 'custom' ? (
+                <>
+                  <Input
+                    type="date"
+                    value={customFrom}
+                    onChange={(e) => setCustomFrom(e.target.value)}
+                    className="h-9 w-[150px]"
+                    aria-label="From date"
+                  />
+                  <Input
+                    type="date"
+                    value={customTo}
+                    onChange={(e) => setCustomTo(e.target.value)}
+                    className="h-9 w-[150px]"
+                    aria-label="To date"
+                  />
+                </>
+              ) : null}
+              <select
+                className={selectClass}
+                value={sortKey}
+                onChange={(e) => setSortKey(e.target.value as InvoiceSortKey)}
+                aria-label="Sort invoices"
+              >
+                {(Object.keys(SORT_LABEL) as InvoiceSortKey[]).map((k) => (
+                  <option key={k} value={k}>
+                    {SORT_LABEL[k]}
+                  </option>
+                ))}
+              </select>
+              {filtersActive ? (
+                <Button variant="ghost" size="sm" className="h-9" onClick={clearFilters}>
+                  Clear
+                </Button>
+              ) : null}
+            </div>
+          ) : null}
           {uploadedDocs.length > 0 ? (
             <div className="bg-muted/20 border-b px-4 py-3">
               <div className="text-muted-foreground mb-2 text-xs font-medium">
@@ -389,9 +614,16 @@ export function ClientInvoicesSection({
             <div className="text-muted-foreground px-4 py-6 text-center text-sm">
               No invoices in the books yet.
             </div>
+          ) : visibleRows.length === 0 ? (
+            <div className="text-muted-foreground flex flex-col items-center gap-2 px-4 py-6 text-center text-sm">
+              <span>No invoices match these filters.</span>
+              <Button variant="outline" size="sm" onClick={clearFilters}>
+                Clear filters
+              </Button>
+            </div>
           ) : (
             <ul className="divide-y">
-              {rows.map((inv) => {
+              {visibleRows.map((inv) => {
                 // Conversion trail (0062): a converted tax invoice carries its
                 // source proforma's id; the proforma finds its successor by
                 // the reverse lookup. Both usually sit in this same list.
