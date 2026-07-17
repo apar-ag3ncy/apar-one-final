@@ -24,7 +24,9 @@ import {
   resolveDocumentUrl,
 } from '@/lib/server-stub/entity-actions';
 import {
+  allowedGradesFor,
   departmentLabel,
+  expectedGradeKindFor,
   payrollGradeKind,
   PAYROLL_GRADE_GROUPS,
   type Employee as HrEmployee,
@@ -2816,6 +2818,23 @@ export function EmployeeProfileEditor({
   const set = <K extends keyof EditorForm>(k: K, v: EditorForm[K]) =>
     setForm((f) => ({ ...f, [k]: v }));
 
+  // Category → grade-group coupling: Intern (type) → I; on probation → PA–PA+;
+  // otherwise → EA–EA+. Changing the category re-scopes the grade — interns get
+  // I automatically, and a grade from the wrong group is cleared so the select
+  // never holds e.g. an Employee grade for someone on probation.
+  const applyCategory = (patch: Partial<Pick<EditorForm, 'employmentType' | 'onProbation'>>) =>
+    setForm((f) => {
+      const next = { ...f, ...patch };
+      const allowed = allowedGradesFor(next.employmentType, next.onProbation);
+      const payrollGrade =
+        next.employmentType === 'intern'
+          ? 'I'
+          : allowed.includes(next.payrollGrade as PayrollGrade)
+            ? next.payrollGrade
+            : '';
+      return { ...next, payrollGrade };
+    });
+
   const submit = async (ev: FormEvent) => {
     ev.preventDefault();
     if (busy) return;
@@ -2983,7 +3002,7 @@ export function EmployeeProfileEditor({
           <Field label="Employment type">
             <select
               value={form.employmentType}
-              onChange={(e) => set('employmentType', e.target.value as EmpType)}
+              onChange={(e) => applyCategory({ employmentType: e.target.value as EmpType })}
             >
               {EMP_TYPE_OPTIONS.map((o) => (
                 <option key={o.value} value={o.value}>
@@ -2992,18 +3011,25 @@ export function EmployeeProfileEditor({
               ))}
             </select>
           </Field>
-          <Field label="Payroll grade" hint="Intern (I) · Probation (PA–PA+) · Employee (EA–EA+).">
+          <Field
+            label="Payroll grade"
+            hint={`${expectedGradeKindFor(form.employmentType, form.onProbation)} grades — Intern → I · On probation → PA–PA+ · Employee → EA–EA+.`}
+          >
             <select value={form.payrollGrade} onChange={(e) => set('payrollGrade', e.target.value)}>
               <option value="">No grade</option>
-              {PAYROLL_GRADE_GROUPS.map((g) => (
-                <optgroup key={g.label} label={g.label}>
-                  {g.grades.map((grade) => (
-                    <option key={grade} value={grade}>
-                      {grade}
-                    </option>
-                  ))}
-                </optgroup>
+              {allowedGradesFor(form.employmentType, form.onProbation).map((grade) => (
+                <option key={grade} value={grade}>
+                  {grade}
+                </option>
               ))}
+              {/* A stored grade from another group (legacy row) stays visible
+                  until the category or grade is changed — never silently blank. */}
+              {form.payrollGrade &&
+              !allowedGradesFor(form.employmentType, form.onProbation).includes(
+                form.payrollGrade as PayrollGrade,
+              ) ? (
+                <option value={form.payrollGrade}>{form.payrollGrade} (other group)</option>
+              ) : null}
             </select>
           </Field>
           <Field label="Status">
@@ -3079,7 +3105,7 @@ export function EmployeeProfileEditor({
               <input
                 type="checkbox"
                 checked={form.onProbation}
-                onChange={(e) => set('onProbation', e.target.checked)}
+                onChange={(e) => applyCategory({ onProbation: e.target.checked })}
               />
               On probation
             </label>

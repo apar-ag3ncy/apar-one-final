@@ -41,6 +41,31 @@ export function payrollGradeKind(grade: string): string {
 }
 
 /**
+ * The grade group an employee's category entitles them to (the founder's rule):
+ * Intern employment type → the Intern grade (I); anyone on probation → the
+ * Probation grades (PA–PA+); everyone else (fixed/full-time etc.) → the
+ * Employee grades (EA–EA+). `employmentType` accepts both the DB enum
+ * ('contract'/'consultant') and the UI value ('contractor') — only 'intern'
+ * is special-cased, the rest fall through to the probation/employee split.
+ */
+export function expectedGradeKindFor(
+  employmentType: string,
+  onProbation: boolean,
+): 'Intern' | 'Probation' | 'Employee' {
+  if (employmentType === 'intern') return 'Intern';
+  return onProbation ? 'Probation' : 'Employee';
+}
+
+/** The grades selectable for a category — see {@link expectedGradeKindFor}. */
+export function allowedGradesFor(
+  employmentType: string,
+  onProbation: boolean,
+): readonly PayrollGrade[] {
+  const kind = expectedGradeKindFor(employmentType, onProbation);
+  return PAYROLL_GRADE_GROUPS.find((g) => g.label === kind)?.grades ?? PAYROLL_GRADES;
+}
+
+/**
  * Departments are free-form / dynamic — HR can add new ones at create/edit
  * time. The values below seed the suggestion list; any string is accepted
  * and persisted. Stored lowercase (server normalizes); rendered title-cased

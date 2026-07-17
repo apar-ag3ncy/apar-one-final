@@ -22,9 +22,7 @@ import { Label } from '@/components/ui/label';
 import {
   Select,
   SelectContent,
-  SelectGroup,
   SelectItem,
-  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
@@ -37,7 +35,11 @@ import {
   probationDaysLeft,
   splitMonthsDays,
 } from '@/lib/employee-badges';
-import { PAYROLL_GRADE_GROUPS, departmentLabel } from '@/components/employees/types';
+import {
+  allowedGradesFor,
+  departmentLabel,
+  expectedGradeKindFor,
+} from '@/components/employees/types';
 import type { Employee, EmploymentType, PayrollGrade } from '@/components/employees/types';
 
 const EMPLOYMENT_TYPES: readonly EmploymentType[] = [
@@ -245,6 +247,22 @@ export function EmployeeEditDialog({ employee }: { employee: Employee }) {
   const payrollGrade = form.watch('payrollGrade') ?? NO_GRADE;
   const onProbation = form.watch('onProbation');
 
+  // Category → grade-group coupling (mirrors the OS editor): Intern (type) → I;
+  // on probation → PA–PA+; otherwise → EA–EA+. Changing the category re-scopes
+  // the grade — interns get I automatically, a wrong-group grade is cleared.
+  const allowedGrades = allowedGradesFor(employmentType, onProbation);
+  const coerceGrade = (nextType: EmploymentType, nextProbation: boolean) => {
+    const current = form.getValues('payrollGrade') ?? NO_GRADE;
+    if (nextType === 'intern') {
+      form.setValue('payrollGrade', 'I');
+      return;
+    }
+    const allowed = allowedGradesFor(nextType, nextProbation);
+    if (current !== NO_GRADE && !allowed.includes(current as PayrollGrade)) {
+      form.setValue('payrollGrade', NO_GRADE);
+    }
+  };
+
   // Live preview of the probation end date + days-left as the duration is typed.
   const previewMonths = Math.max(
     0,
@@ -329,7 +347,10 @@ export function EmployeeEditDialog({ employee }: { employee: Employee }) {
               <Label htmlFor="employee-type">Employment type</Label>
               <Select
                 value={employmentType}
-                onValueChange={(v) => form.setValue('employmentType', v as EmploymentType)}
+                onValueChange={(v) => {
+                  form.setValue('employmentType', v as EmploymentType);
+                  coerceGrade(v as EmploymentType, onProbation);
+                }}
               >
                 <SelectTrigger id="employee-type">
                   <SelectValue />
@@ -391,23 +412,29 @@ export function EmployeeEditDialog({ employee }: { employee: Employee }) {
 
           <div className="grid grid-cols-2 gap-3">
             <div className="grid gap-1.5">
-              <Label htmlFor="employee-payroll-grade">Payroll grade</Label>
+              <Label htmlFor="employee-payroll-grade">
+                Payroll grade{' '}
+                <span className="text-muted-foreground font-normal">
+                  ({expectedGradeKindFor(employmentType, onProbation)})
+                </span>
+              </Label>
               <Select value={payrollGrade} onValueChange={(v) => form.setValue('payrollGrade', v)}>
                 <SelectTrigger id="employee-payroll-grade">
                   <SelectValue placeholder="No grade" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value={NO_GRADE}>No grade</SelectItem>
-                  {PAYROLL_GRADE_GROUPS.map((g) => (
-                    <SelectGroup key={g.label}>
-                      <SelectLabel>{g.label}</SelectLabel>
-                      {g.grades.map((grade) => (
-                        <SelectItem key={grade} value={grade}>
-                          {grade}
-                        </SelectItem>
-                      ))}
-                    </SelectGroup>
+                  {allowedGrades.map((grade) => (
+                    <SelectItem key={grade} value={grade}>
+                      {grade}
+                    </SelectItem>
                   ))}
+                  {/* A stored grade from another group (legacy row) stays listed
+                      until the category or grade changes — never silently blank. */}
+                  {payrollGrade !== NO_GRADE &&
+                  !allowedGrades.includes(payrollGrade as PayrollGrade) ? (
+                    <SelectItem value={payrollGrade}>{payrollGrade} (other group)</SelectItem>
+                  ) : null}
                 </SelectContent>
               </Select>
             </div>
@@ -432,7 +459,11 @@ export function EmployeeEditDialog({ employee }: { employee: Employee }) {
             <label className="flex items-center gap-2 text-sm">
               <Checkbox
                 checked={onProbation}
-                onCheckedChange={(v) => form.setValue('onProbation', v === true)}
+                onCheckedChange={(v) => {
+                  const checked = v === true;
+                  form.setValue('onProbation', checked);
+                  coerceGrade(employmentType, checked);
+                }}
                 disabled={submitting}
               />
               On probation
