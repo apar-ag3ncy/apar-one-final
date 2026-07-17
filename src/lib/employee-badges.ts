@@ -190,6 +190,43 @@ export function designationLeadKind(
   return null;
 }
 
+/** Settings-managed leadership role lists (Settings → Team → Team policies). */
+export type LeadRolePolicy = {
+  teamLeaderRoles: readonly string[];
+  managerialRoles: readonly string[];
+};
+
+/**
+ * A designation matches a configured role when, lowercased, it equals the
+ * role or contains it as a phrase ("Senior Team Leader" matches "Team
+ * Leader"; short roles like "TL" match only exactly so "TLV" doesn't).
+ */
+function matchesRole(designation: string, roles: readonly string[]): boolean {
+  return roles.some((role) => {
+    const r = role.trim().toLowerCase();
+    if (!r) return false;
+    return r.length <= 3 ? designation === r : designation.includes(r);
+  });
+}
+
+/**
+ * Policy-aware {@link designationLeadKind}: matches against the
+ * settings-managed role lists, falling back to the built-in heuristic when
+ * no policy is loaded. Team-leader roles win over managerial ones when a
+ * designation matches both.
+ */
+export function designationLeadKindWith(
+  designation: string | null | undefined,
+  policy: LeadRolePolicy | null | undefined,
+): LeadDesignationKind | null {
+  if (!policy) return designationLeadKind(designation);
+  const d = (designation ?? '').trim().toLowerCase();
+  if (!d) return null;
+  if (matchesRole(d, policy.teamLeaderRoles)) return 'team_leader';
+  if (matchesRole(d, policy.managerialRoles)) return 'manager';
+  return null;
+}
+
 export const LEAD_DESIGNATION_META: Record<LeadDesignationKind, { label: string; color: string }> =
   {
     team_leader: { label: 'Team Leader', color: '#2a9d8f' },

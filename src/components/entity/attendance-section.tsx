@@ -14,7 +14,14 @@ import {
 } from '@/lib/server/entities/attendance';
 import { defaultStatusForDate } from '@/lib/attendance-defaults';
 import { istDaysAgo, todayIST } from '@/lib/ist-date';
-import { applyLeave, listEmployeeLeaves, type LeaveRow } from '@/lib/server/entities/payroll';
+import {
+  applyLeave,
+  approveLeave,
+  listEmployeeLeaves,
+  type LeaveRow,
+} from '@/lib/server/entities/payroll';
+import { getTeamPolicy } from '@/lib/server/settings/team-policy';
+import { useEntityMutation } from '@/components/os/auth/entity-mutation-gate';
 import { DateField } from '@/components/shared/date-field';
 
 /**
@@ -86,20 +93,26 @@ export function AttendanceSection({ employeeId, employeeName }: AttendanceSectio
   const [balance, setBalance] = useState<readonly LeaveBalanceRow[] | null>(null);
   const [leaveList, setLeaveList] = useState<readonly LeaveRow[] | null>(null);
   const [busy, setBusy] = useState(false);
+  // Monthly paid-leave allowance (Settings → Team → Team policies).
+  const [paidPerMonth, setPaidPerMonth] = useState<number | null>(null);
+  // Approving/rejecting a leave is a HR mutation — gated in the OS shell.
+  const { canEdit } = useEntityMutation();
 
   const fromDate = useMemo(() => daysBack(29), []);
   const toDate = useMemo(() => todayISO(), []);
 
   async function reload() {
     try {
-      const [a, b, l] = await Promise.all([
+      const [a, b, l, p] = await Promise.all([
         listAttendance({ employeeId, fromDate, toDate }),
         getLeaveBalance({ employeeId }),
         listEmployeeLeaves(employeeId),
+        getTeamPolicy().catch(() => null),
       ]);
       setAttendance(a);
       setBalance(b);
       setLeaveList(l);
+      if (p) setPaidPerMonth(p.paidLeavesPerMonth);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Could not load attendance');
     }
@@ -111,12 +124,14 @@ export function AttendanceSection({ employeeId, employeeName }: AttendanceSectio
       listAttendance({ employeeId, fromDate, toDate }),
       getLeaveBalance({ employeeId }),
       listEmployeeLeaves(employeeId),
+      getTeamPolicy().catch(() => null),
     ])
-      .then(([a, b, l]) => {
+      .then(([a, b, l, p]) => {
         if (cancelled) return;
         setAttendance(a);
         setBalance(b);
         setLeaveList(l);
+        if (p) setPaidPerMonth(p.paidLeavesPerMonth);
       })
       .catch((e) => {
         if (!cancelled) toast.error(e instanceof Error ? e.message : 'Load failed');
@@ -125,6 +140,19 @@ export function AttendanceSection({ employeeId, employeeName }: AttendanceSectio
       cancelled = true;
     };
   }, [employeeId, fromDate, toDate]);
+
+  async function decideLeave(id: string, accept: boolean) {
+    setBusy(true);
+    try {
+      await approveLeave({ id, accept });
+      toast.success(accept ? 'Leave approved.' : 'Leave rejected.');
+      await reload();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not update the leave.');
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function mark(date: string, status: AttendanceStatus) {
     setBusy(true);
@@ -321,6 +349,15 @@ export function AttendanceSection({ employeeId, employeeName }: AttendanceSectio
 
       {/* Leave balance */}
       <OsCard title="Leave balance (this FY)">
+        {paidPerMonth !== null ? (
+          <p style={{ fontSize: 11.5, color: 'var(--text-muted)', margin: '0 0 10px' }}>
+            Paid-leave allowance:{' '}
+            <strong style={{ color: 'var(--text)' }}>
+              {paidPerMonth} day{paidPerMonth === 1 ? '' : 's'} / month
+            </strong>{' '}
+            (Earned / Casual / Sick / Comp-off). Set in Settings → Team.
+          </p>
+        ) : null}
         <div
           style={{
             display: 'grid',
@@ -416,17 +453,40 @@ export function AttendanceSection({ employeeId, employeeName }: AttendanceSectio
                 <span style={{ color: 'var(--text-muted)' }}>
                   {l.days} day{Number(l.days) === 1 ? '' : 's'}
                 </span>
-                <span
-                  style={{
-                    marginLeft: 'auto',
-                    textTransform: 'uppercase',
-                    fontSize: 10,
-                    color: 'var(--text-muted)',
-                    letterSpacing: '0.05em',
-                  }}
-                >
-                  {l.status}
-                </span>
+                {l.status === 'applied' && canEdit ? (
+                  <span style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
+                    <button
+                      type="button"
+                      className="btn primary"
+                      style={{ padding: '2px 10px', fontSize: 11 }}
+                      onClick={() => void decideLeave(l.id, true)}
+                      disabled={busy}
+                    >
+                      Approve
+                    </button>
+                    <button
+                      type="button"
+                      className="btn"
+                      style={{ padding: '2px 10px', fontSize: 11 }}
+                      onClick={() => void decideLeave(l.id, false)}
+                      disabled={busy}
+                    >
+                      Reject
+                    </button>
+                  </span>
+                ) : (
+                  <span
+                    style={{
+                      marginLeft: 'auto',
+                      textTransform: 'uppercase',
+                      fontSize: 10,
+                      color: 'var(--text-muted)',
+                      letterSpacing: '0.05em',
+                    }}
+                  >
+                    {l.status}
+                  </span>
+                )}
               </li>
             ))}
           </ul>

@@ -23,6 +23,7 @@ import {
   postTransaction,
   reverseTransaction,
 } from '@/lib/server/ledger/transactions';
+import { readTeamPolicy } from '@/lib/server/settings/team-policy-data';
 
 /**
  * Payroll capture surfaces — SPEC-AMENDMENT-001 §9. Apar never computes
@@ -407,6 +408,10 @@ export async function applyLeave(input: ApplyLeaveInput): Promise<{ id: string }
   return { id: row.id };
 }
 
+/** Kinds that count against the monthly paid-leave allowance. Unpaid never
+ *  does; maternity/paternity are statutory and must not be blocked by it. */
+const PAID_LEAVE_KINDS = new Set(['earned', 'casual', 'sick', 'comp_off']);
+
 export async function approveLeave(args: {
   id: string;
   accept: boolean;
@@ -414,6 +419,50 @@ export async function approveLeave(args: {
 }): Promise<void> {
   const ctx = await getActorContext();
   requireCapability(ctx, 'approve_leave');
+
+  // Monthly paid-leave cap (Settings → Team → Team policies). Approving a
+  // paid-kind leave that would push the employee past the allowance for the
+  // month of its start date is refused with the numbers spelled out — grant
+  // it as Unpaid (or raise the allowance) instead.
+  if (args.accept) {
+    const [leave] = await db.select().from(leaves).where(eq(leaves.id, args.id)).limit(1);
+    if (!leave) throw new AppError('not_found', `leave ${args.id} not found`);
+    if (leave.status !== 'approved' && PAID_LEAVE_KINDS.has(leave.kind)) {
+      const { paidLeavesPerMonth } = await readTeamPolicy();
+      const monthStart = `${leave.fromDate.slice(0, 7)}-01`;
+      const [y, m] = leave.fromDate.split('-').map(Number);
+      const monthEnd = `${leave.fromDate.slice(0, 7)}-${String(
+        new Date(Date.UTC(y!, m!, 0)).getUTCDate(),
+      ).padStart(2, '0')}`;
+      const approvedRows = await db
+        .select({ kind: leaves.kind, days: leaves.days })
+        .from(leaves)
+        .where(
+          and(
+            eq(leaves.employeeId, leave.employeeId),
+            eq(leaves.status, 'approved'),
+            sql`${leaves.fromDate} >= ${monthStart}`,
+            sql`${leaves.fromDate} <= ${monthEnd}`,
+            isNull(leaves.deletedAt),
+          ),
+        );
+      const alreadyGranted = approvedRows
+        .filter((r) => PAID_LEAVE_KINDS.has(r.kind))
+        .reduce((s, r) => s + Number.parseFloat(r.days), 0);
+      const requested = Number.parseFloat(leave.days);
+      if (alreadyGranted + requested > paidLeavesPerMonth) {
+        const monthLabel = new Date(`${monthStart}T00:00:00Z`).toLocaleDateString('en-IN', {
+          month: 'long',
+          year: 'numeric',
+        });
+        throw new AppError(
+          'validation',
+          `Only ${paidLeavesPerMonth} paid-leave day${paidLeavesPerMonth === 1 ? '' : 's'} can be granted per month — ${alreadyGranted} already granted in ${monthLabel} and this leave adds ${requested}. Grant it as Unpaid, or raise the allowance in Settings → Team.`,
+        );
+      }
+    }
+  }
+
   await db
     .update(leaves)
     .set({
