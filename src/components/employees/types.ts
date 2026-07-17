@@ -91,6 +91,11 @@ export type Employee = {
    * probation. Optional so demo/sample constructors stay valid.
    */
   confirmedOn?: string | null;
+  /**
+   * Custom probation end date (YYYY-MM-DD) or null (0081). When set, the
+   * probation badge derives from this instead of the default 6-month window.
+   */
+  probationEndsOn?: string | null;
   exitedAt: Date | null;
   reportsTo: string | null;
   panMasked: string | null; // e.g. XXXXX1234X

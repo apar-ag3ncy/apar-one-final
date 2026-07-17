@@ -568,6 +568,13 @@
       "when": 1785100090000,
       "tag": "0080_release_reversed_invoice_allocations",
       "breakpoints": true
+    },
+    {
+      "idx": 81,
+      "version": "7",
+      "when": 1785200090000,
+      "tag": "0081_employee_probation_ends_on",
+      "breakpoints": true
     }
   ]
 }

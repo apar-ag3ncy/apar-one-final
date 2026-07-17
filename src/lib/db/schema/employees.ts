@@ -72,6 +72,11 @@ export const employees = pgTable(
     // and employees who haven't supplied it.
     dateOfBirth: date(),
     confirmedOn: date(),
+    // Custom probation end date (0081). When set, the "Probation" badge + days-left
+    // derive from this instead of the default 6-months-from-joining window; cleared
+    // to NULL when the employee is confirmed / marked fixed. NULL → legacy derived
+    // behaviour for eligible employment types (see lib/employee-badges.ts).
+    probationEndsOn: date(),
     separatedOn: date(),
     noticePeriodDays: text(), // captured as text — "30 days" or "2 months"
 

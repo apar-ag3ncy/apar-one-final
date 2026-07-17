@@ -50,12 +50,52 @@ export function isNewJoiner(joinedOn: string | Date, today: string = todayIST())
 export function probationEndsOn(joinedOn: string | Date): string | null {
   const joined = toIsoDay(joinedOn);
   if (!joined) return null;
-  const d = new Date(`${joined}T00:00:00Z`);
-  const dayOfMonth = d.getUTCDate();
-  d.setUTCMonth(d.getUTCMonth() + PROBATION_MONTHS);
-  // Month-length clamp: Aug 31 + 6mo should be end-of-Feb, not Mar 2/3.
-  if (d.getUTCDate() !== dayOfMonth) d.setUTCDate(0);
+  return addMonthsDays(joined, PROBATION_MONTHS, 0);
+}
+
+/**
+ * `startIso` + N months + M days, as YYYY-MM-DD. Powers the probation-duration
+ * input (the founder enters "how many months / days"). Months apply first with a
+ * month-length clamp (Aug 31 + 6mo → end-of-Feb, not Mar 2/3), then days.
+ */
+export function addMonthsDays(
+  startIso: string | Date,
+  months: number,
+  days: number,
+): string | null {
+  const start = toIsoDay(startIso);
+  if (!start) return null;
+  const d = new Date(`${start}T00:00:00Z`);
+  if (months) {
+    const dayOfMonth = d.getUTCDate();
+    d.setUTCMonth(d.getUTCMonth() + months);
+    if (d.getUTCDate() !== dayOfMonth) d.setUTCDate(0);
+  }
+  if (days) d.setUTCDate(d.getUTCDate() + days);
   return d.toISOString().slice(0, 10);
+}
+
+/**
+ * Inverse of {@link addMonthsDays}: the whole-months + remaining-days duration
+ * from `startIso` to `endIso`. Used to prefill the editor from a stored end date
+ * so it round-trips (addMonthsDays(start, months, days) === end). Null if end < start.
+ */
+export function splitMonthsDays(
+  startIso: string | Date,
+  endIso: string | Date,
+): { months: number; days: number } | null {
+  const start = toIsoDay(startIso);
+  const end = toIsoDay(endIso);
+  if (!start || !end || end < start) return null;
+  let months = 0;
+  for (;;) {
+    const next = addMonthsDays(start, months + 1, 0);
+    if (!next || next > end) break;
+    months += 1;
+  }
+  const anchor = addMonthsDays(start, months, 0) ?? start;
+  const days = Math.round((dayMs(end) - dayMs(anchor)) / MS_PER_DAY);
+  return { months, days };
 }
 
 /** Employment types that serve a probation period — interns included, since
@@ -64,29 +104,50 @@ const PROBATION_EMPLOYMENT_TYPES = new Set(['full_time', 'part_time', 'intern'])
 
 export type ProbationInput = {
   joinedOn: string | Date;
-  /** DB or UI employment type — probation applies to full/part-time/intern. */
+  /** DB or UI employment type — the DERIVED window applies to full/part-time/intern. */
   employmentType: string;
   confirmedOn?: string | null;
+  /**
+   * Explicit custom probation end date (0081). When set, it wins over the derived
+   * 6-month window and applies regardless of employment type — the founder set it
+   * deliberately. Cleared to null when the employee is confirmed / marked fixed.
+   */
+  probationEndsOn?: string | null;
   /** Employee status; separated/prospective people never show the chip. */
   status?: string | null;
 };
 
 /**
+ * The effective probation end date, or null if the person isn't on probation:
+ * confirmed, separated/prospective, a future join date, or (no explicit end and
+ * not an eligible type). Explicit `probationEndsOn` overrides the derived window.
+ */
+export function effectiveProbationEnd(
+  input: ProbationInput,
+  today: string = todayIST(),
+): string | null {
+  if (input.confirmedOn) return null;
+  if (input.status === 'separated' || input.status === 'prospective') return null;
+  const joined = toIsoDay(input.joinedOn);
+  if (!joined || joined > today) return null;
+  const custom = input.probationEndsOn ? toIsoDay(input.probationEndsOn) : null;
+  const endsOn =
+    custom ?? (PROBATION_EMPLOYMENT_TYPES.has(input.employmentType) ? probationEndsOn(joined) : null);
+  if (!endsOn || endsOn <= today) return null;
+  return endsOn;
+}
+
+/**
  * Days remaining in the probation window, or null when the chip should be
- * hidden (confirmed, wrong employment type, window passed, separated, or a
- * future join date).
+ * hidden (confirmed, not on probation, window passed, separated, or a future
+ * join date). Prefers an explicit `probationEndsOn` over the derived window.
  */
 export function probationDaysLeft(
   input: ProbationInput,
   today: string = todayIST(),
 ): number | null {
-  if (input.confirmedOn) return null;
-  if (!PROBATION_EMPLOYMENT_TYPES.has(input.employmentType)) return null;
-  if (input.status === 'separated' || input.status === 'prospective') return null;
-  const joined = toIsoDay(input.joinedOn);
-  if (!joined || joined > today) return null;
-  const endsOn = probationEndsOn(joined);
-  if (!endsOn || endsOn <= today) return null;
+  const endsOn = effectiveProbationEnd(input, today);
+  if (!endsOn) return null;
   return Math.round((dayMs(endsOn) - dayMs(today)) / MS_PER_DAY);
 }
 
