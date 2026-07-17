@@ -244,7 +244,9 @@ export function EmployeeEditDialog({ employee }: { employee: Employee }) {
   });
 
   const employmentType = form.watch('employmentType');
-  const payrollGrade = form.watch('payrollGrade') ?? NO_GRADE;
+  // `||` (not `??`): an empty string must also collapse to the sentinel — a
+  // ''-valued Radix SelectItem throws and takes the whole page down.
+  const payrollGrade = form.watch('payrollGrade') || NO_GRADE;
   const onProbation = form.watch('onProbation');
 
   // Category → grade-group coupling (mirrors the OS editor): Intern (type) → I;
@@ -429,14 +431,19 @@ export function EmployeeEditDialog({ employee }: { employee: Employee }) {
                       {grade}
                     </SelectItem>
                   ))}
-                  {/* A stored grade from another group (legacy row) stays listed
-                      until the category or grade changes — never silently blank. */}
-                  {payrollGrade !== NO_GRADE &&
-                  !allowedGrades.includes(payrollGrade as PayrollGrade) ? (
-                    <SelectItem value={payrollGrade}>{payrollGrade} (other group)</SelectItem>
-                  ) : null}
                 </SelectContent>
               </Select>
+              {/* Only fixed-value items above — a dynamic-value SelectItem can
+                  transiently render with '' and Radix throws on that, killing
+                  the page. A stored grade from another group (legacy row) is
+                  surfaced as a hint instead; it stays saved until changed. */}
+              {payrollGrade !== NO_GRADE &&
+              !allowedGrades.includes(payrollGrade as PayrollGrade) ? (
+                <p className="text-muted-foreground text-xs">
+                  Current grade {payrollGrade} is from another group — pick a replacement above or
+                  change the category.
+                </p>
+              ) : null}
             </div>
             <div className="grid gap-1.5">
               <Label htmlFor="employee-notice-period">Notice period</Label>
