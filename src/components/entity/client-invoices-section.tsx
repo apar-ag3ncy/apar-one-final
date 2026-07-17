@@ -458,15 +458,19 @@ export function ClientInvoicesSection({
                                 e.stopPropagation();
                                 setHistoryTarget(inv);
                               }}
-                              title="Reissued by amendment — view the amendment history"
+                              title={
+                                inv.amendedFromDocumentNumber
+                                  ? `Reissue of ${inv.amendedFromDocumentNumber} — click for the amendment history`
+                                  : 'Reissue of an amended invoice — click for the amendment history'
+                              }
                               aria-label="View amendment history"
                             >
                               <StatusBadge
-                                tone="warning"
+                                tone="info"
                                 label={
-                                  inv.amendmentCount > 0
-                                    ? `Amended ×${inv.amendmentCount}`
-                                    : 'Amended'
+                                  inv.amendedFromDocumentNumber
+                                    ? `Reissue of ${inv.amendedFromDocumentNumber}`
+                                    : 'Reissue'
                                 }
                                 dot={false}
                               />
@@ -911,9 +915,9 @@ function AmendmentHistoryDialog({
         <DialogHeader>
           <DialogTitle>Amendment history</DialogTitle>
           <DialogDescription>
-            The full chain of amendments, oldest first. The current invoice is the live
-            (non-deleted) one; earlier entries were reversed on reissue. Each reissue shows why it
-            was amended and what changed.
+            The full chain, oldest first: the original invoice, then each reissue. Earlier versions
+            were cancelled (reversed) when reissued; the live one is marked Current. Each reissue
+            shows the reason it was amended and exactly what changed from the version before it.
           </DialogDescription>
         </DialogHeader>
 
@@ -979,6 +983,11 @@ function AmendmentHistoryDialog({
                       {lineChanges.map((c, ci) => (
                         <div key={ci}>{c}</div>
                       ))}
+                    </div>
+                  ) : prev != null ? (
+                    <div className="text-muted-foreground bg-muted/40 rounded px-2 py-1 text-[11px] leading-relaxed italic">
+                      No field changes yet — this reissue is still an unedited copy of{' '}
+                      {prev.documentNumber}. Edit and send it to record the correction.
                     </div>
                   ) : null}
                 </li>

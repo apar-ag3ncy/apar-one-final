@@ -213,10 +213,10 @@ export function ClientPaymentsSection({
                           <button
                             type="button"
                             onClick={() => setHistoryTarget(r)}
-                            title="Reissued by amendment — view history"
+                            title="Reissue of an amended receipt — click for the amendment history"
                             aria-label="View amendment history"
                           >
-                            <StatusBadge tone="warning" label="Amended" dot={false} />
+                            <StatusBadge tone="info" label="Reissue" dot={false} />
                           </button>
                         ) : null}
                       </div>

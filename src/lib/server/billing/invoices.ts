@@ -651,7 +651,13 @@ export type ListInvoicesFilters = {
 };
 
 export async function listInvoices(filters: ListInvoicesFilters = {}): Promise<{
-  rows: Array<typeof invoices.$inferSelect & { amendmentCount: number }>;
+  rows: Array<
+    typeof invoices.$inferSelect & {
+      amendmentCount: number;
+      /** Document number of the invoice this one was reissued from (null if not a reissue). */
+      amendedFromDocumentNumber: string | null;
+    }
+  >;
   total: number;
 }> {
   const ctx = await getActorContext();
@@ -714,7 +720,27 @@ export async function listInvoices(filters: ListInvoicesFilters = {}): Promise<{
   const depthById = new Map<string, number>();
   for (const r of depthRows) depthById.set(r.id, Number(r.depth));
 
-  const rowsWithCount = rows.map((r) => ({ ...r, amendmentCount: depthById.get(r.id) ?? 0 }));
+  // Original document number for each reissue row, so the UI can say
+  // "Reissue of INV-XXXX" instead of a bare, confusing "Amended".
+  const parentIds = Array.from(
+    new Set(rows.map((r) => r.amendedFromInvoiceId).filter((x): x is string => !!x)),
+  );
+  const parentNumberById = new Map<string, string>();
+  if (parentIds.length > 0) {
+    const parents = await db
+      .select({ id: invoices.id, documentNumber: invoices.documentNumber })
+      .from(invoices)
+      .where(inArray(invoices.id, parentIds));
+    for (const p of parents) parentNumberById.set(p.id, p.documentNumber);
+  }
+
+  const rowsWithCount = rows.map((r) => ({
+    ...r,
+    amendmentCount: depthById.get(r.id) ?? 0,
+    amendedFromDocumentNumber: r.amendedFromInvoiceId
+      ? (parentNumberById.get(r.amendedFromInvoiceId) ?? null)
+      : null,
+  }));
   return { rows: rowsWithCount, total };
 }
 
