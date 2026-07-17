@@ -43,8 +43,19 @@ export type DashboardMetrics = {
   officeSpendByVendor: { vendor: string; paise: string }[];
   salaryByDepartment: { department: string; paise: string }[];
   salaryByGrade: { grade: string; paise: string }[];
-  /** Top 12 employees by total salary paid (§2.1a). */
-  salaryByEmployee: { employee: string; paise: string }[];
+  /**
+   * Every employee who has been paid salary, with their total and which
+   * directory bucket they belong to: `active` (on-roster staff), `director`
+   * (identified by designation), or `inactive` (separated / archived). The
+   * directory shows each bucket separately (§ salary directory).
+   */
+  salaryEmployees: {
+    employee: string;
+    paise: string;
+    bucket: 'active' | 'director' | 'inactive';
+  }[];
+  /** Total salary paid per calendar month (all employees together) — month-wise view. */
+  salaryByMonth: { month: string; paise: string }[];
   /** Projects grouped into pipeline stages — a point-in-time snapshot (§2.2.6). */
   pitchFunnel: { stage: string; count: number }[];
   /** Average completed-project turnover in days (start → completed), or null (§2.2.8). */
@@ -281,19 +292,59 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
     paise: r.total,
   }));
 
-  // Employee-wise total salary paid — top 12 (the full list lives in the Salary
-  // Book). Same salary_payments source as the dept/grade splits (§2.1a).
-  const empSalaryRows = await db.execute<{ name: string; total: string }>(sql`
-    SELECT e.full_name AS name, COALESCE(SUM(sp.amount_paise), 0)::text AS total
+  // Employee-wise total salary paid — the full paid roster, each tagged with a
+  // directory bucket so the UI can show active staff, directors and inactive
+  // (separated / archived) people in SEPARATE sections. Same salary_payments
+  // source as the dept/grade splits. Directors are identified by designation
+  // (there's no director flag on the row).
+  const empSalaryRows = await db.execute<{
+    name: string;
+    total: string;
+    status: string;
+    is_archived: boolean;
+    designation: string | null;
+  }>(sql`
+    SELECT
+      e.full_name AS name,
+      COALESCE(SUM(sp.amount_paise), 0)::text AS total,
+      e.status::text AS status,
+      e.is_archived AS is_archived,
+      e.designation AS designation
     FROM salary_payments sp
     JOIN employees e ON e.id = sp.employee_id
     WHERE sp.deleted_at IS NULL
-    GROUP BY e.id, e.full_name
+    GROUP BY e.id, e.full_name, e.status, e.is_archived, e.designation
     ORDER BY SUM(sp.amount_paise) DESC
-    LIMIT 12
   `);
-  const salaryByEmployee = rowsOf<{ name: string; total: string }>(empSalaryRows).map((r) => ({
-    employee: r.name,
+  const isDirectorTitle = (d: string | null): boolean =>
+    !!d && /\b(director|founder|co-?founder|partner|ceo|chairman|proprietor)\b/i.test(d);
+  const salaryEmployees = rowsOf<{
+    name: string;
+    total: string;
+    status: string;
+    is_archived: boolean;
+    designation: string | null;
+  }>(empSalaryRows).map((r) => {
+    const bucket: 'active' | 'director' | 'inactive' =
+      r.status === 'separated' || r.is_archived
+        ? 'inactive'
+        : isDirectorTitle(r.designation)
+          ? 'director'
+          : 'active';
+    return { employee: r.name, paise: r.total, bucket };
+  });
+
+  // Salary paid per calendar month (all employees together) — the month-wise view.
+  const monthSalaryRows = await db.execute<{ month: string; total: string }>(sql`
+    SELECT to_char(sp.paid_on, 'YYYY-MM') AS month,
+      COALESCE(SUM(sp.amount_paise), 0)::text AS total
+    FROM salary_payments sp
+    WHERE sp.deleted_at IS NULL
+    GROUP BY to_char(sp.paid_on, 'YYYY-MM')
+    ORDER BY month DESC
+  `);
+  const salaryByMonth = rowsOf<{ month: string; total: string }>(monthSalaryRows).map((r) => ({
+    month: r.month,
     paise: r.total,
   }));
 
@@ -367,7 +418,8 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
     officeSpendByVendor,
     salaryByDepartment,
     salaryByGrade,
-    salaryByEmployee,
+    salaryEmployees,
+    salaryByMonth,
     pitchFunnel,
     avgTurnoverDays,
     projectTurnover,
