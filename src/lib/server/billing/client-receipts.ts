@@ -108,12 +108,18 @@ function invoiceDocNumber(externalRef: string): string {
  * filtering `status='posted' AND reverses_id IS NULL` is the same guard the
  * project-P&L "received" query already uses — this makes every collections read
  * agree with it. `invoiceId` is a raw SQL identifier expression, e.g. sql`t.id`.
+ *
+ * `deleted_at IS NULL` skips RELEASED allocations — those a reversed INVOICE freed
+ * back to the client's pool (see reverseTransaction / migration 0080). This mirror
+ * of the payment-side guard keeps the outstanding read in step with the sum-check
+ * trigger, which also ignores released rows.
  */
 function appliedFromLiveReceipts(invoiceId: SQL): SQL {
   return sql`COALESCE((
     SELECT SUM(ra.amount_paise) FROM receipt_allocations ra
     JOIN transactions pay ON pay.id = ra.client_payment_txn_id
     WHERE ra.client_invoice_txn_id = ${invoiceId}
+      AND ra.deleted_at IS NULL
       AND pay.status = 'posted' AND pay.reverses_id IS NULL
   ), 0)`;
 }
@@ -511,10 +517,11 @@ export async function listClientReceipts(clientId: string): Promise<readonly Cli
     FROM receipt_allocations ra
     JOIN transactions it ON it.id = ra.client_invoice_txn_id
     LEFT JOIN projects pr ON pr.id = it.project_id
-    WHERE ra.client_payment_txn_id IN (
-      SELECT id FROM transactions
-      WHERE kind = 'client_payment_received' AND related_entity_id = ${parsed} AND reverses_id IS NULL
-    )
+    WHERE ra.deleted_at IS NULL
+      AND ra.client_payment_txn_id IN (
+        SELECT id FROM transactions
+        WHERE kind = 'client_payment_received' AND related_entity_id = ${parsed} AND reverses_id IS NULL
+      )
   `);
 
   const allocByPayment = new Map<string, ClientReceiptAllocationRow[]>();
@@ -894,11 +901,16 @@ export type ClientUnappliedCredit = {
 /**
  * The client's UNAPPLIED receipt credit — money we've already received (posted,
  * non-reversed `client_payment_received` txns) that hasn't been allocated to any
- * invoice yet. Per receipt: total = Σ its debit legs; applied = Σ its
- * `receipt_allocations` (across all invoices — matching the DB sum-check trigger's
- * notion of "used"); unapplied = total − applied. Only receipts with unapplied > 0
- * are returned, oldest-first. This is the pool `allocateClientCredit` spends from,
- * and the number the "Unapplied money" card shows.
+ * live invoice yet. Per receipt: total = Σ its debit legs; applied = Σ its
+ * NON-RELEASED `receipt_allocations` (across all invoices — matching the DB
+ * sum-check trigger's notion of "used"); unapplied = total − applied. Only receipts
+ * with unapplied > 0 are returned, oldest-first. This is the pool
+ * `allocateClientCredit` spends from, and the number the "Unapplied money" card
+ * shows.
+ *
+ * `deleted_at IS NULL` is what makes credit stranded on a since-reversed invoice
+ * come back: reverseTransaction releases (soft-deletes) those allocation rows, so
+ * they stop counting as "used" here and the receipt's room reopens.
  */
 export async function getClientUnappliedCredit(clientId: string): Promise<ClientUnappliedCredit> {
   await getActorContext();
@@ -922,6 +934,7 @@ export async function getClientUnappliedCredit(clientId: string): Promise<Client
       COALESCE((
         SELECT SUM(ra.amount_paise) FROM receipt_allocations ra
         WHERE ra.client_payment_txn_id = t.id
+          AND ra.deleted_at IS NULL
       ), 0)::text AS applied
     FROM transactions t
     WHERE t.kind = 'client_payment_received'
@@ -1079,6 +1092,7 @@ export async function allocateClientCredit(input: {
         COALESCE((
           SELECT SUM(ra.amount_paise) FROM receipt_allocations ra
           WHERE ra.client_payment_txn_id = t.id
+            AND ra.deleted_at IS NULL
         ), 0)::text AS applied
       FROM transactions t
       WHERE t.kind = 'client_payment_received'
