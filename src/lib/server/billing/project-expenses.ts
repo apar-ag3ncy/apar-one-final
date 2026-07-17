@@ -75,7 +75,9 @@ export async function getProjectVendorExpenses(projectId: string): Promise<Proje
         COALESCE((SELECT SUM(amount_paise) FROM bill_allocations WHERE bill_txn_id = t.id), 0) AS paid
       FROM transactions t
       WHERE t.kind = 'vendor_bill'
-        AND t.status = 'posted'
+        -- Include drafts (pending bills) + posted; only reversed bills drop out,
+        -- so the founder sees every recorded vendor expense on the project.
+        AND t.status <> 'reversed'
         AND t.reverses_id IS NULL
         AND t.project_id = ${pid}
         AND t.paid_to_vendor_id IS NOT NULL
