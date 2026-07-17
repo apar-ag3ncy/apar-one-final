@@ -28,13 +28,16 @@ import {
   payrollGradeKind,
   PAYROLL_GRADE_GROUPS,
   type Employee as HrEmployee,
+  type PayrollGrade,
 } from '@/components/employees/types';
 import {
   DESIGNATION_SUGGESTIONS,
   LEAD_DESIGNATION_META,
+  addMonthsDays,
   designationLeadKind,
   isNewJoiner,
   probationDaysLeft,
+  splitMonthsDays,
 } from '@/lib/employee-badges';
 import { todayIST } from '@/lib/ist-date';
 import {
@@ -2015,6 +2018,7 @@ export function EmployeesApp({
       joinedOn: e.joinedAt,
       employmentType: e.employmentType,
       confirmedOn: e.confirmedOn ?? null,
+      probationEndsOn: e.probationEndsOn ?? null,
       status: e.status,
     });
     const leadKind = designationLeadKind(e.designation);
@@ -2676,6 +2680,8 @@ type EditorForm = {
   designation: string;
   department: string;
   employmentType: EmpType;
+  /** Payroll grade level ('EA+', 'I', …); '' = no grade. */
+  payrollGrade: string;
   status: EmpStatus;
   workEmail: string;
   personalEmail: string;
@@ -2684,6 +2690,10 @@ type EditorForm = {
   dateOfBirth: string;
   joinedOn: string;
   confirmedOn: string;
+  /** On-probation toggle + custom duration from the joining date (0081). */
+  onProbation: boolean;
+  probationMonths: string;
+  probationDays: string;
   separatedOn: string;
   noticePeriodDays: string;
   notes: string;
@@ -2702,6 +2712,7 @@ const EMPTY_EDITOR_FORM: EditorForm = {
   designation: '',
   department: '',
   employmentType: 'full_time',
+  payrollGrade: '',
   status: 'active',
   workEmail: '',
   personalEmail: '',
@@ -2710,18 +2721,24 @@ const EMPTY_EDITOR_FORM: EditorForm = {
   dateOfBirth: '',
   joinedOn: '',
   confirmedOn: '',
+  onProbation: false,
+  probationMonths: '',
+  probationDays: '',
   separatedOn: '',
   noticePeriodDays: '',
   notes: '',
 };
 
 function editableToForm(e: EditableEmployee): EditorForm {
+  // Round-trip a stored probation end date back into the months/days inputs.
+  const prob = e.probationEndsOn ? splitMonthsDays(e.joinedOn, e.probationEndsOn) : null;
   return {
     fullName: e.fullName,
     displayName: e.displayName ?? '',
     designation: e.designation ?? '',
     department: e.department ? departmentLabel(e.department) : '',
     employmentType: e.employmentType,
+    payrollGrade: e.payrollGrade ?? '',
     status: e.status,
     workEmail: e.workEmail ?? '',
     personalEmail: e.personalEmail ?? '',
@@ -2730,6 +2747,9 @@ function editableToForm(e: EditableEmployee): EditorForm {
     dateOfBirth: e.dateOfBirth ?? '',
     joinedOn: e.joinedOn,
     confirmedOn: e.confirmedOn ?? '',
+    onProbation: !!e.probationEndsOn,
+    probationMonths: prob && prob.months ? String(prob.months) : '',
+    probationDays: prob && prob.days ? String(prob.days) : '',
     separatedOn: e.separatedOn ?? '',
     noticePeriodDays: e.noticePeriodDays ?? '',
     notes: e.notes ?? '',
@@ -2811,8 +2831,20 @@ export function EmployeeProfileEditor({
       setErrors({ separatedOn: 'Last working day is required for Notice/Separated status.' });
       return;
     }
+    const probMonths = Math.max(0, Number.parseInt(form.probationMonths || '0', 10) || 0);
+    const probDays = Math.max(0, Number.parseInt(form.probationDays || '0', 10) || 0);
+    if (form.onProbation && probMonths === 0 && probDays === 0) {
+      setErrors({ probation: 'Enter the probation length in months and/or days.' });
+      return;
+    }
     setErrors({});
     setBusy(true);
+    // Payroll grade ('' → no grade) + custom probation end (off / no duration → cleared).
+    const payrollGradeValue = (form.payrollGrade || null) as PayrollGrade | null;
+    const probationEndsOnValue =
+      form.onProbation && (probMonths > 0 || probDays > 0)
+        ? addMonthsDays(form.joinedOn, probMonths, probDays)
+        : null;
     try {
       if (mode === 'create') {
         const res = await createEmployee({
@@ -2821,6 +2853,7 @@ export function EmployeeProfileEditor({
           designation: form.designation.trim() || undefined,
           department: form.department.trim() || undefined,
           employmentType: form.employmentType,
+          payrollGrade: payrollGradeValue ?? undefined,
           status: form.status,
           workEmail: form.workEmail.trim() || undefined,
           personalEmail: form.personalEmail.trim() || undefined,
@@ -2829,6 +2862,7 @@ export function EmployeeProfileEditor({
           dateOfBirth: form.dateOfBirth || null,
           joinedOn: form.joinedOn,
           confirmedOn: form.confirmedOn || undefined,
+          probationEndsOn: probationEndsOnValue ?? undefined,
           separatedOn: form.separatedOn || undefined,
           noticePeriodDays: form.noticePeriodDays.trim() || undefined,
           notes: form.notes.trim() || undefined,
@@ -2847,6 +2881,7 @@ export function EmployeeProfileEditor({
           designation: form.designation.trim() || null,
           department: form.department.trim() || null,
           employmentType: form.employmentType,
+          payrollGrade: payrollGradeValue,
           status: form.status,
           workEmail: form.workEmail.trim() || null,
           personalEmail: form.personalEmail.trim() || null,
@@ -2855,6 +2890,7 @@ export function EmployeeProfileEditor({
           dateOfBirth: form.dateOfBirth || null,
           joinedOn: form.joinedOn,
           confirmedOn: form.confirmedOn || null,
+          probationEndsOn: probationEndsOnValue,
           separatedOn: form.separatedOn || null,
           noticePeriodDays: form.noticePeriodDays.trim() || null,
           notes: form.notes.trim() || null,
@@ -2872,6 +2908,24 @@ export function EmployeeProfileEditor({
       setBusy(false);
     }
   };
+
+  // Live preview of the probation end date + days-left as the founder types the
+  // months/days duration.
+  const probPreviewMonths = Math.max(0, Number.parseInt(form.probationMonths || '0', 10) || 0);
+  const probPreviewDays = Math.max(0, Number.parseInt(form.probationDays || '0', 10) || 0);
+  const probationPreviewDate =
+    form.onProbation && form.joinedOn && (probPreviewMonths > 0 || probPreviewDays > 0)
+      ? addMonthsDays(form.joinedOn, probPreviewMonths, probPreviewDays)
+      : null;
+  const probationPreviewLeft = probationPreviewDate
+    ? probationDaysLeft({
+        joinedOn: form.joinedOn,
+        employmentType: form.employmentType,
+        probationEndsOn: probationPreviewDate,
+        confirmedOn: form.confirmedOn || null,
+        status: form.status,
+      })
+    : null;
 
   return (
     <Modal title={mode === 'edit' ? 'Edit Employee' : 'Add Employee'} onClose={onClose} width={620}>
@@ -2938,6 +2992,20 @@ export function EmployeeProfileEditor({
               ))}
             </select>
           </Field>
+          <Field label="Payroll grade" hint="Intern (I) · Probation (PA–PA+) · Employee (EA–EA+).">
+            <select value={form.payrollGrade} onChange={(e) => set('payrollGrade', e.target.value)}>
+              <option value="">No grade</option>
+              {PAYROLL_GRADE_GROUPS.map((g) => (
+                <optgroup key={g.label} label={g.label}>
+                  {g.grades.map((grade) => (
+                    <option key={grade} value={grade}>
+                      {grade}
+                    </option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
+          </Field>
           <Field label="Status">
             <select
               value={form.status}
@@ -2999,6 +3067,68 @@ export function EmployeeProfileEditor({
           <Field label="Confirmed on">
             <DateField value={form.confirmedOn} onChange={(next) => set('confirmedOn', next)} />
             {errors.confirmedOn ? <FieldErr msg={errors.confirmedOn} /> : null}
+          </Field>
+          <Field
+            label="Probation"
+            full
+            hint="Mark a probation period and its length; the badge counts down to the end date and overrides the default 6 months. A Confirmed-on date ends probation."
+          >
+            <label
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 13 }}
+            >
+              <input
+                type="checkbox"
+                checked={form.onProbation}
+                onChange={(e) => set('onProbation', e.target.checked)}
+              />
+              On probation
+            </label>
+            {form.onProbation ? (
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  marginTop: 8,
+                  flexWrap: 'wrap',
+                }}
+              >
+                <input
+                  type="number"
+                  min={0}
+                  inputMode="numeric"
+                  value={form.probationMonths}
+                  onChange={(e) => set('probationMonths', e.target.value)}
+                  placeholder="0"
+                  style={{ width: 72 }}
+                  aria-label="Probation months"
+                />
+                <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>months</span>
+                <input
+                  type="number"
+                  min={0}
+                  inputMode="numeric"
+                  value={form.probationDays}
+                  onChange={(e) => set('probationDays', e.target.value)}
+                  placeholder="0"
+                  style={{ width: 72 }}
+                  aria-label="Probation days"
+                />
+                <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>days from joining</span>
+                {probationPreviewDate ? (
+                  <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                    → ends{' '}
+                    {new Date(probationPreviewDate).toLocaleDateString('en-IN', {
+                      day: '2-digit',
+                      month: 'short',
+                      year: 'numeric',
+                    })}
+                    {probationPreviewLeft != null ? ` (${probationPreviewLeft}d left)` : ''}
+                  </span>
+                ) : null}
+              </div>
+            ) : null}
+            {errors.probation ? <FieldErr msg={errors.probation} /> : null}
           </Field>
           {mode === 'edit' || form.status === 'notice' || form.status === 'separated' ? (
             <Field

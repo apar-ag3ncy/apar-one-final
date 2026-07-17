@@ -310,6 +310,8 @@ const CreateEmployeeSchema = z.object({
   joinedOn: z.string().regex(ISO_DATE, 'Joining date must be YYYY-MM-DD'),
   dateOfBirth: z.string().regex(ISO_DATE).nullable().optional(),
   confirmedOn: z.string().regex(ISO_DATE).optional(),
+  // Custom probation end date (0081). NULL/omitted → default derived window.
+  probationEndsOn: z.string().regex(ISO_DATE).nullable().optional(),
   separatedOn: z.string().regex(ISO_DATE).optional(),
   noticePeriodDays: z.string().trim().max(40).optional(),
   // KYC — masked on row, full lives only in the restricted-kyc scan
@@ -497,6 +499,7 @@ export async function createEmployee(input: CreateEmployeeInput): Promise<Create
           joinedOn: v.joinedOn,
           dateOfBirth: v.dateOfBirth ?? null,
           confirmedOn: v.confirmedOn || null,
+          probationEndsOn: v.probationEndsOn ?? null,
           separatedOn: v.separatedOn || null,
           noticePeriodDays: v.noticePeriodDays || null,
           maskedPan,
@@ -678,6 +681,11 @@ const UpdateEmployeeSchema = z.object({
     .regex(ISO_DATE, 'Confirmation date must be YYYY-MM-DD')
     .nullable()
     .optional(),
+  probationEndsOn: z
+    .string()
+    .regex(ISO_DATE, 'Probation end date must be YYYY-MM-DD')
+    .nullable()
+    .optional(),
   separatedOn: z
     .string()
     .regex(ISO_DATE, 'Separation date must be YYYY-MM-DD')
@@ -784,6 +792,7 @@ export async function updateEmployee(input: UpdateEmployeeInput): Promise<Update
   if (v.joinedOn !== undefined) patch.joinedOn = v.joinedOn;
   if (v.dateOfBirth !== undefined) patch.dateOfBirth = v.dateOfBirth;
   if (v.confirmedOn !== undefined) patch.confirmedOn = v.confirmedOn;
+  if (v.probationEndsOn !== undefined) patch.probationEndsOn = v.probationEndsOn;
   if (v.separatedOn !== undefined) patch.separatedOn = v.separatedOn;
   if (v.noticePeriodDays !== undefined) patch.noticePeriodDays = v.noticePeriodDays;
   if (v.notes !== undefined) patch.notes = v.notes;
@@ -858,6 +867,7 @@ export type EditableEmployee = {
   joinedOn: string;
   dateOfBirth: string | null;
   confirmedOn: string | null;
+  probationEndsOn: string | null;
   separatedOn: string | null;
   noticePeriodDays: string | null;
   notes: string | null;
@@ -883,6 +893,7 @@ export async function getEmployeeEditable(id: string): Promise<EditableEmployee 
       joinedOn: employees.joinedOn,
       dateOfBirth: employees.dateOfBirth,
       confirmedOn: employees.confirmedOn,
+      probationEndsOn: employees.probationEndsOn,
       separatedOn: employees.separatedOn,
       noticePeriodDays: employees.noticePeriodDays,
       notes: employees.notes,

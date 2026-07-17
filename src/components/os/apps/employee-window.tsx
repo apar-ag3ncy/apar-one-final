@@ -299,6 +299,7 @@ function Header({
     joinedOn: employee.joinedOn,
     employmentType: employee.employmentType,
     confirmedOn: employee.confirmedOn,
+    probationEndsOn: employee.probationEndsOn,
     status: employee.status,
   });
   return (
@@ -355,7 +356,11 @@ function Header({
       ) : null}
       {probationLeft !== null ? (
         <span
-          title="First 6 months from joining — clears once a confirmation date is set"
+          title={
+            employee.probationEndsOn
+              ? 'Probation period — clears once a confirmation date is set'
+              : 'First 6 months from joining — clears once a confirmation date is set'
+          }
           style={{
             fontSize: 11,
             fontWeight: 600,
@@ -468,6 +473,9 @@ function OverviewBody({
                 : '—',
             ],
             ['Confirmed on', fmtDate(employee.confirmedOn)],
+            ...(employee.probationEndsOn
+              ? ([['Probation ends', fmtDate(employee.probationEndsOn)]] as [string, string][])
+              : []),
             ['Separated on', fmtDate(employee.separatedOn)],
             ['Notice period', employee.noticePeriodDays ?? '—'],
             ['PAN', employee.maskedPan ?? '—'],
