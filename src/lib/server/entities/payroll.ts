@@ -61,7 +61,6 @@ function inr(paise: bigint | null): string {
 
 const BonusKindEnum = z.enum(['bonus', 'perk_cash', 'perk_inkind', 'gift', 'award']);
 const ReimbursementAttributionEnum = z.enum(['client', 'opex']);
-const ReimbursementStatusEnum = z.enum(['submitted', 'approved', 'rejected', 'paid']);
 const LeaveKindEnum = z.enum([
   'earned',
   'casual',
@@ -71,7 +70,6 @@ const LeaveKindEnum = z.enum([
   'maternity',
   'paternity',
 ]);
-const LeaveStatusEnum = z.enum(['applied', 'approved', 'rejected', 'cancelled']);
 
 /* -------------------------------------------------------------------------- */
 /* Bonuses & Perks                                                             */

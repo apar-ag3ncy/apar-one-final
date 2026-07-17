@@ -54,7 +54,7 @@ import {
   type NotificationSettings,
   type UserSettings,
 } from './auth/session-store';
-import { formatINR, initials, parseRupeesToPaise } from './format';
+import { formatINR, initials } from './format';
 import { Icon, type IconName } from './icons';
 import { EmployeeAccountsCard } from './employee-accounts-card';
 import type { Client, Project, Vendor } from './types';
@@ -113,36 +113,6 @@ import { toast } from 'sonner';
 /* -------------------------------------------------------------------------- */
 /* Shared bits                                                                */
 /* -------------------------------------------------------------------------- */
-
-function Sparkline({ data, color = '#E63A1F' }: { data: number[]; color?: string }) {
-  const w = 100;
-  const h = 32;
-  const min = Math.min(...data);
-  const max = Math.max(...data);
-  const span = max - min || 1;
-  const pts = data
-    .map((v, i) => {
-      const x = (i / (data.length - 1)) * w;
-      const y = h - ((v - min) / span) * h;
-      return `${x},${y}`;
-    })
-    .join(' ');
-  const last = data[data.length - 1]!;
-  const lastX = w;
-  const lastY = h - ((last - min) / span) * h;
-  return (
-    <svg className="spark" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none">
-      <polyline
-        points={pts}
-        fill="none"
-        stroke={color}
-        strokeWidth={1.6}
-        vectorEffect="non-scaling-stroke"
-      />
-      <circle cx={lastX} cy={lastY} r={1.6} fill={color} />
-    </svg>
-  );
-}
 
 const STATUS_TONE: Record<string, 'green' | 'amber' | 'red' | 'slate'> = {
   Active: 'green',

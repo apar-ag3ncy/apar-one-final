@@ -6,11 +6,9 @@ import {
   BanknoteIcon,
   BookOpenIcon,
   FolderKanbanIcon,
-  HandshakeIcon,
   LayoutGridIcon,
   LinkIcon,
   MapPinIcon,
-  ReceiptIcon,
   ScrollTextIcon,
   SettingsIcon,
 } from 'lucide-react';

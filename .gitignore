@@ -61,3 +61,7 @@ exports/
 /playwright-report/
 /blob-report/
 /playwright/.cache/
+
+# Local verification scratch (screenshots, ad-hoc scripts, data backups)
+.smoke/
+video/

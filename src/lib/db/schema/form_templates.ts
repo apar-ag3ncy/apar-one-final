@@ -1,4 +1,4 @@
-import { boolean, index, integer, pgTable, text, uuid } from 'drizzle-orm/pg-core';
+import { boolean, index, integer, pgTable, text } from 'drizzle-orm/pg-core';
 
 import { auditColumns, timestamps } from './_shared';
 import { entityTypeEnum } from './_polymorphic';

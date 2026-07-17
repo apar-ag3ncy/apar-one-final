@@ -128,10 +128,6 @@ function LedgerTab({ vendor }: { vendor: Vendor }) {
   return <TransactionList transactions={[]} entityName={vendor.name} onNavigate={onNavigate} />;
 }
 
-function DocumentsTab({ vendor }: { vendor: Vendor }) {
-  return <DocumentList documents={[]} entityName={vendor.name} />;
-}
-
 function ContractsTab({ vendor }: { vendor: Vendor }) {
   // Contracts are a sub-view of documents filtered to kind=contract / msa.
   return <DocumentList documents={[]} entityName={vendor.name} />;

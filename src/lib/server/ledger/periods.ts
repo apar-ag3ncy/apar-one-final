@@ -1,6 +1,6 @@
 import 'server-only';
 
-import { and, asc, eq } from 'drizzle-orm';
+import { asc, eq } from 'drizzle-orm';
 
 import { logActivity } from '@/lib/activity';
 import { logAudit } from '@/lib/audit';

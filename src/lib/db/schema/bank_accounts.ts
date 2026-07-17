@@ -1,7 +1,7 @@
 import { bigint, boolean, char, date, index, pgTable, text, uuid } from 'drizzle-orm/pg-core';
 
 import { auditColumns, timestamps } from './_shared';
-import { accounts, subledgerKindEnum } from './accounts';
+import { accounts } from './accounts';
 import { bankAccountTypeEnum } from './entity_bank_accounts';
 
 /**

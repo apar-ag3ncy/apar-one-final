@@ -5,7 +5,6 @@ import { z } from 'zod';
 
 import { db } from '@/lib/db/client';
 import { bills, entityTaxIdentifiers, vendors } from '@/lib/db/schema';
-import { AppError } from '@/lib/errors';
 import { requireCapability } from '@/lib/rbac';
 import { getActorContext } from '@/lib/server/actor';
 
