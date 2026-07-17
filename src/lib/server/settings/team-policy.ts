@@ -17,9 +17,13 @@ import {
  *
  *   - getTeamPolicy  — any signed-in actor (chips, org tree, attendance UI).
  *   - saveTeamPolicy — `manage_company_profile` (the settings-write tier).
+ *
+ * A 'use server' module may only EXPORT async functions — not even a type
+ * re-export (`export type { TeamPolicy }` corrupts the action manifest at
+ * runtime and 500s every action app-wide). Consumers import the `TeamPolicy`
+ * TYPE directly from team-policy-data (type-only import → erased, so its
+ * `server-only` guard never reaches the client bundle).
  */
-
-export type { TeamPolicy };
 
 export async function getTeamPolicy(): Promise<TeamPolicy> {
   await getActorContext();
@@ -46,13 +50,11 @@ const SaveTeamPolicySchema = z.object({
   managerialRoles: RoleListSchema,
 });
 
-export type SaveTeamPolicyResult = { ok: true } | { ok: false; message: string };
-
 export async function saveTeamPolicy(input: {
   paidLeavesPerMonth: number;
   teamLeaderRoles: string[];
   managerialRoles: string[];
-}): Promise<SaveTeamPolicyResult> {
+}): Promise<{ ok: true } | { ok: false; message: string }> {
   const ctx = await getActorContext();
   requireCapability(ctx, 'manage_company_profile');
 

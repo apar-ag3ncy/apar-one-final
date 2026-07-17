@@ -42,11 +42,8 @@ import {
   splitMonthsDays,
   type LeadRolePolicy,
 } from '@/lib/employee-badges';
-import {
-  getTeamPolicy,
-  saveTeamPolicy,
-  type TeamPolicy,
-} from '@/lib/server/settings/team-policy';
+import { getTeamPolicy, saveTeamPolicy } from '@/lib/server/settings/team-policy';
+import type { TeamPolicy } from '@/lib/server/settings/team-policy-data';
 import { todayIST } from '@/lib/ist-date';
 import {
   ACCENTS,
