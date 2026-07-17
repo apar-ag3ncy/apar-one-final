@@ -73,6 +73,10 @@ import {
   type ProjectInvoiceRow,
 } from '@/lib/server/billing/invoice-project-links';
 import { getAmountsReceivedByProject } from '@/lib/server/billing/project-receipts';
+import {
+  getProjectVendorExpenses,
+  type ProjectVendorExpenses,
+} from '@/lib/server/billing/project-expenses';
 import { getClientBillingReadiness } from '@/lib/server/billing/invoices';
 import { listInvoiceThemes, type InvoiceThemeSummary } from '@/lib/server/billing/invoice-themes';
 import {
@@ -115,6 +119,7 @@ type ProjectTab =
   | 'team'
   | 'tasks'
   | 'invoices'
+  | 'expenses'
   | 'transactions'
   | 'documents'
   | 'activity'
@@ -125,6 +130,7 @@ const TAB_LABELS: Record<ProjectTab, string> = {
   team: 'Team',
   tasks: 'Deliverables',
   invoices: 'Invoices',
+  expenses: 'Expenses',
   transactions: 'Transactions',
   documents: 'Documents',
   activity: 'Activity',
@@ -232,6 +238,7 @@ export function ProjectWindow({ projectId, onClose }: ProjectWindowProps) {
     'team',
     'tasks',
     'invoices',
+    'expenses',
     'transactions',
     'documents',
     'activity',
@@ -284,6 +291,7 @@ export function ProjectWindow({ projectId, onClose }: ProjectWindowProps) {
             onChanged={() => setReloadKey((k) => k + 1)}
           />
         ) : null}
+        {tab === 'expenses' ? <ExpensesBody projectId={project.id} /> : null}
         {tab === 'transactions' ? (
           <TransactionsBody project={project} feed={feed} onRefresh={refreshFeed} />
         ) : null}
@@ -886,6 +894,171 @@ function ProjectFollowupsCard({ projectId, canEdit }: { projectId: string; canEd
         ) : null}
       </div>
     </OsCard>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Expenses — per-vendor spend on the project                                  */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * "Expenses" tab: every expense on the project rolled up by vendor — billed
+ * (vendor bills), paid, outstanding, plus any office expenses booked to the
+ * project. Reads getProjectVendorExpenses (live from the ledger).
+ */
+function ExpensesBody({ projectId }: { projectId: string }) {
+  const [data, setData] = useState<ProjectVendorExpenses | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      setData(null);
+      setError(null);
+    });
+    getProjectVendorExpenses(projectId)
+      .then((d) => {
+        if (!cancelled) setData(d);
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) setError(e instanceof Error ? e.message : 'Failed to load expenses');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId]);
+
+  if (error) {
+    return <p style={{ color: 'var(--text-error, #c33)', fontSize: 13 }}>{error}</p>;
+  }
+  if (data === null) {
+    return <p style={{ color: 'var(--text-muted)', fontSize: 13 }}>Loading…</p>;
+  }
+
+  const p = (s: string) => formatINRPaise(BigInt(s));
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
+          gap: 10,
+        }}
+      >
+        <Kpi label="Total spent" value={p(data.totalSpendPaise)} />
+        <Kpi label="Billed" value={p(data.totalBilledPaise)} />
+        <Kpi label="Paid" value={p(data.totalPaidPaise)} tone="success" />
+        <Kpi
+          label="Outstanding"
+          value={p(data.totalOutstandingPaise)}
+          tone={BigInt(data.totalOutstandingPaise) > 0n ? 'danger' : undefined}
+        />
+        {BigInt(data.totalOfficeSpendPaise) > 0n ? (
+          <Kpi label="Office spend" value={p(data.totalOfficeSpendPaise)} />
+        ) : null}
+      </div>
+
+      <OsCard title={`By vendor${data.rows.length ? ` (${data.rows.length})` : ''}`}>
+        {data.rows.length === 0 ? (
+          <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0 }}>
+            No vendor expenses recorded for this project yet. Vendor bills and office expenses
+            tagged to this project show up here, grouped by vendor.
+          </p>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: '1.6fr 1fr 1fr 1fr',
+                gap: 8,
+                fontSize: 10.5,
+                color: 'var(--text-muted)',
+                textTransform: 'uppercase',
+                letterSpacing: '0.04em',
+                padding: '0 10px',
+              }}
+            >
+              <span>Vendor</span>
+              <span style={{ textAlign: 'right' }}>Billed</span>
+              <span style={{ textAlign: 'right' }}>Paid</span>
+              <span style={{ textAlign: 'right' }}>Outstanding</span>
+            </div>
+            {data.rows.map((r) => (
+              <button
+                key={r.vendorId ?? r.vendorName}
+                type="button"
+                onClick={() =>
+                  r.vendorId
+                    ? osActions.openWindow({
+                        app: 'vendors',
+                        entityId: r.vendorId,
+                        position: 'beside-focused',
+                      })
+                    : undefined
+                }
+                title={r.vendorId ? `Open ${r.vendorName}` : undefined}
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: '1.6fr 1fr 1fr 1fr',
+                  gap: 8,
+                  alignItems: 'center',
+                  padding: '8px 10px',
+                  border: '1px solid var(--border)',
+                  borderRadius: 8,
+                  background: 'transparent',
+                  color: 'var(--text)',
+                  cursor: r.vendorId ? 'pointer' : 'default',
+                  textAlign: 'left',
+                  fontSize: 13,
+                }}
+              >
+                <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {r.vendorName}
+                  <span style={{ marginLeft: 8, color: 'var(--text-muted)', fontSize: 11 }}>
+                    {[
+                      r.billCount ? `${r.billCount} bill${r.billCount === 1 ? '' : 's'}` : null,
+                      r.officeCount
+                        ? `${r.officeCount} office exp${r.officeCount === 1 ? '' : 's'}`
+                        : null,
+                    ]
+                      .filter(Boolean)
+                      .join(' · ')}
+                  </span>
+                </span>
+                <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                  {p(r.billedPaise)}
+                </span>
+                <span
+                  style={{
+                    textAlign: 'right',
+                    fontVariantNumeric: 'tabular-nums',
+                    color: 'var(--apar-green, #2E8F5A)',
+                  }}
+                >
+                  {BigInt(r.officeSpendPaise) > 0n
+                    ? `${p(r.paidPaise)} +${p(r.officeSpendPaise)}`
+                    : p(r.paidPaise)}
+                </span>
+                <span
+                  style={{
+                    textAlign: 'right',
+                    fontVariantNumeric: 'tabular-nums',
+                    color:
+                      BigInt(r.outstandingPaise) > 0n
+                        ? 'var(--apar-red, #c33)'
+                        : 'var(--text-muted)',
+                  }}
+                >
+                  {p(r.outstandingPaise)}
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+      </OsCard>
+    </div>
   );
 }
 
