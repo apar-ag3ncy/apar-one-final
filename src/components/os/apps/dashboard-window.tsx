@@ -144,10 +144,12 @@ function DashboardBody({ metrics }: { metrics: DashboardMetrics }) {
     name: g.grade,
     salary: Number(g.paise),
   }));
-  const empSalaryData = metrics.salaryByEmployee.map((e) => ({
-    name: e.employee,
-    salary: Number(e.paise),
-  }));
+  // The "Salary by employee" chart shows on-roster staff only (excludes
+  // directors + inactive, which have their own directory sections), top 12.
+  const empSalaryData = metrics.salaryEmployees
+    .filter((e) => e.bucket === 'active')
+    .slice(0, 12)
+    .map((e) => ({ name: e.employee, salary: Number(e.paise) }));
   const funnelMax = Math.max(1, ...metrics.pitchFunnel.map((s) => s.count));
   const turnoverMax = Math.max(1, ...metrics.projectTurnover.map((p) => p.days));
 
@@ -409,27 +411,72 @@ function DashboardBody({ metrics }: { metrics: DashboardMetrics }) {
   );
 }
 
-/* ── Salary directory (§2.1b) ──────────────────────────────────────────────
-   Employees / Departments / Grades tabs, each a list with an inline share-of-
-   payroll detail and an "Open in Salary Book" drill-in to the ledger window. */
+type SalaryDirTab = 'employees' | 'directors' | 'inactive' | 'months' | 'departments' | 'grades';
+
+const SALARY_DIR_TABS: ReadonlyArray<[SalaryDirTab, string]> = [
+  ['employees', 'Employees'],
+  ['directors', 'Directors'],
+  ['inactive', 'Inactive'],
+  ['months', 'By month'],
+  ['departments', 'Departments'],
+  ['grades', 'Grades'],
+];
+
+/** 'YYYY-MM' → 'March 2026'. */
+function monthLong(ym: string): string {
+  const [y, m] = ym.split('-').map(Number);
+  if (!y || !m) return ym;
+  return new Date(Date.UTC(y, m - 1, 1)).toLocaleDateString('en-IN', {
+    month: 'long',
+    year: 'numeric',
+    timeZone: 'UTC',
+  });
+}
+
+/* ── Salary directory (§2.1b + salary sections) ────────────────────────────
+   On-roster staff, directors and inactive people each get their own tab; a
+   By-month tab totals salary across everyone per month. Each row expands to a
+   share-of-payroll detail + "Open in Salary book" drill-in. */
 function SalaryDirectory({ metrics }: { metrics: DashboardMetrics }) {
-  const [tab, setTab] = useState<'employees' | 'departments' | 'grades'>('employees');
+  const [tab, setTab] = useState<SalaryDirTab>('employees');
   const [selected, setSelected] = useState<string | null>(null);
+
+  const empBucket = (b: 'active' | 'director' | 'inactive') =>
+    metrics.salaryEmployees
+      .filter((e) => e.bucket === b)
+      .map((e) => ({ key: e.employee, label: e.employee, paise: e.paise }));
 
   const rows: { key: string; label: string; paise: string }[] =
     tab === 'employees'
-      ? metrics.salaryByEmployee.map((e) => ({
-          key: e.employee,
-          label: e.employee,
-          paise: e.paise,
-        }))
-      : tab === 'departments'
-        ? metrics.salaryByDepartment.map((d) => ({
-            key: d.department,
-            label: d.department,
-            paise: d.paise,
-          }))
-        : metrics.salaryByGrade.map((g) => ({ key: g.grade, label: g.grade, paise: g.paise }));
+      ? empBucket('active')
+      : tab === 'directors'
+        ? empBucket('director')
+        : tab === 'inactive'
+          ? empBucket('inactive')
+          : tab === 'months'
+            ? metrics.salaryByMonth.map((m) => ({
+                key: m.month,
+                label: monthLong(m.month),
+                paise: m.paise,
+              }))
+            : tab === 'departments'
+              ? metrics.salaryByDepartment.map((d) => ({
+                  key: d.department,
+                  label: d.department,
+                  paise: d.paise,
+                }))
+              : metrics.salaryByGrade.map((g) => ({
+                  key: g.grade,
+                  label: g.grade,
+                  paise: g.paise,
+                }));
+
+  const emptyMsg =
+    tab === 'directors'
+      ? 'No directors with salary yet. Set an employee’s designation to Director/Founder/Partner to list them here.'
+      : tab === 'inactive'
+        ? 'No inactive (separated / archived) employees with salary.'
+        : 'No salary payments recorded yet.';
 
   const total = rows.reduce((sum, r) => sum + Number(r.paise), 0);
 
@@ -449,27 +496,23 @@ function SalaryDirectory({ metrics }: { metrics: DashboardMetrics }) {
           gap: 10,
           padding: '10px 14px',
           borderBottom: '1px solid var(--border)',
+          flexWrap: 'wrap',
         }}
       >
-        <span className="font-display" style={{ fontSize: 14, flex: 1 }}>
+        <span className="font-display" style={{ fontSize: 14, flex: 1, minWidth: 120 }}>
           Salary directory
         </span>
         <div
           role="tablist"
           style={{
             display: 'inline-flex',
+            flexWrap: 'wrap',
             border: '1px solid var(--border)',
             borderRadius: 8,
             overflow: 'hidden',
           }}
         >
-          {(
-            [
-              ['employees', 'Employees'],
-              ['departments', 'Departments'],
-              ['grades', 'Grades'],
-            ] as const
-          ).map(([v, label]) => (
+          {SALARY_DIR_TABS.map(([v, label]) => (
             <button
               key={v}
               type="button"
@@ -495,7 +538,7 @@ function SalaryDirectory({ metrics }: { metrics: DashboardMetrics }) {
       </div>
       {rows.length === 0 ? (
         <p style={{ fontSize: 13, color: 'var(--text-muted)', padding: 16, margin: 0 }}>
-          No salary payments recorded yet.
+          {emptyMsg}
         </p>
       ) : (
         <ul
