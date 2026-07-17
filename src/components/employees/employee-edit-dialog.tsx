@@ -252,17 +252,27 @@ export function EmployeeEditDialog({ employee }: { employee: Employee }) {
   // Category → grade-group coupling (mirrors the OS editor): Intern (type) → I;
   // on probation → PA–PA+; otherwise → EA–EA+. Changing the category re-scopes
   // the grade — interns get I automatically, a wrong-group grade is cleared.
+  //
+  // The grade assignment is DEFERRED one tick (setTimeout 0), never set in the
+  // same tick as the category: setting it synchronously renders the Radix
+  // Select with a value whose item isn't mounted yet (the old group's items
+  // are), and Radix then fires onValueChange('') — clobbering the assignment.
+  // After the deferral React has committed the new group's items, so the value
+  // resolves cleanly. Only user-driven category changes coerce; loading an
+  // employee never rewrites their stored grade.
   const allowedGrades = allowedGradesFor(employmentType, onProbation);
-  const coerceGrade = (nextType: EmploymentType, nextProbation: boolean) => {
-    const current = form.getValues('payrollGrade') ?? NO_GRADE;
-    if (nextType === 'intern') {
-      form.setValue('payrollGrade', 'I');
-      return;
-    }
-    const allowed = allowedGradesFor(nextType, nextProbation);
-    if (current !== NO_GRADE && !allowed.includes(current as PayrollGrade)) {
-      form.setValue('payrollGrade', NO_GRADE);
-    }
+  const coerceGradeDeferred = (nextType: EmploymentType, nextProbation: boolean) => {
+    setTimeout(() => {
+      const current = form.getValues('payrollGrade') || NO_GRADE;
+      if (nextType === 'intern') {
+        if (current !== 'I') form.setValue('payrollGrade', 'I');
+        return;
+      }
+      const allowed = allowedGradesFor(nextType, nextProbation);
+      if (current !== NO_GRADE && !allowed.includes(current as PayrollGrade)) {
+        form.setValue('payrollGrade', NO_GRADE);
+      }
+    }, 0);
   };
 
   // Live preview of the probation end date + days-left as the duration is typed.
@@ -351,7 +361,7 @@ export function EmployeeEditDialog({ employee }: { employee: Employee }) {
                 value={employmentType}
                 onValueChange={(v) => {
                   form.setValue('employmentType', v as EmploymentType);
-                  coerceGrade(v as EmploymentType, onProbation);
+                  coerceGradeDeferred(v as EmploymentType, onProbation);
                 }}
               >
                 <SelectTrigger id="employee-type">
@@ -469,7 +479,7 @@ export function EmployeeEditDialog({ employee }: { employee: Employee }) {
                 onCheckedChange={(v) => {
                   const checked = v === true;
                   form.setValue('onProbation', checked);
-                  coerceGrade(employmentType, checked);
+                  coerceGradeDeferred(employmentType, checked);
                 }}
                 disabled={submitting}
               />
