@@ -257,7 +257,18 @@ export function VendorBillForm({ vendors, clients, projects }: VendorBillFormPro
           {attribution === 'client' ? (
             <div className="grid gap-3 sm:grid-cols-2">
               <Field label="Client" required>
-                <Select value={clientId} onValueChange={setClientId}>
+                <Select
+                  value={clientId}
+                  onValueChange={(v) => {
+                    setClientId(v);
+                    // Switching clients must drop the previous client's project:
+                    // its item unmounts from the (re-filtered) project Select, the
+                    // trigger goes blank, but the stale id would still SUBMIT —
+                    // posting a bill attributed to client B with client A's
+                    // project. '' shows the placeholder again.
+                    setProjectId('');
+                  }}
+                >
                   <SelectTrigger>
                     <SelectValue placeholder="Choose client…" />
                   </SelectTrigger>
