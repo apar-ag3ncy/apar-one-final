@@ -29,7 +29,12 @@
  */
 
 import { db } from '@/lib/db/client';
-import { accounts, documents, validationRules as validationRulesTable } from '@/lib/db/schema';
+import {
+  accounts,
+  documents,
+  projects,
+  validationRules as validationRulesTable,
+} from '@/lib/db/schema';
 import { asc, eq } from 'drizzle-orm';
 
 import { getActorContext } from '@/lib/server/actor';
@@ -457,6 +462,27 @@ export async function createDraftTransaction(input: {
         code: 'no_line_items',
         message: 'Add at least one line item with a description and amount before posting.',
       });
+    }
+    // The submitted project must belong to the submitted client. A stale
+    // projectId can survive a client switch in the form (the UI clears it now,
+    // but nothing downstream re-checks) — and a bill tagged client B with
+    // client A's project silently corrupts per-project cost apportionment and
+    // per-client P&L, the attribution this form exists to protect.
+    if (input.attribution === 'client' && input.clientId && input.projectId) {
+      const [proj] = await db
+        .select({ clientId: projects.clientId })
+        .from(projects)
+        .where(eq(projects.id, input.projectId))
+        .limit(1);
+      if (!proj || proj.clientId !== input.clientId) {
+        flags.push({
+          id: 'f_project_client',
+          severity: 'block',
+          code: 'project_client_mismatch',
+          message:
+            'The selected project belongs to a different client. Re-pick the project for this client (or leave it blank).',
+        });
+      }
     }
     if (flags.length > 0) {
       return { draftId: `invalid_${Math.random().toString(36).slice(2, 10)}`, flags };
