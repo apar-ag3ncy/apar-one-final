@@ -25,8 +25,10 @@ import {
   recordCustomerAdvance,
 } from '@/lib/server/billing/advances';
 import {
+  allocateClientCredit,
   amendClientReceipt,
   getClientReceivablesByProject,
+  getClientUnappliedCredit,
   getReceiptAmendmentChain,
   listClientReceipts,
   listOpenInvoicesForClient,
@@ -34,6 +36,7 @@ import {
   recordClientReceiptsBulk,
   reverseClientReceipt,
   type ClientReceiptRow,
+  type ClientUnappliedCredit,
   type OpenInvoiceRow,
   type ReceivableByProjectRow,
 } from '@/lib/server/billing/client-receipts';
@@ -75,6 +78,9 @@ export function ClientPaymentsSection({
   const [formOpen, setFormOpen] = useState(false);
   const [balanceOpen, setBalanceOpen] = useState(false);
   const [allocateOpen, setAllocateOpen] = useState(false);
+  // Money received but not yet applied to any invoice — the allocatable pool.
+  const [credit, setCredit] = useState<ClientUnappliedCredit | null>(null);
+  const [allocateCreditOpen, setAllocateCreditOpen] = useState(false);
   // The client's advance balance rows (2180 Client Advances) with money left.
   const [advances, setAdvances] = useState<Awaited<ReturnType<typeof listCustomerAdvances>>>([]);
   const [reversing, setReversing] = useState<{ id: string; amount: bigint } | null>(null);
@@ -89,16 +95,18 @@ export function ClientPaymentsSection({
 
   async function reload() {
     try {
-      const [r, d, inv, adv] = await Promise.all([
+      const [r, d, inv, adv, cr] = await Promise.all([
         listClientReceipts(clientId),
         getClientReceivablesByProject(clientId),
         listOpenInvoicesForClient(clientId),
         listCustomerAdvances({ clientId, withBalance: true }),
+        getClientUnappliedCredit(clientId),
       ]);
       setReceipts(r);
       setDue(d);
       setInvoices(inv);
       setAdvances(adv);
+      setCredit(cr);
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not load transactions');
@@ -112,13 +120,15 @@ export function ClientPaymentsSection({
       getClientReceivablesByProject(clientId),
       listOpenInvoicesForClient(clientId),
       listCustomerAdvances({ clientId, withBalance: true }),
+      getClientUnappliedCredit(clientId),
     ])
-      .then(([r, d, inv, adv]) => {
+      .then(([r, d, inv, adv, cr]) => {
         if (cancelled) return;
         setReceipts(r);
         setDue(d);
         setInvoices(inv);
         setAdvances(adv);
+        setCredit(cr);
         setError(null);
       })
       .catch((e) => {
@@ -150,9 +160,25 @@ export function ClientPaymentsSection({
   }
 
   const advanceBalancePaise = advances.reduce((sum, a) => sum + a.balancePaise, 0n);
+  const unappliedPaise = credit?.totalUnappliedPaise ?? 0n;
 
   return (
     <div className="flex flex-col gap-4">
+      {/* Money received but not yet tied to an invoice — actionable: apply it to
+          open invoices of the user's choice. */}
+      {unappliedPaise > 0n ? (
+        <UnappliedCreditCard
+          unappliedPaise={unappliedPaise}
+          clientName={clientName}
+          canAllocate={canEdit && invoices.length > 0}
+          onAllocate={() => setAllocateCreditOpen(true)}
+        />
+      ) : null}
+
+      {/* Net overpayment surplus (Trade Receivables in credit — includes credit
+          notes / advance adjustments, not just unapplied receipts). Shown
+          independently so a distinct or larger surplus is never hidden by the
+          unapplied-money card above. */}
       {due.creditPaise > 0n ? (
         <CreditAvailableCard creditPaise={due.creditPaise} clientName={clientName} />
       ) : null}
@@ -338,6 +364,19 @@ export function ClientPaymentsSection({
         invoices={invoices}
         onAllocated={() => {
           setAllocateOpen(false);
+          void reload();
+        }}
+      />
+
+      <AllocateCreditDialog
+        open={allocateCreditOpen}
+        onOpenChange={setAllocateCreditOpen}
+        clientId={clientId}
+        clientName={clientName}
+        unappliedPaise={unappliedPaise}
+        invoices={invoices}
+        onAllocated={() => {
+          setAllocateCreditOpen(false);
           void reload();
         }}
       />
@@ -800,6 +839,51 @@ function CreditAvailableCard({
         <p className="text-muted-foreground mt-1 text-xs">
           {`${clientName} has paid more than we've billed. This surplus is held in our accounts and can be applied to their next invoice or refunded.`}
         </p>
+      </CardContent>
+    </Card>
+  );
+}
+
+/**
+ * Actionable credit card — money received but not yet applied to any invoice,
+ * with an "Allocate to invoices" button. The number is the client's unapplied
+ * receipt pool (posted receipts' total − what's already linked); the button opens
+ * a multi-invoice picker that spends it via `allocateClientCredit`.
+ */
+function UnappliedCreditCard({
+  unappliedPaise,
+  clientName,
+  canAllocate,
+  onAllocate,
+}: {
+  unappliedPaise: bigint;
+  clientName: string;
+  canAllocate: boolean;
+  onAllocate: () => void;
+}) {
+  return (
+    <Card className="border-emerald-500/40 bg-emerald-500/10 dark:border-emerald-500/50">
+      <CardContent className="flex flex-row items-center justify-between gap-3 py-4">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <WalletIcon className="size-4 text-emerald-600 dark:text-emerald-400" aria-hidden />
+            <span className="text-xs font-medium tracking-wide text-emerald-700 uppercase dark:text-emerald-400">
+              Unapplied money available
+            </span>
+          </div>
+          <div className="mt-1 text-2xl font-semibold text-emerald-700 tabular-nums dark:text-emerald-400">
+            {formatINR(unappliedPaise)}
+          </div>
+          <p className="text-muted-foreground mt-1 text-xs">
+            {`Received from ${clientName} but not yet applied to any invoice — apply it to their open invoices.`}
+          </p>
+        </div>
+        {canAllocate ? (
+          <Button size="sm" onClick={onAllocate}>
+            <WalletIcon className="mr-1.5 size-4" aria-hidden />
+            Allocate to invoices
+          </Button>
+        ) : null}
       </CardContent>
     </Card>
   );
@@ -2255,6 +2339,258 @@ function AllocateBalanceDialog({
             onClick={submit}
             disabled={submitting || withBalance.length === 0 || invoices.length === 0}
           >
+            {submitting ? 'Allocating…' : 'Allocate'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Allocate unapplied credit across open invoices — amount per invoice chosen  */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Apply the client's unapplied receipt credit to open invoices, amount-per-invoice
+ * chosen by the user. Caps each row at the invoice's outstanding and the running
+ * total at the available pool; submits the non-blank rows to `allocateClientCredit`
+ * (which draws from the client's receipts oldest-first — no new ledger posting).
+ */
+function AllocateCreditDialog({
+  open,
+  onOpenChange,
+  clientId,
+  clientName,
+  unappliedPaise,
+  invoices,
+  onAllocated,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  clientId: string;
+  clientName: string;
+  unappliedPaise: bigint;
+  invoices: readonly OpenInvoiceRow[];
+  onAllocated: () => void;
+}) {
+  const [allocs, setAllocs] = useState<Record<string, string>>({});
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    queueMicrotask(() => setAllocs({}));
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !submitting) onOpenChange(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open, submitting, onOpenChange]);
+
+  if (!open) return null;
+
+  // Parse the entered rows, ignoring blanks; surface a parse error inline.
+  let entered: Array<{ invoiceTxnId: string; amountPaise: bigint }> = [];
+  let parseError: string | null = null;
+  try {
+    entered = Object.entries(allocs)
+      .filter(([, v]) => v.trim())
+      .map(([invoiceTxnId, v]) => {
+        const paise = parsePaise(v);
+        if (paise <= 0n) throw new Error('Amounts must be positive.');
+        return { invoiceTxnId, amountPaise: paise };
+      });
+  } catch (e) {
+    parseError = e instanceof Error ? e.message : 'Invalid amount.';
+  }
+  const enteredTotal = entered.reduce((s, a) => s + a.amountPaise, 0n);
+  const overInvoice = entered.find((a) => {
+    const inv = invoices.find((i) => i.invoiceTxnId === a.invoiceTxnId);
+    return inv ? a.amountPaise > inv.outstandingPaise : false;
+  });
+  const overPool = enteredTotal > unappliedPaise;
+
+  // Fill the pool oldest-first across the open invoices (a quick "do it for me").
+  function autoFill() {
+    let remaining = unappliedPaise;
+    const next: Record<string, string> = {};
+    for (const inv of invoices) {
+      if (remaining <= 0n) break;
+      const take = inv.outstandingPaise < remaining ? inv.outstandingPaise : remaining;
+      if (take <= 0n) continue;
+      next[inv.invoiceTxnId] = paiseToRupees(take);
+      remaining -= take;
+    }
+    setAllocs(next);
+  }
+
+  async function submit() {
+    if (parseError) {
+      toast.error(parseError);
+      return;
+    }
+    if (entered.length === 0) {
+      toast.error('Enter an amount against at least one invoice.');
+      return;
+    }
+    if (overInvoice) {
+      const inv = invoices.find((i) => i.invoiceTxnId === overInvoice.invoiceTxnId);
+      toast.error(
+        `Invoice ${inv?.documentNumber ?? ''} only has ${formatINR(inv?.outstandingPaise ?? 0n)} outstanding.`,
+      );
+      return;
+    }
+    if (overPool) {
+      toast.error(`Only ${formatINR(unappliedPaise)} of unapplied credit available.`);
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const result = await allocateClientCredit({ clientId, allocations: entered });
+      toast.success(
+        `Applied ${formatINR(result.appliedPaise)} across ${result.invoicesTouched} invoice(s).`,
+      );
+      onAllocated();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not allocate the credit.');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  const canSubmit = !submitting && !parseError && entered.length > 0 && !overInvoice && !overPool;
+
+  return (
+    <div
+      className="os-modal-overlay"
+      style={modalOverlayStyle}
+      onMouseDown={() => {
+        if (!submitting) onOpenChange(false);
+      }}
+    >
+      <div className="os-modal" style={{ width: 560 }} onMouseDown={(e) => e.stopPropagation()}>
+        <div className="os-modal-head">
+          <div className="font-display" style={{ fontSize: 18 }}>
+            Allocate credit — {clientName}
+          </div>
+          <button
+            type="button"
+            className="btn"
+            onClick={() => onOpenChange(false)}
+            disabled={submitting}
+            aria-label="Close"
+          >
+            ×
+          </button>
+        </div>
+        <div style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0, lineHeight: 1.5 }}>
+            {formatINR(unappliedPaise)} received but not yet applied. Enter how much to put against
+            each invoice — it draws from money already received (no new payment is recorded).
+          </p>
+          {invoices.length === 0 ? (
+            <p className="os-field-hint">No open invoices to apply the credit to.</p>
+          ) : (
+            <>
+              <div
+                style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+              >
+                <span className="os-field-label" style={{ margin: 0 }}>
+                  Apply to invoices
+                </span>
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={autoFill}
+                  disabled={submitting}
+                  style={{ fontSize: 12 }}
+                >
+                  Auto-fill oldest-first
+                </button>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {invoices.map((inv) => (
+                  <div
+                    key={inv.invoiceTxnId}
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: '1fr 130px',
+                      gap: 8,
+                      alignItems: 'center',
+                    }}
+                  >
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontFamily: 'var(--font-mono, monospace)' }}>
+                        {inv.documentNumber}
+                      </div>
+                      <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                        {inv.projectName ?? 'No project'} · due {formatINR(inv.outstandingPaise)}
+                      </div>
+                    </div>
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      placeholder="₹ applied"
+                      value={allocs[inv.invoiceTxnId] ?? ''}
+                      onChange={(e) =>
+                        setAllocs((prev) => ({ ...prev, [inv.invoiceTxnId]: e.target.value }))
+                      }
+                      disabled={submitting}
+                      style={osInputStyle}
+                    />
+                  </div>
+                ))}
+              </div>
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  fontSize: 13,
+                  paddingTop: 8,
+                  borderTop: '1px solid var(--border, #e5e7eb)',
+                }}
+              >
+                <span style={{ color: 'var(--text-muted)' }}>Allocated</span>
+                <span
+                  style={{
+                    fontVariantNumeric: 'tabular-nums',
+                    color: overPool ? 'var(--danger, #dc2626)' : 'inherit',
+                    fontWeight: 600,
+                  }}
+                >
+                  {formatINR(enteredTotal)} / {formatINR(unappliedPaise)}
+                </span>
+              </div>
+              {parseError ? (
+                <p className="os-field-hint" style={{ color: 'var(--danger, #dc2626)' }}>
+                  {parseError}
+                </p>
+              ) : null}
+            </>
+          )}
+        </div>
+        <div
+          style={{
+            display: 'flex',
+            gap: 8,
+            justifyContent: 'flex-end',
+            padding: '12px 18px 14px',
+            borderTop: '1px solid var(--border, #e5e7eb)',
+          }}
+        >
+          <button
+            type="button"
+            className="btn"
+            onClick={() => onOpenChange(false)}
+            disabled={submitting}
+          >
+            Cancel
+          </button>
+          <button type="button" className="btn primary" onClick={submit} disabled={!canSubmit}>
             {submitting ? 'Allocating…' : 'Allocate'}
           </button>
         </div>

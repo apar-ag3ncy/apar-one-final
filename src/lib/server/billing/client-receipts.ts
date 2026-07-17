@@ -2,7 +2,7 @@
 
 import { randomUUID } from 'node:crypto';
 
-import { and, asc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, sql, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { logActivity } from '@/lib/activity';
@@ -95,6 +95,27 @@ function invoiceDocNumber(externalRef: string): string {
   return externalRef.startsWith('client_invoice:')
     ? externalRef.slice('client_invoice:'.length)
     : externalRef;
+}
+
+/**
+ * Σ receipt_allocations applied to a client_invoice txn, counting ONLY
+ * allocations sourced from a POSTED, non-reversed receipt.
+ *
+ * A reversed receipt's Cr 1200 is undone at reversal, but its `receipt_allocations`
+ * rows linger (the ledger is immutable, so nothing deletes them). Without the
+ * payment-status join, those dead rows keep reducing the invoice's outstanding, so
+ * a paid-then-reversed invoice reads as still settled. Joining the payment txn and
+ * filtering `status='posted' AND reverses_id IS NULL` is the same guard the
+ * project-P&L "received" query already uses — this makes every collections read
+ * agree with it. `invoiceId` is a raw SQL identifier expression, e.g. sql`t.id`.
+ */
+function appliedFromLiveReceipts(invoiceId: SQL): SQL {
+  return sql`COALESCE((
+    SELECT SUM(ra.amount_paise) FROM receipt_allocations ra
+    JOIN transactions pay ON pay.id = ra.client_payment_txn_id
+    WHERE ra.client_invoice_txn_id = ${invoiceId}
+      AND pay.status = 'posted' AND pay.reverses_id IS NULL
+  ), 0)`;
 }
 
 export async function recordClientReceipt(
@@ -294,7 +315,7 @@ async function computeFifoAllocations(
           JOIN accounts a ON a.id = p.account_id
           WHERE p.transaction_id = t.id AND p.side = 'debit' AND a.code = '1200'
         ), 0)
-        - COALESCE((SELECT SUM(amount_paise) FROM receipt_allocations WHERE client_invoice_txn_id = t.id), 0)
+        - ${appliedFromLiveReceipts(sql`t.id`)}
       )::bigint AS outstanding
     FROM transactions t
     WHERE t.kind = 'client_invoice'
@@ -485,7 +506,7 @@ export async function listClientReceipts(clientId: string): Promise<readonly Cli
           JOIN accounts a ON a.id = p.account_id
           WHERE p.transaction_id = it.id AND p.side = 'debit' AND a.code = '1200'
         ), 0)
-        - COALESCE((SELECT SUM(amount_paise) FROM receipt_allocations x WHERE x.client_invoice_txn_id = it.id), 0)
+        - ${appliedFromLiveReceipts(sql`it.id`)}
       )::text AS remaining
     FROM receipt_allocations ra
     JOIN transactions it ON it.id = ra.client_invoice_txn_id
@@ -695,7 +716,7 @@ export async function listOpenInvoicesForClient(
           JOIN accounts a ON a.id = p.account_id
           WHERE p.transaction_id = t.id AND p.side = 'debit' AND a.code = '1200'
         ), 0)
-        - COALESCE((SELECT SUM(amount_paise) FROM receipt_allocations WHERE client_invoice_txn_id = t.id), 0)
+        - ${appliedFromLiveReceipts(sql`t.id`)}
       )::bigint AS outstanding
     FROM transactions t
     LEFT JOIN projects pr ON pr.id = t.project_id
@@ -802,7 +823,7 @@ export async function getClientReceivablesByProject(clientId: string): Promise<{
             JOIN accounts a ON a.id = p.account_id
             WHERE p.transaction_id = t.id AND p.side = 'debit' AND a.code = '1200'
           ), 0)
-          - COALESCE((SELECT SUM(amount_paise) FROM receipt_allocations WHERE client_invoice_txn_id = t.id), 0)
+          - ${appliedFromLiveReceipts(sql`t.id`)}
         )::bigint AS outstanding
       FROM transactions t
       WHERE t.kind = 'client_invoice'
@@ -848,4 +869,312 @@ export async function getClientReceivablesByProject(clientId: string): Promise<{
   const creditPaise = netCredit > 0n ? netCredit : 0n;
 
   return { rows: mapped, totalPaise, creditPaise };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Unapplied client credit — apply already-received money to open invoices     */
+/* -------------------------------------------------------------------------- */
+
+export type UnappliedReceiptRow = {
+  transactionId: string;
+  externalRef: string;
+  txnDate: string;
+  receiptTotalPaise: bigint;
+  appliedPaise: bigint;
+  unappliedPaise: bigint;
+};
+
+export type ClientUnappliedCredit = {
+  /** Money received from the client (posted receipts) not yet linked to any invoice. */
+  totalUnappliedPaise: bigint;
+  /** The receipts that still have room, oldest-first — the draw order for allocation. */
+  receipts: readonly UnappliedReceiptRow[];
+};
+
+/**
+ * The client's UNAPPLIED receipt credit — money we've already received (posted,
+ * non-reversed `client_payment_received` txns) that hasn't been allocated to any
+ * invoice yet. Per receipt: total = Σ its debit legs; applied = Σ its
+ * `receipt_allocations` (across all invoices — matching the DB sum-check trigger's
+ * notion of "used"); unapplied = total − applied. Only receipts with unapplied > 0
+ * are returned, oldest-first. This is the pool `allocateClientCredit` spends from,
+ * and the number the "Unapplied money" card shows.
+ */
+export async function getClientUnappliedCredit(clientId: string): Promise<ClientUnappliedCredit> {
+  await getActorContext();
+  const parsed = z.string().uuid().parse(clientId);
+
+  const rows = await db.execute<{
+    id: string;
+    external_ref: string;
+    txn_date: string;
+    total: string;
+    applied: string;
+  }>(sql`
+    SELECT
+      t.id::text AS id,
+      t.external_ref,
+      t.txn_date::text AS txn_date,
+      COALESCE((
+        SELECT SUM(p.amount_paise) FROM postings p
+        WHERE p.transaction_id = t.id AND p.side = 'debit'
+      ), 0)::text AS total,
+      COALESCE((
+        SELECT SUM(ra.amount_paise) FROM receipt_allocations ra
+        WHERE ra.client_payment_txn_id = t.id
+      ), 0)::text AS applied
+    FROM transactions t
+    WHERE t.kind = 'client_payment_received'
+      AND t.status = 'posted'
+      AND t.reverses_id IS NULL
+      AND t.related_entity_id = ${parsed}
+    ORDER BY t.txn_date ASC, t.created_at ASC
+  `);
+
+  const receipts: UnappliedReceiptRow[] = [];
+  let totalUnappliedPaise = 0n;
+  for (const r of Array.isArray(rows) ? rows : []) {
+    const total = BigInt(r.total ?? '0');
+    const applied = BigInt(r.applied ?? '0');
+    const unapplied = total - applied;
+    if (unapplied <= 0n) continue;
+    receipts.push({
+      transactionId: r.id,
+      externalRef: r.external_ref,
+      txnDate: r.txn_date,
+      receiptTotalPaise: total,
+      appliedPaise: applied,
+      unappliedPaise: unapplied,
+    });
+    totalUnappliedPaise += unapplied;
+  }
+  return { totalUnappliedPaise, receipts };
+}
+
+export type AllocateClientCreditResult = {
+  appliedPaise: bigint;
+  invoicesTouched: number;
+  perInvoice: { invoiceTxnId: string; documentNumber: string; appliedPaise: bigint }[];
+};
+
+const ClientCreditAllocationSchema = z.object({
+  invoiceTxnId: z.string().uuid(),
+  amountPaise: z.bigint().positive(),
+});
+
+/**
+ * Apply the client's UNAPPLIED receipt credit to open invoices of the user's
+ * choice. Pure sub-ledger linkage — inserts/updates `receipt_allocations` rows
+ * that draw from the client's posted receipts (oldest-first) and point at the
+ * chosen invoices. NO new ledger posting: the cash already credited 1200 Trade
+ * Receivables when the receipt was recorded; allocating only reduces each
+ * invoice's outstanding (invoice 1200 debit − Σ live allocations), exactly like
+ * record-time allocation does.
+ *
+ * Guards (mirror allocateClientReceipt + the DB sum-check trigger):
+ *   - each invoice must be a live posted client_invoice of THIS client;
+ *   - each allocation ≤ that invoice's real outstanding (reversed receipts excluded);
+ *   - Σ requested ≤ the client's unapplied pool.
+ * A (receipt, invoice) pair is unique, so topping up an already-allocated pair
+ * UPDATEs the existing row (ON CONFLICT) instead of inserting a duplicate.
+ */
+export async function allocateClientCredit(input: {
+  clientId: string;
+  allocations: Array<z.input<typeof ClientCreditAllocationSchema>>;
+}): Promise<AllocateClientCreditResult> {
+  const ctx = await getActorContext();
+  requireCapability(ctx, 'receive_payment');
+
+  const clientId = z.string().uuid().parse(input.clientId);
+  const requested = z.array(ClientCreditAllocationSchema).min(1).parse(input.allocations);
+
+  // Collapse duplicate invoice ids into one total each (a picker shouldn't send
+  // dupes, but be defensive — the unique index would otherwise fight us).
+  const byInvoice = new Map<string, bigint>();
+  for (const a of requested) {
+    byInvoice.set(a.invoiceTxnId, (byInvoice.get(a.invoiceTxnId) ?? 0n) + a.amountPaise);
+  }
+
+  return db.transaction(async (tx) => {
+    const invoiceIds = [...byInvoice.keys()];
+
+    // Serialize concurrent allocators on the same invoice(s). There is no DB-level
+    // per-invoice over-application cap (only a per-receipt one), and the outstanding
+    // read below is non-locking, so two overlapping allocateClientCredit calls could
+    // each read the same outstanding and both apply it. Lock the target invoice txn
+    // rows first: a second call waits here, then re-reads the now-reduced outstanding
+    // and its per-invoice cap (line below) rejects the excess.
+    await tx.execute(sql`
+      SELECT id FROM transactions
+      WHERE id IN (${sql.join(
+        invoiceIds.map((id) => sql`${id}::uuid`),
+        sql`, `,
+      )})
+      FOR UPDATE
+    `);
+
+    // 1) Validate every target invoice + compute its true outstanding (reversed
+    //    receipts excluded, via appliedFromLiveReceipts).
+    const invRows = await tx.execute<{
+      id: string;
+      external_ref: string;
+      kind: string;
+      status: string;
+      related_entity_id: string | null;
+      reverses_id: string | null;
+      outstanding: string;
+    }>(sql`
+      SELECT
+        t.id::text AS id,
+        t.external_ref,
+        t.kind::text AS kind,
+        t.status::text AS status,
+        t.related_entity_id::text AS related_entity_id,
+        t.reverses_id::text AS reverses_id,
+        (
+          COALESCE((
+            SELECT SUM(p.amount_paise) FROM postings p
+            JOIN accounts a ON a.id = p.account_id
+            WHERE p.transaction_id = t.id AND p.side = 'debit' AND a.code = '1200'
+          ), 0)
+          - ${appliedFromLiveReceipts(sql`t.id`)}
+        )::text AS outstanding
+      FROM transactions t
+      WHERE t.id IN (${sql.join(
+        invoiceIds.map((id) => sql`${id}::uuid`),
+        sql`, `,
+      )})
+    `);
+    const invById = new Map((Array.isArray(invRows) ? invRows : []).map((r) => [r.id, r]));
+
+    for (const [invoiceId, amount] of byInvoice) {
+      const inv = invById.get(invoiceId);
+      if (!inv) throw new AppError('not_found', `invoice txn ${invoiceId} not found`);
+      if (inv.kind !== 'client_invoice') {
+        throw new AppError('validation', `txn ${invoiceId} is ${inv.kind}, not client_invoice`);
+      }
+      if (inv.status !== 'posted' || inv.reverses_id) {
+        throw new AppError('validation', `invoice ${invoiceId} is not a live posted invoice`);
+      }
+      if (inv.related_entity_id !== clientId) {
+        throw new AppError('validation', `invoice ${invoiceId} belongs to another client`);
+      }
+      const outstanding = BigInt(inv.outstanding ?? '0');
+      if (amount > outstanding) {
+        throw new AppError(
+          'validation',
+          `Cannot apply ${amount} paise to ${invoiceDocNumber(inv.external_ref)} — only ${outstanding} paise outstanding.`,
+        );
+      }
+    }
+
+    // 2) Load the client's unapplied receipts (oldest-first) + their capacities.
+    const rcptRows = await tx.execute<{ id: string; total: string; applied: string }>(sql`
+      SELECT
+        t.id::text AS id,
+        COALESCE((
+          SELECT SUM(p.amount_paise) FROM postings p
+          WHERE p.transaction_id = t.id AND p.side = 'debit'
+        ), 0)::text AS total,
+        COALESCE((
+          SELECT SUM(ra.amount_paise) FROM receipt_allocations ra
+          WHERE ra.client_payment_txn_id = t.id
+        ), 0)::text AS applied
+      FROM transactions t
+      WHERE t.kind = 'client_payment_received'
+        AND t.status = 'posted'
+        AND t.reverses_id IS NULL
+        AND t.related_entity_id = ${clientId}
+      ORDER BY t.txn_date ASC, t.created_at ASC
+    `);
+    const pool = (Array.isArray(rcptRows) ? rcptRows : []).map((r) => ({
+      id: r.id,
+      capacity: BigInt(r.total ?? '0') - BigInt(r.applied ?? '0'),
+    }));
+    const totalCapacity = pool.reduce((s, r) => s + (r.capacity > 0n ? r.capacity : 0n), 0n);
+    const totalRequested = [...byInvoice.values()].reduce((s, a) => s + a, 0n);
+    if (totalRequested > totalCapacity) {
+      throw new AppError(
+        'validation',
+        `Only ${totalCapacity} paise of unapplied credit available; tried to allocate ${totalRequested} paise.`,
+      );
+    }
+
+    // 3) Draw FIFO from receipts into each invoice, upserting receipt_allocations.
+    const perInvoice: { invoiceTxnId: string; documentNumber: string; appliedPaise: bigint }[] = [];
+    let poolIdx = 0;
+    for (const [invoiceId, amount] of byInvoice) {
+      let remaining = amount;
+      while (remaining > 0n) {
+        while (poolIdx < pool.length && pool[poolIdx]!.capacity <= 0n) poolIdx++;
+        if (poolIdx >= pool.length) {
+          throw new AppError('internal', 'ran out of receipt capacity mid-allocation');
+        }
+        const rcpt = pool[poolIdx]!;
+        const take = rcpt.capacity < remaining ? rcpt.capacity : remaining;
+        await tx
+          .insert(receiptAllocations)
+          .values({
+            clientPaymentTxnId: rcpt.id,
+            clientInvoiceTxnId: invoiceId,
+            amountPaise: take,
+            createdBy: ctx.userId,
+            updatedBy: ctx.userId,
+          })
+          .onConflictDoUpdate({
+            target: [receiptAllocations.clientPaymentTxnId, receiptAllocations.clientInvoiceTxnId],
+            set: {
+              amountPaise: sql`${receiptAllocations.amountPaise} + ${take}`,
+              updatedBy: ctx.userId,
+            },
+          });
+        rcpt.capacity -= take;
+        remaining -= take;
+      }
+      const inv = invById.get(invoiceId)!;
+      perInvoice.push({
+        invoiceTxnId: invoiceId,
+        documentNumber: invoiceDocNumber(inv.external_ref),
+        appliedPaise: amount,
+      });
+    }
+
+    const appliedPaise = totalRequested;
+
+    await logAudit(
+      {
+        actorId: ctx.userId,
+        entityType: 'client',
+        entityId: clientId,
+        action: 'update',
+        changes: {
+          allocate_client_credit: {
+            before: null,
+            after: perInvoice.map((p) => ({
+              invoice_txn_id: p.invoiceTxnId,
+              document_number: p.documentNumber,
+              applied_paise: p.appliedPaise.toString(),
+            })),
+          },
+        },
+      },
+      tx as unknown as typeof db,
+    );
+    await logActivity(
+      {
+        entityType: 'client',
+        entityId: clientId,
+        actorId: ctx.userId,
+        kind: 'payment.allocated',
+        summary: `Applied ${appliedPaise.toString()} paise of client credit across ${perInvoice.length} invoice(s)`,
+        payload: {
+          applied_paise: appliedPaise.toString(),
+          invoices: perInvoice.map((p) => p.documentNumber),
+        },
+      },
+      tx as unknown as typeof db,
+    );
+
+    return { appliedPaise, invoicesTouched: perInvoice.length, perInvoice };
+  });
 }
