@@ -50,13 +50,17 @@ export async function getAmountsReceivedByProject(
 
   const rows = await db.execute<{ project_id: string; received: string }>(sql`
     with inv_alloc as (
-      -- Total allocated (received) against each invoice.
+      -- Total allocated (received) against each invoice. Only allocations sourced
+      -- from a POSTED, non-reversed receipt count — a reversed receipt's Cr 1200 is
+      -- undone, so its lingering allocation rows must not inflate "amount received".
       select i.id as invoice_id,
              i.project_id as header_project_id,
              sum(ra.amount_paise) as allocated
       from receipt_allocations ra
       join invoices i on i.posted_transaction_id = ra.client_invoice_txn_id
+      join transactions pay on pay.id = ra.client_payment_txn_id
       where ra.deleted_at is null and i.deleted_at is null
+        and pay.status = 'posted' and pay.reverses_id is null
       group by i.id, i.project_id
     ),
     line_weights as (

@@ -165,8 +165,7 @@ export function ClientPaymentsSection({
   return (
     <div className="flex flex-col gap-4">
       {/* Money received but not yet tied to an invoice — actionable: apply it to
-          open invoices of the user's choice. When there's nothing unapplied but
-          the client has overpaid us overall, fall back to the surplus info card. */}
+          open invoices of the user's choice. */}
       {unappliedPaise > 0n ? (
         <UnappliedCreditCard
           unappliedPaise={unappliedPaise}
@@ -174,7 +173,13 @@ export function ClientPaymentsSection({
           canAllocate={canEdit && invoices.length > 0}
           onAllocate={() => setAllocateCreditOpen(true)}
         />
-      ) : due.creditPaise > 0n ? (
+      ) : null}
+
+      {/* Net overpayment surplus (Trade Receivables in credit — includes credit
+          notes / advance adjustments, not just unapplied receipts). Shown
+          independently so a distinct or larger surplus is never hidden by the
+          unapplied-money card above. */}
+      {due.creditPaise > 0n ? (
         <CreditAvailableCard creditPaise={due.creditPaise} clientName={clientName} />
       ) : null}
 

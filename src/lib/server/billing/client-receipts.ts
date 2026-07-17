@@ -996,9 +996,25 @@ export async function allocateClientCredit(input: {
   }
 
   return db.transaction(async (tx) => {
+    const invoiceIds = [...byInvoice.keys()];
+
+    // Serialize concurrent allocators on the same invoice(s). There is no DB-level
+    // per-invoice over-application cap (only a per-receipt one), and the outstanding
+    // read below is non-locking, so two overlapping allocateClientCredit calls could
+    // each read the same outstanding and both apply it. Lock the target invoice txn
+    // rows first: a second call waits here, then re-reads the now-reduced outstanding
+    // and its per-invoice cap (line below) rejects the excess.
+    await tx.execute(sql`
+      SELECT id FROM transactions
+      WHERE id IN (${sql.join(
+        invoiceIds.map((id) => sql`${id}::uuid`),
+        sql`, `,
+      )})
+      FOR UPDATE
+    `);
+
     // 1) Validate every target invoice + compute its true outstanding (reversed
     //    receipts excluded, via appliedFromLiveReceipts).
-    const invoiceIds = [...byInvoice.keys()];
     const invRows = await tx.execute<{
       id: string;
       external_ref: string;
@@ -1150,7 +1166,7 @@ export async function allocateClientCredit(input: {
         entityId: clientId,
         actorId: ctx.userId,
         kind: 'payment.allocated',
-        summary: `Applied ₹${appliedPaise.toString()} paise of client credit across ${perInvoice.length} invoice(s)`,
+        summary: `Applied ${appliedPaise.toString()} paise of client credit across ${perInvoice.length} invoice(s)`,
         payload: {
           applied_paise: appliedPaise.toString(),
           invoices: perInvoice.map((p) => p.documentNumber),
