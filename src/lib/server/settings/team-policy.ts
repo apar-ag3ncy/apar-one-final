@@ -75,7 +75,9 @@ export async function saveTeamPolicy(input: {
   await logAudit({
     actorId: ctx.userId,
     entityType: 'settings',
-    entityId: 'team_policy',
+    // audit_log.entity_id is a uuid column — settings have no row id, so use
+    // the zero-uuid sentinel (same as the other org-settings audit callers).
+    entityId: '00000000-0000-0000-0000-000000000000',
     action: 'update',
     changes: {
       paid_leaves_per_month: parsed.data.paidLeavesPerMonth,
