@@ -63,7 +63,17 @@ export async function listPortalAccounts(): Promise<PortalAccountRow[]> {
       osUsers,
       and(eq(osUsers.employeeId, employees.id), isNull(osUsers.deletedAt)),
     )
-    .where(and(isNull(employees.deletedAt), eq(employees.isArchived, false)))
+    .where(
+      and(
+        isNull(employees.deletedAt),
+        eq(employees.isArchived, false),
+        // Must match backfillPortalAccounts' filter exactly. Without this the
+        // screen counts separated people as "needing an account", so the
+        // "create for all N" button shows a number the backfill will never
+        // create and can never reach zero.
+        sql`${employees.status} <> 'separated'`,
+      ),
+    )
     .orderBy(asc(employees.fullName));
 
   return rows;
