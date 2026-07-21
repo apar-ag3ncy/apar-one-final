@@ -38,6 +38,13 @@ export type PortalSession = {
   /** 'member' | 'manager'. Managers get the reporting-subtree leave queue. */
   portalRole: string;
   isManager: boolean;
+  /**
+   * True when the underlying OS account is an admin/super-admin that also has
+   * an employee link. Admins keep their full OS rights (see resolveOsActor) and
+   * additionally pick up the leave of anyone with NO manager appointed — the
+   * "unassigned people fall to admin" rule.
+   */
+  isAdmin: boolean;
 };
 
 /**
@@ -51,6 +58,7 @@ export async function maybePortalEmployee(): Promise<PortalSession | null> {
   const [row] = await db
     .select({
       osUserId: osUsers.id,
+      osRole: osUsers.role,
       employeeId: employees.id,
       fullName: employees.fullName,
       displayName: employees.displayName,
@@ -82,8 +90,14 @@ export async function maybePortalEmployee(): Promise<PortalSession | null> {
     designation: row.designation,
     department: row.department,
     portalRole: row.portalRole,
-    isManager: row.portalRole === 'manager',
+    // An admin reviews leave too, so treat them as a manager for the queue.
+    isManager: row.portalRole === 'manager' || isAdminRole(row.osRole),
+    isAdmin: isAdminRole(row.osRole),
   };
+}
+
+function isAdminRole(role: string): boolean {
+  return role === 'super_admin' || role === 'admin';
 }
 
 /**

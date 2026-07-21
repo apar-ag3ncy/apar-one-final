@@ -19,6 +19,7 @@ import {
 import { AppError } from '@/lib/errors';
 import { requireCapability } from '@/lib/rbac';
 import { getActorContext } from '@/lib/server/actor';
+import { issuePortalAccount } from '@/lib/server/portal/provision';
 import { ensureDepartmentRegistered } from '@/lib/server/entities/department-registry';
 import { IFSC_RE, PAN_RE, last4, maskAadhaar, maskPAN } from '@/lib/validators';
 import { expectedGradeKindFor, payrollGradeKind } from '@/components/employees/types';
@@ -348,7 +349,18 @@ const CreateEmployeeSchema = z.object({
 export type CreateEmployeeInput = z.input<typeof CreateEmployeeSchema>;
 
 export type CreateEmployeeResult =
-  | { ok: true; id: string }
+  | {
+      ok: true;
+      id: string;
+      /**
+       * Portal credentials issued for the new hire, shown ONCE so the admin can
+       * hand them over. Null when provisioning was skipped or failed — the
+       * employee is still created either way, and an account can be issued
+       * later from Settings → Team → Portal accounts.
+       */
+      portalUsername?: string | null;
+      portalTempPassword?: string | null;
+    }
   | { ok: false; message: string; errors: Record<string, string> };
 
 function zodErrorsToPathMap(err: z.ZodError): Record<string, string> {
@@ -657,7 +669,29 @@ export async function createEmployee(input: CreateEmployeeInput): Promise<Create
     // Keep the managed department registry complete when a new one is typed.
     await ensureDepartmentRegistered(v.department, ctx.userId);
 
-    return { ok: true, id: newId };
+    // Every new employee gets a portal account straight away, so access exists
+    // "as and when they are added" rather than only when someone remembers to
+    // backfill. Deliberately OUTSIDE the transaction and best-effort: a hiccup
+    // provisioning a login must never roll back the employee record. The
+    // temp password is retrievable from Settings → Team → Portal accounts via
+    // "Reset password" if this one is never handed over.
+    let portalUsername: string | null = null;
+    let portalTempPassword: string | null = null;
+    try {
+      const issued = await issuePortalAccount({
+        id: newId,
+        fullName: v.fullName,
+        employeeCode,
+      });
+      if (issued) {
+        portalUsername = issued.username;
+        portalTempPassword = issued.tempPassword;
+      }
+    } catch {
+      // Swallowed on purpose — see above. The account can be created later.
+    }
+
+    return { ok: true, id: newId, portalUsername, portalTempPassword };
   } catch (e) {
     // Unique violation on employee_code surfaces as a friendly field error.
     const raw = e instanceof Error ? e.message : '';

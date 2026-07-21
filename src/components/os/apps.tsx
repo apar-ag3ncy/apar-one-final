@@ -57,6 +57,7 @@ import {
 import { formatINR, initials, parseRupeesToPaise } from './format';
 import { Icon, type IconName } from './icons';
 import { PortalAccountsCard } from './portal-accounts-card';
+import { LeaveQueueView } from './leave-queue-view';
 import type { Client, Project, Vendor } from './types';
 import type { VendorStore } from './auth/vendor-store';
 import {
@@ -1862,7 +1863,7 @@ export function EmployeesApp({
   const [confirmDel, setConfirmDel] = useState<DirRow | null>(null);
   const [togglingId, setTogglingId] = useState<string | null>(null);
   // Cards (grouped directory) or the reporting-line org tree.
-  const [viewMode, setViewMode] = useState<'cards' | 'tree'>('cards');
+  const [viewMode, setViewMode] = useState<'cards' | 'tree' | 'leave'>('cards');
   // Settings-managed leadership roles + leave policy; null until loaded →
   // the chips fall back to the built-in TL/Manager heuristic.
   const [teamPolicy, setTeamPolicy] = useState<TeamPolicy | null>(null);
@@ -2509,10 +2510,23 @@ export function EmployeesApp({
         >
           Org tree
         </button>
+        <button
+          type="button"
+          className={`btn ${viewMode === 'leave' ? 'primary' : ''}`}
+          onClick={() => setViewMode((v) => (v === 'leave' ? 'cards' : 'leave'))}
+          title="Pending leave requests — including anyone with no manager appointed"
+          aria-pressed={viewMode === 'leave'}
+        >
+          Leave requests
+        </button>
       </div>
 
       <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
-        {rows === null ? (
+        {/* Leave requests is checked first: it has its own data and must render
+            even when the directory filters currently match nobody. */}
+        {viewMode === 'leave' ? (
+          <LeaveQueueView canManage={canEdit} />
+        ) : rows === null ? (
           <div
             style={{
               padding: 28,

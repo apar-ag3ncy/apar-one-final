@@ -7,7 +7,7 @@ import { db } from '@/lib/db/client';
 import { leaves } from '@/lib/db/schema';
 import { applyLeaveDecision } from '@/lib/server/entities/leave-decision';
 import { getActorContext } from '@/lib/server/actor';
-import { listReportSubtreeIds } from '@/lib/server/portal/leave';
+import { canDecideFor } from '@/lib/server/portal/leave';
 import { requirePortalEmployee, requirePortalManager } from '@/lib/server/portal/session';
 
 /**
@@ -155,8 +155,9 @@ export async function cancelMyLeave(input: {
 /**
  * Manager decision on a report's leave.
  *
- * Authorizes by REPORTING SUBTREE, then calls the shared decision core so the
- * monthly paid-leave cap (Settings → Team) still applies.
+ * Authorizes by REPORTING SUBTREE — plus, for an admin, anyone with no manager
+ * appointed — then calls the shared decision core so the monthly paid-leave cap
+ * (Settings → Team) still applies.
  *
  * It deliberately does NOT go through `approveLeave`, which gates on the
  * `approve_leave` capability: a portal employee resolves to the least-privileged
@@ -192,9 +193,9 @@ export async function decideTeamLeave(input: {
     .limit(1);
   if (!leave) return { ok: false, error: 'That request no longer exists.' };
 
-  const reportIds = await listReportSubtreeIds(me.employeeId);
-  if (!reportIds.includes(leave.employeeId)) {
-    return { ok: false, error: 'That request is not from someone who reports to you.' };
+  // Inside their subtree, or — for an admin — anyone with no manager appointed.
+  if (!(await canDecideFor(leave.employeeId))) {
+    return { ok: false, error: 'That request is not yours to review.' };
   }
   if (leave.status !== 'applied') {
     return { ok: false, error: `That request is already ${leave.status}.` };

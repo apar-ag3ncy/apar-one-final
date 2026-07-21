@@ -2,7 +2,7 @@
 
 import { randomBytes } from 'node:crypto';
 
-import { and, asc, eq, isNull } from 'drizzle-orm';
+import { and, asc, eq, isNull, sql } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { logAudit } from '@/lib/audit';
@@ -12,6 +12,11 @@ import { AppError } from '@/lib/errors';
 import { requireCapability } from '@/lib/rbac';
 import { getActorContext } from '@/lib/server/actor';
 import { hashPassword } from '@/lib/server/os-session';
+import {
+  buildPortalAccount,
+  takenUsernames,
+  type IssuedCredential,
+} from '@/lib/server/portal/provision';
 
 /**
  * Admin-side provisioning for the employee portal: create/reset a portal
@@ -200,6 +205,69 @@ export async function revokePortalAccount(input: {
     changes: { portal_account: { before: 'active', after: 'revoked' } },
   });
   return { ok: true };
+}
+
+/**
+ * Give every active employee who lacks one a portal account, in one go.
+ *
+ * Returns the issued credentials ONCE — they are not recoverable afterwards,
+ * only resettable. Idempotent: employees who already have a live account are
+ * skipped, so it is safe to press again after adding people.
+ */
+export async function backfillPortalAccounts(): Promise<{
+  created: IssuedCredential[];
+  skipped: number;
+}> {
+  const ctx = await getActorContext();
+  requireCapability(ctx, 'update_employee');
+
+  const [active, live] = await Promise.all([
+    db
+      .select({
+        id: employees.id,
+        fullName: employees.fullName,
+        employeeCode: employees.employeeCode,
+      })
+      .from(employees)
+      .where(
+        and(
+          isNull(employees.deletedAt),
+          eq(employees.isArchived, false),
+          sql`${employees.status} <> 'separated'`,
+        ),
+      )
+      .orderBy(asc(employees.employeeCode)),
+    db
+      .select({ username: osUsers.username, employeeId: osUsers.employeeId })
+      .from(osUsers)
+      .where(isNull(osUsers.deletedAt)),
+  ]);
+
+  const linked = new Set(live.map((u) => u.employeeId).filter(Boolean) as string[]);
+  const taken = await takenUsernames();
+
+  const todo = active.filter((e) => !linked.has(e.id));
+  if (todo.length === 0) return { created: [], skipped: active.length };
+
+  const created: IssuedCredential[] = [];
+  const values = todo.map((e) => {
+    const { row, credential } = buildPortalAccount(e, taken);
+    created.push(credential);
+    return row;
+  });
+
+  await db.insert(osUsers).values(values);
+
+  await logAudit({
+    actorId: ctx.userId,
+    entityType: 'settings',
+    // audit_log.entity_id is a uuid column — no row id for a bulk action.
+    entityId: '00000000-0000-0000-0000-000000000000',
+    action: 'update',
+    changes: { portal_accounts_backfilled: created.length },
+  });
+
+  return { created, skipped: active.length - todo.length };
 }
 
 /** Set an employee's portal role ('member' | 'manager'). */

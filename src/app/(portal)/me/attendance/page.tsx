@@ -120,6 +120,11 @@ export default async function AttendancePage() {
                           {KIND_LABEL[req.kind] ?? req.kind} · {req.days} day
                           {req.days === '1' ? '' : 's'} · {range(req.fromDate, req.toDate)}
                         </p>
+                        {req.hasNoManager ? (
+                          <div className="mt-1">
+                            <StatusBadge tone="neutral" label="No manager · with you" dot={false} />
+                          </div>
+                        ) : null}
                         {req.notes ? <p className="mt-1 text-sm">“{req.notes}”</p> : null}
                       </div>
                     </div>

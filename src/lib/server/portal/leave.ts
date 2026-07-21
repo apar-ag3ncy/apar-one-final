@@ -172,7 +172,28 @@ export type TeamLeaveRequest = {
   appliedAt: string;
   /** Whether this kind counts against the monthly paid allowance. */
   countsAgainstAllowance: boolean;
+  /** True when this person has no manager appointed and so falls to admin. */
+  hasNoManager: boolean;
 };
+
+/**
+ * Employees with NO manager appointed. They fall to admin for leave approval,
+ * so admins see them in addition to their own reporting subtree.
+ */
+export async function listManagerlessEmployeeIds(): Promise<string[]> {
+  const rows = await db
+    .select({ id: employees.id })
+    .from(employees)
+    .where(
+      and(
+        isNull(employees.reportsToEmployeeId),
+        isNull(employees.deletedAt),
+        eq(employees.isArchived, false),
+        sql`${employees.status} <> 'separated'`,
+      ),
+    );
+  return rows.map((r) => r.id);
+}
 
 /**
  * Pending leave for everyone below this manager. Nothing like this existed —
@@ -181,8 +202,20 @@ export type TeamLeaveRequest = {
  */
 export async function getTeamLeaveQueue(): Promise<TeamLeaveRequest[]> {
   const me = await requirePortalManager();
-  const reportIds = await listReportSubtreeIds(me.employeeId);
-  if (reportIds.length === 0) return [];
+
+  const [subtreeIds, managerlessIds] = await Promise.all([
+    listReportSubtreeIds(me.employeeId),
+    // "Whoever's manager is not appointed goes under admin."
+    me.isAdmin ? listManagerlessEmployeeIds() : Promise.resolve<string[]>([]),
+  ]);
+
+  const managerless = new Set(managerlessIds);
+  // An admin must not be shown their OWN request to approve.
+  const visible = [...new Set([...subtreeIds, ...managerlessIds])].filter(
+    (id) => id !== me.employeeId,
+  );
+  if (visible.length === 0) return [];
+  const reportIds = visible;
 
   const rows = await db
     .select({
@@ -212,12 +245,23 @@ export async function getTeamLeaveQueue(): Promise<TeamLeaveRequest[]> {
     ...r,
     appliedAt: r.appliedAt.toISOString(),
     countsAgainstAllowance: PAID_LEAVE_KINDS.has(r.kind),
+    hasNoManager: managerless.has(r.employeeId),
   }));
 }
 
-/** True when `employeeId` is somewhere below the signed-in manager. */
-export async function managerCanDecideFor(employeeId: string): Promise<boolean> {
+/**
+ * Whether the signed-in reviewer may decide this employee's leave: inside their
+ * reporting subtree, or — for an admin — anyone with no manager appointed.
+ * Never themselves.
+ */
+export async function canDecideFor(employeeId: string): Promise<boolean> {
   const me = await requirePortalManager();
-  const reportIds = await listReportSubtreeIds(me.employeeId);
-  return reportIds.includes(employeeId);
+  if (employeeId === me.employeeId) return false;
+
+  const subtree = await listReportSubtreeIds(me.employeeId);
+  if (subtree.includes(employeeId)) return true;
+  if (!me.isAdmin) return false;
+
+  const managerless = await listManagerlessEmployeeIds();
+  return managerless.includes(employeeId);
 }

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
 
 import {
+  backfillPortalAccounts,
   createPortalAccount,
   listPortalAccounts,
   resetPortalPassword,
@@ -11,6 +12,8 @@ import {
   setPortalRole,
   type PortalAccountRow,
 } from '@/lib/server/portal/admin';
+
+type Issued = { fullName: string; employeeCode: string; username: string; tempPassword: string };
 
 /**
  * Settings → Team → "Portal accounts".
@@ -27,6 +30,37 @@ export function PortalAccountsCard({ canManage }: { canManage: boolean }) {
   const [creatingFor, setCreatingFor] = useState<string | null>(null);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [issued, setIssued] = useState<Issued[] | null>(null);
+  const [backfilling, setBackfilling] = useState(false);
+
+  const withoutAccess = rows?.filter((r) => !r.username).length ?? 0;
+
+  async function runBackfill() {
+    setBackfilling(true);
+    try {
+      const res = await backfillPortalAccounts();
+      if (res.created.length === 0) {
+        toast.info('Everyone already has a portal account.');
+        return;
+      }
+      setIssued(res.created);
+      toast.success(`Created ${res.created.length} portal account(s).`);
+      load();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not create the accounts.');
+    } finally {
+      setBackfilling(false);
+    }
+  }
+
+  function copyIssued() {
+    if (!issued) return;
+    const text = issued
+      .map((c) => `${c.fullName} (${c.employeeCode})\t${c.username}\t${c.tempPassword}`)
+      .join('\n');
+    void navigator.clipboard?.writeText(text);
+    toast.success('Copied to clipboard.');
+  }
 
   const load = useCallback(() => {
     listPortalAccounts()
@@ -89,6 +123,70 @@ export function PortalAccountsCard({ canManage }: { canManage: boolean }) {
       </div>
 
       <div style={{ flex: 1, minWidth: 0 }}>
+        {canManage && withoutAccess > 0 ? (
+          <div style={{ marginBottom: 12 }}>
+            <button type="button" className="btn primary" disabled={backfilling} onClick={runBackfill}>
+              {backfilling
+                ? 'Creating…'
+                : `Create accounts for all ${withoutAccess} without one`}
+            </button>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 6 }}>
+              Each gets a username and a temporary password, shown once here for you to pass on.
+            </div>
+          </div>
+        ) : null}
+
+        {issued ? (
+          <div
+            style={{
+              marginBottom: 12,
+              padding: 12,
+              borderRadius: 8,
+              border: '1px solid var(--border)',
+              background: 'var(--surface-2, rgba(0,0,0,0.03))',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+              <strong style={{ fontSize: 12 }}>
+                New sign-ins — shown once
+              </strong>
+              <span style={{ display: 'flex', gap: 6 }}>
+                <button type="button" className="btn" onClick={copyIssued}>
+                  Copy all
+                </button>
+                <button type="button" className="btn" onClick={() => setIssued(null)}>
+                  Done
+                </button>
+              </span>
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', margin: '6px 0 8px' }}>
+              These passwords are not stored in readable form and cannot be shown again. If one is
+              lost, use “Reset password” on that row.
+            </div>
+            <table className="table" style={{ fontSize: 12, width: '100%' }}>
+              <thead>
+                <tr>
+                  <th>Employee</th>
+                  <th>Username</th>
+                  <th>Temporary password</th>
+                </tr>
+              </thead>
+              <tbody>
+                {issued.map((c) => (
+                  <tr key={c.username}>
+                    <td>
+                      {c.fullName}{' '}
+                      <span style={{ color: 'var(--text-muted)' }}>{c.employeeCode}</span>
+                    </td>
+                    <td style={{ fontFamily: 'var(--font-mono, monospace)' }}>{c.username}</td>
+                    <td style={{ fontFamily: 'var(--font-mono, monospace)' }}>{c.tempPassword}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : null}
+
         {rows === null ? (
           <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>Loading…</div>
         ) : rows.length === 0 ? (

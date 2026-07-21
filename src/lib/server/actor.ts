@@ -106,6 +106,7 @@ async function resolveOsActor(): Promise<CurrentUserContext | null> {
 
   const [row] = await db
     .select({
+      role: osUsers.role,
       employeeId: osUsers.employeeId,
       employeeStatus: employees.status,
       employeeArchived: employees.isArchived,
@@ -117,6 +118,20 @@ async function resolveOsActor(): Promise<CurrentUserContext | null> {
     .limit(1);
 
   if (!row) return null;
+
+  // Staff status comes from the ACCOUNT'S ROLE, not from whether it happens to
+  // be linked to an employee. An admin is also a person on the payroll, and
+  // linking their account to their employee record (so they get a portal
+  // profile and appear in the directory) must not strip their OS rights.
+  // Portal accounts are created with role 'user', so they never land here.
+  if (row.role === 'super_admin' || row.role === 'admin') {
+    await ensureSystemUser();
+    return {
+      userId: SYSTEM_USER_ID,
+      role: 'admin',
+      capabilities: CAPABILITY_SET,
+    };
+  }
 
   if (row.employeeId) {
     // Employee portal account — least privilege.
@@ -134,8 +149,9 @@ async function resolveOsActor(): Promise<CurrentUserContext | null> {
     };
   }
 
-  // Staff / OS account — unchanged behaviour: full capabilities, gated in the
-  // OS UI by the client-side `can()` permission map.
+  // An OS account with role 'user' and no employee link — a staff seat with no
+  // portal identity. Unchanged behaviour: full capabilities, gated in the OS UI
+  // by the client-side `can()` permission map.
   await ensureSystemUser();
   return {
     userId: SYSTEM_USER_ID,
