@@ -1,6 +1,5 @@
 import 'server-only';
 
-import { cache } from 'react';
 import { and, eq, isNull, sql } from 'drizzle-orm';
 
 import { CAPABILITY_SET, type Capability, type CurrentUserContext, type Role } from '@/lib/rbac';
@@ -145,15 +144,21 @@ async function resolveOsActor(): Promise<CurrentUserContext | null> {
   };
 }
 
-/**
- * Memoised per request: ~89 modules call this, and some call it more than once
- * per action, so without this the session lookup would re-run each time.
- */
-export const getActorContext = cache(async (): Promise<CurrentUserContext> => {
+export async function getActorContext(): Promise<CurrentUserContext> {
   const real = await maybeCurrentUser();
   if (real) return real;
 
-  const osActor = await resolveOsActor();
+  // Defensive: this runs on EVERY server action. A transient DB error while
+  // resolving the session must not 500 the entire app — fall through to the
+  // pre-existing behaviour instead. A failure here can only ever cost
+  // privilege (the fallback below is itself gated by ALLOW_DEV_ADMIN), never
+  // grant it beyond what the deployment already allows.
+  let osActor: CurrentUserContext | null = null;
+  try {
+    osActor = await resolveOsActor();
+  } catch {
+    osActor = null;
+  }
   if (osActor) return osActor;
 
   // Opt-OUT dev fallback — see the file header. Set ALLOW_DEV_ADMIN='false' on
@@ -169,4 +174,4 @@ export const getActorContext = cache(async (): Promise<CurrentUserContext> => {
   }
 
   throw new (await import('@/lib/errors')).AppError('unauthenticated', 'No active session.');
-});
+}
