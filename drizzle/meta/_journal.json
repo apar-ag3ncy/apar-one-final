@@ -582,6 +582,13 @@
       "when": 1785300090000,
       "tag": "0082_portal_identity",
       "breakpoints": true
+    },
+    {
+      "idx": 83,
+      "version": "7",
+      "when": 1785400090000,
+      "tag": "0083_leave_decision_fields",
+      "breakpoints": true
     }
   ]
 }

@@ -415,7 +415,20 @@ const PAID_LEAVE_KINDS = new Set(['earned', 'casual', 'sick', 'comp_off']);
 export async function approveLeave(args: {
   id: string;
   accept: boolean;
-  notes?: string | null;
+  /**
+   * The manager's reply. Written to `manager_note` (0083) — NOT to `notes`,
+   * which holds the applicant's own reason. This used to overwrite `notes`
+   * unconditionally, so every decision erased why the employee had asked.
+   */
+  managerNote?: string | null;
+  /**
+   * Whether an approved leave is paid. Undefined leaves it undecided, and
+   * readers fall back to deriving from `kind`. A record only — payroll docks
+   * days marked 'absent' in attendance_records and is untouched by this.
+   */
+  isPaid?: boolean;
+  /** Deciding manager as an employee uuid, when the caller knows it. */
+  decidedByEmployeeId?: string | null;
 }): Promise<void> {
   const ctx = await getActorContext();
   requireCapability(ctx, 'approve_leave');
@@ -424,6 +437,22 @@ export async function approveLeave(args: {
   // paid-kind leave that would push the employee past the allowance for the
   // month of its start date is refused with the numbers spelled out — grant
   // it as Unpaid (or raise the allowance) instead.
+  // Guard first, for accept AND reject: a soft-deleted leave must not be
+  // decidable, and an already-decided one must not be silently re-decided
+  // (which would overwrite decidedBy/decidedAt).
+  const [current] = await db
+    .select({ id: leaves.id, status: leaves.status })
+    .from(leaves)
+    .where(and(eq(leaves.id, args.id), isNull(leaves.deletedAt)))
+    .limit(1);
+  if (!current) throw new AppError('not_found', `leave ${args.id} not found`);
+  if (current.status !== 'applied') {
+    throw new AppError(
+      'validation',
+      `This leave is already ${current.status}. Only a pending request can be decided.`,
+    );
+  }
+
   if (args.accept) {
     const [leave] = await db.select().from(leaves).where(eq(leaves.id, args.id)).limit(1);
     if (!leave) throw new AppError('not_found', `leave ${args.id} not found`);
@@ -469,10 +498,15 @@ export async function approveLeave(args: {
       status: args.accept ? 'approved' : 'rejected',
       approvedBy: ctx.userId,
       approvedAt: new Date(),
-      notes: args.notes ?? null,
+      // `notes` is deliberately NOT touched — it is the applicant's reason.
+      managerNote: args.managerNote ?? null,
+      decidedByEmployeeId: args.decidedByEmployeeId ?? null,
+      decidedAt: new Date(),
+      // Only meaningful on approval; a rejection is neither paid nor unpaid.
+      isPaid: args.accept ? (args.isPaid ?? null) : null,
       updatedBy: ctx.userId,
     })
-    .where(eq(leaves.id, args.id));
+    .where(and(eq(leaves.id, args.id), isNull(leaves.deletedAt)));
 }
 
 export type LeaveRow = {
@@ -482,7 +516,13 @@ export type LeaveRow = {
   toDate: string;
   days: string;
   status: 'applied' | 'approved' | 'rejected' | 'cancelled';
+  /** The applicant's own reason. */
   notes: string | null;
+  /** The manager's reply (0083). */
+  managerNote: string | null;
+  decidedAt: string | null;
+  /** Stored paid/unpaid decision (0083); null = derive from `kind`. */
+  isPaid: boolean | null;
 };
 
 export async function listEmployeeLeaves(employeeId: string): Promise<readonly LeaveRow[]> {
@@ -501,6 +541,11 @@ export async function listEmployeeLeaves(employeeId: string): Promise<readonly L
     days: r.days,
     status: r.status,
     notes: r.notes,
+    // 0083 — without these the employee can never see the manager's reply or
+    // whether an approved leave was paid.
+    managerNote: r.managerNote,
+    decidedAt: r.decidedAt ? r.decidedAt.toISOString() : null,
+    isPaid: r.isPaid,
   }));
 }
 

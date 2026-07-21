@@ -1,6 +1,7 @@
 import { sql } from 'drizzle-orm';
 import {
   bigint,
+  boolean,
   check,
   date,
   index,
@@ -261,9 +262,30 @@ export const leaves = pgTable(
     appliedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     approvedBy: uuid().references(() => users.id, { onDelete: 'set null' }),
     approvedAt: timestamp({ withTimezone: true }),
+    /** The APPLICANT's reason. Written by applyLeave; never overwritten by a decision. */
     notes: text(),
+    /** The manager's reply, shown to the employee with the decision (0083). */
+    managerNote: text(),
+    /**
+     * Who decided, as an EMPLOYEE uuid (0083). `approvedBy` is a users.id and
+     * portal managers resolve to the system sentinel user, so it cannot
+     * identify the real person — this can.
+     */
+    decidedByEmployeeId: uuid().references(() => employees.id, { onDelete: 'set null' }),
+    decidedAt: timestamp({ withTimezone: true }),
+    /**
+     * Stored paid/unpaid decision (0083). NULL = undecided / legacy, in which
+     * case readers derive it from `kind`. A record only — it does NOT feed
+     * payroll, which docks days marked 'absent' in attendance_records.
+     */
+    isPaid: boolean(),
   },
-  (t) => [index().on(t.employeeId, t.fromDate.desc()), index().on(t.status)],
+  (t) => [
+    index().on(t.employeeId, t.fromDate.desc()),
+    index().on(t.status),
+    index('leaves_decided_by_employee_id_idx').on(t.decidedByEmployeeId),
+    index('leaves_status_from_date_idx').on(t.status, t.fromDate.desc()),
+  ],
 );
 
 export type Leave = typeof leaves.$inferSelect;
