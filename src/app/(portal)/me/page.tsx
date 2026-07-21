@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { CalendarDaysIcon, ListChecksIcon, UserIcon, UsersIcon } from 'lucide-react';
 
 import { Card, CardContent } from '@/components/ui/card';
+import { getEmployeeKpis } from '@/lib/server/entities/employee-kpis';
 import { requirePortalEmployee } from '@/lib/server/portal/session';
 
 export const metadata: Metadata = { title: 'Apar · Home' };
@@ -14,6 +15,9 @@ export const metadata: Metadata = { title: 'Apar · Home' };
 export default async function PortalHomePage() {
   const me = await requirePortalEmployee();
   const firstName = (me.displayName ?? me.fullName).split(' ')[0];
+  const kpis = await getEmployeeKpis({ employeeId: me.employeeId });
+
+  const openDeliverables = kpis.deliverables.assigned - kpis.deliverables.completed;
 
   return (
     <div className="space-y-6">
@@ -25,6 +29,17 @@ export default async function PortalHomePage() {
           {me.isManager ? ' · Manager' : ''}
         </p>
       </header>
+
+      <section className="grid gap-3 sm:grid-cols-3">
+        <Stat
+          label="Attendance this month"
+          value={
+            kpis.attendance.attendancePct === null ? '—' : `${kpis.attendance.attendancePct}%`
+          }
+        />
+        <Stat label="Open deliverables" value={String(openDeliverables)} />
+        <Stat label="Active projects" value={String(kpis.projects.activeMemberships)} />
+      </section>
 
       <section className="grid gap-3 sm:grid-cols-2">
         <Tile
@@ -57,6 +72,17 @@ export default async function PortalHomePage() {
         />
       </section>
     </div>
+  );
+}
+
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <Card>
+      <CardContent className="py-4">
+        <p className="text-muted-foreground text-xs tracking-wide uppercase">{label}</p>
+        <p className="mt-1 font-mono text-xl font-semibold tabular-nums">{value}</p>
+      </CardContent>
+    </Card>
   );
 }
 
