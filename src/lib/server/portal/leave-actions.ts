@@ -5,7 +5,7 @@ import { z } from 'zod';
 
 import { db } from '@/lib/db/client';
 import { leaves } from '@/lib/db/schema';
-import { approveLeave } from '@/lib/server/entities/payroll';
+import { applyLeaveDecision } from '@/lib/server/entities/leave-decision';
 import { getActorContext } from '@/lib/server/actor';
 import { listReportSubtreeIds } from '@/lib/server/portal/leave';
 import { requirePortalEmployee, requirePortalManager } from '@/lib/server/portal/session';
@@ -155,10 +155,16 @@ export async function cancelMyLeave(input: {
 /**
  * Manager decision on a report's leave.
  *
- * Delegates to `approveLeave` so the monthly paid-leave cap (Settings → Team)
- * keeps applying, but first proves the target is inside THIS manager's
- * reporting subtree — `approve_leave` is a flat capability, so without this
- * check any holder could decide anyone's leave.
+ * Authorizes by REPORTING SUBTREE, then calls the shared decision core so the
+ * monthly paid-leave cap (Settings → Team) still applies.
+ *
+ * It deliberately does NOT go through `approveLeave`, which gates on the
+ * `approve_leave` capability: a portal employee resolves to the least-privileged
+ * 'employee' role and does not hold it. Granting that capability to the employee
+ * role would be worse than useless — it is FLAT, so every employee could then
+ * decide anyone's leave through the OS action. Subtree membership is the right
+ * boundary here, and `applyLeaveDecision` lives in a plain server-only module so
+ * it is not itself reachable as an endpoint.
  */
 export async function decideTeamLeave(input: {
   id: string;
@@ -194,13 +200,15 @@ export async function decideTeamLeave(input: {
     return { ok: false, error: `That request is already ${leave.status}.` };
   }
 
+  const ctx = await getActorContext();
   try {
-    await approveLeave({
+    await applyLeaveDecision({
       id: parsed.data.id,
       accept: parsed.data.accept,
       managerNote: parsed.data.managerNote?.trim() || null,
       isPaid: parsed.data.accept ? (parsed.data.isPaid ?? true) : undefined,
       decidedByEmployeeId: me.employeeId,
+      actorUserId: ctx.userId,
     });
   } catch (e) {
     // The paid-leave cap surfaces here as a validation error with the numbers

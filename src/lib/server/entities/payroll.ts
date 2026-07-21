@@ -18,12 +18,12 @@ import {
 import { AppError } from '@/lib/errors';
 import { requireCapability } from '@/lib/rbac';
 import { getActorContext } from '@/lib/server/actor';
+import { applyLeaveDecision } from '@/lib/server/entities/leave-decision';
 import {
   createDraftTransaction,
   postTransaction,
   reverseTransaction,
 } from '@/lib/server/ledger/transactions';
-import { readTeamPolicy } from '@/lib/server/settings/team-policy-data';
 
 /**
  * Payroll capture surfaces — SPEC-AMENDMENT-001 §9. Apar never computes
@@ -408,10 +408,14 @@ export async function applyLeave(input: ApplyLeaveInput): Promise<{ id: string }
   return { id: row.id };
 }
 
-/** Kinds that count against the monthly paid-leave allowance. Unpaid never
- *  does; maternity/paternity are statutory and must not be blocked by it. */
-const PAID_LEAVE_KINDS = new Set(['earned', 'casual', 'sick', 'comp_off']);
-
+/**
+ * OS-side leave decision. Authorization is the `approve_leave` capability; the
+ * cap check and the write itself live in `entities/leave-decision.ts`, shared
+ * with the portal's manager flow (which authorizes by reporting subtree
+ * instead). Keeping the core in a plain server-only module matters: exporting
+ * an ungated decision function from a 'use server' file would publish it as a
+ * callable endpoint.
+ */
 export async function approveLeave(args: {
   id: string;
   accept: boolean;
@@ -421,92 +425,21 @@ export async function approveLeave(args: {
    * unconditionally, so every decision erased why the employee had asked.
    */
   managerNote?: string | null;
-  /**
-   * Whether an approved leave is paid. Undefined leaves it undecided, and
-   * readers fall back to deriving from `kind`. A record only — payroll docks
-   * days marked 'absent' in attendance_records and is untouched by this.
-   */
+  /** Whether an approved leave is paid. A record only; payroll is untouched. */
   isPaid?: boolean;
   /** Deciding manager as an employee uuid, when the caller knows it. */
   decidedByEmployeeId?: string | null;
 }): Promise<void> {
   const ctx = await getActorContext();
   requireCapability(ctx, 'approve_leave');
-
-  // Monthly paid-leave cap (Settings → Team → Team policies). Approving a
-  // paid-kind leave that would push the employee past the allowance for the
-  // month of its start date is refused with the numbers spelled out — grant
-  // it as Unpaid (or raise the allowance) instead.
-  // Guard first, for accept AND reject: a soft-deleted leave must not be
-  // decidable, and an already-decided one must not be silently re-decided
-  // (which would overwrite decidedBy/decidedAt).
-  const [current] = await db
-    .select({ id: leaves.id, status: leaves.status })
-    .from(leaves)
-    .where(and(eq(leaves.id, args.id), isNull(leaves.deletedAt)))
-    .limit(1);
-  if (!current) throw new AppError('not_found', `leave ${args.id} not found`);
-  if (current.status !== 'applied') {
-    throw new AppError(
-      'validation',
-      `This leave is already ${current.status}. Only a pending request can be decided.`,
-    );
-  }
-
-  if (args.accept) {
-    const [leave] = await db.select().from(leaves).where(eq(leaves.id, args.id)).limit(1);
-    if (!leave) throw new AppError('not_found', `leave ${args.id} not found`);
-    if (leave.status !== 'approved' && PAID_LEAVE_KINDS.has(leave.kind)) {
-      const { paidLeavesPerMonth } = await readTeamPolicy();
-      const monthStart = `${leave.fromDate.slice(0, 7)}-01`;
-      const [y, m] = leave.fromDate.split('-').map(Number);
-      const monthEnd = `${leave.fromDate.slice(0, 7)}-${String(
-        new Date(Date.UTC(y!, m!, 0)).getUTCDate(),
-      ).padStart(2, '0')}`;
-      const approvedRows = await db
-        .select({ kind: leaves.kind, days: leaves.days })
-        .from(leaves)
-        .where(
-          and(
-            eq(leaves.employeeId, leave.employeeId),
-            eq(leaves.status, 'approved'),
-            sql`${leaves.fromDate} >= ${monthStart}`,
-            sql`${leaves.fromDate} <= ${monthEnd}`,
-            isNull(leaves.deletedAt),
-          ),
-        );
-      const alreadyGranted = approvedRows
-        .filter((r) => PAID_LEAVE_KINDS.has(r.kind))
-        .reduce((s, r) => s + Number.parseFloat(r.days), 0);
-      const requested = Number.parseFloat(leave.days);
-      if (alreadyGranted + requested > paidLeavesPerMonth) {
-        const monthLabel = new Date(`${monthStart}T00:00:00Z`).toLocaleDateString('en-IN', {
-          month: 'long',
-          year: 'numeric',
-        });
-        throw new AppError(
-          'validation',
-          `Only ${paidLeavesPerMonth} paid-leave day${paidLeavesPerMonth === 1 ? '' : 's'} can be granted per month — ${alreadyGranted} already granted in ${monthLabel} and this leave adds ${requested}. Grant it as Unpaid, or raise the allowance in Settings → Team.`,
-        );
-      }
-    }
-  }
-
-  await db
-    .update(leaves)
-    .set({
-      status: args.accept ? 'approved' : 'rejected',
-      approvedBy: ctx.userId,
-      approvedAt: new Date(),
-      // `notes` is deliberately NOT touched — it is the applicant's reason.
-      managerNote: args.managerNote ?? null,
-      decidedByEmployeeId: args.decidedByEmployeeId ?? null,
-      decidedAt: new Date(),
-      // Only meaningful on approval; a rejection is neither paid nor unpaid.
-      isPaid: args.accept ? (args.isPaid ?? null) : null,
-      updatedBy: ctx.userId,
-    })
-    .where(and(eq(leaves.id, args.id), isNull(leaves.deletedAt)));
+  await applyLeaveDecision({
+    id: args.id,
+    accept: args.accept,
+    managerNote: args.managerNote,
+    isPaid: args.isPaid,
+    decidedByEmployeeId: args.decidedByEmployeeId,
+    actorUserId: ctx.userId,
+  });
 }
 
 export type LeaveRow = {
