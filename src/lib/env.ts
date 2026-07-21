@@ -29,6 +29,22 @@ const EnvSchema = z.object({
   // App
   APP_URL: z.string().url().default('http://localhost:3000'),
 
+  // Auth / employee portal.
+  //
+  // All optional so a missing value can never break boot on an existing
+  // deployment:
+  //   - OS_SESSION_SECRET — HMAC key for the `apar_os_uid` cookie. Falls back
+  //     to SUPABASE_SERVICE_ROLE_KEY (what already-issued cookies are signed
+  //     with), so leaving it unset keeps existing sessions valid.
+  //   - PORTAL_HOST — hostname serving the employee portal (e.g.
+  //     `team.example.com`). UNSET ⇒ subdomain routing is OFF, so localhost and
+  //     Vercel previews behave normally.
+  //   - COOKIE_DOMAIN — apex (`.example.com`) so one session works across the
+  //     main host and the portal subdomain. Leave unset outside production.
+  OS_SESSION_SECRET: z.string().optional(),
+  PORTAL_HOST: z.string().optional(),
+  COOKIE_DOMAIN: z.string().optional(),
+
   // OpenRouter / extraction LLM (Phase 3+; tolerate empty in dev)
   OPENROUTER_API_KEY: z.string().optional().default(''),
   MODEL_VENDOR_INVOICE: z.string().optional(),

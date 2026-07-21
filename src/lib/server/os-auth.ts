@@ -8,21 +8,28 @@
 // cookie carries the session. The server actions here are the only surface the
 // client store talks to.
 //
-// NOTE: this intentionally does NOT wire OS identity into `getActorContext()`
-// — server actions still run with full dev-admin capability. The OS RBAC map
-// (`permissions` / `can()`) continues to gate the OS UI client-side. Honouring
-// the OS session server-side is a separate hardening step.
+// The OS session IS now honoured server-side: `getActorContext()` resolves this
+// cookie into a real actor context (see server/actor.ts), and the employee
+// portal resolves it into an employee via server/portal/session.ts. The OS RBAC
+// map (`permissions` / `can()`) still gates the OS UI client-side on top.
+//
+// The crypto + cookie primitives live in `server/os-session.ts` because this
+// file is 'use server' and may export ONLY async functions.
 
-import { randomBytes, scryptSync, timingSafeEqual, createHmac } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 
-import { cookies } from 'next/headers';
 import { and, eq, isNull, sql } from 'drizzle-orm';
 
 import { db } from '@/lib/db/client';
 import { osUsers, type OsUserRow } from '@/lib/db/schema';
+import {
+  clearOsSessionCookie,
+  hashPassword,
+  readOsSessionUserId,
+  setOsSessionCookie,
+  verifyPassword,
+} from '@/lib/server/os-session';
 
-const SESSION_COOKIE = 'apar_os_uid';
-const SESSION_MAX_AGE = 60 * 60 * 24 * 30; // 30 days
 const SUPER_ADMIN_ID = 'super-admin';
 const SUPER_ADMIN_DEFAULT_USERNAME = 'apar';
 const SUPER_ADMIN_DEFAULT_PASSWORD = 'apar2026';
@@ -39,58 +46,6 @@ type SanitizedOsUser = {
   permissions: PermissionMap;
   createdAt: string;
 };
-
-/* -------------------------------------------------------------------------- */
-/* Password hashing (scrypt) + cookie signing (HMAC)                          */
-/* -------------------------------------------------------------------------- */
-
-function hashPassword(password: string): string {
-  const salt = randomBytes(16);
-  const hash = scryptSync(password, salt, 32);
-  return `scrypt$${salt.toString('hex')}$${hash.toString('hex')}`;
-}
-
-function verifyPassword(password: string, stored: string): boolean {
-  const parts = stored.split('$');
-  if (parts.length !== 3 || parts[0] !== 'scrypt') return false;
-  try {
-    const salt = Buffer.from(parts[1]!, 'hex');
-    const expected = Buffer.from(parts[2]!, 'hex');
-    const actual = scryptSync(password, salt, expected.length);
-    return expected.length === actual.length && timingSafeEqual(expected, actual);
-  } catch {
-    return false;
-  }
-}
-
-function sessionSecret(): string {
-  return (
-    process.env.OS_SESSION_SECRET ||
-    process.env.SUPABASE_SERVICE_ROLE_KEY ||
-    'apar-os-fallback-secret'
-  );
-}
-
-function signSession(id: string): string {
-  const mac = createHmac('sha256', sessionSecret()).update(id).digest('hex');
-  return `${id}.${mac}`;
-}
-
-function verifySignedSession(token: string | undefined): string | null {
-  if (!token) return null;
-  const dot = token.lastIndexOf('.');
-  if (dot <= 0) return null;
-  const id = token.slice(0, dot);
-  const mac = token.slice(dot + 1);
-  const expected = createHmac('sha256', sessionSecret()).update(id).digest('hex');
-  try {
-    const a = Buffer.from(mac, 'hex');
-    const b = Buffer.from(expected, 'hex');
-    return a.length === b.length && timingSafeEqual(a, b) ? id : null;
-  } catch {
-    return null;
-  }
-}
 
 /* -------------------------------------------------------------------------- */
 /* Helpers                                                                    */
@@ -141,13 +96,8 @@ async function liveUsers(): Promise<OsUserRow[]> {
   });
 }
 
-async function sessionUserId(): Promise<string | null> {
-  const store = await cookies();
-  return verifySignedSession(store.get(SESSION_COOKIE)?.value);
-}
-
 async function currentSuperAdmin(users: OsUserRow[]): Promise<boolean> {
-  const id = await sessionUserId();
+  const id = await readOsSessionUserId();
   if (!id) return false;
   const me = users.find((u) => u.id === id);
   return me?.role === 'super_admin';
@@ -164,7 +114,7 @@ export async function bootstrapOsAuth(): Promise<{
 }> {
   await ensureOsSuperAdmin();
   const rows = await liveUsers();
-  const id = await sessionUserId();
+  const id = await readOsSessionUserId();
   const me = id ? (rows.find((u) => u.id === id) ?? null) : null;
   return { users: rows.map(sanitize), currentUser: me ? sanitize(me) : null };
 }
@@ -180,20 +130,12 @@ export async function signInOs(
   if (!match || !verifyPassword(password, match.passwordHash)) {
     return { ok: false, error: 'Incorrect username or password.' };
   }
-  const store = await cookies();
-  store.set(SESSION_COOKIE, signSession(match.id), {
-    httpOnly: true,
-    sameSite: 'lax',
-    secure: process.env.NODE_ENV === 'production',
-    path: '/',
-    maxAge: SESSION_MAX_AGE,
-  });
+  await setOsSessionCookie(match.id);
   return { ok: true, user: sanitize(match) };
 }
 
 export async function signOutOs(): Promise<void> {
-  const store = await cookies();
-  store.delete(SESSION_COOKIE);
+  await clearOsSessionCookie();
 }
 
 export async function createOsUser(input: {

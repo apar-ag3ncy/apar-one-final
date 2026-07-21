@@ -56,6 +56,7 @@ import {
 } from './auth/session-store';
 import { formatINR, initials, parseRupeesToPaise } from './format';
 import { Icon, type IconName } from './icons';
+import { PortalAccountsCard } from './portal-accounts-card';
 import type { Client, Project, Vendor } from './types';
 import type { VendorStore } from './auth/vendor-store';
 import {
@@ -4503,6 +4504,7 @@ function TeamPanel({ currentUserRole }: { currentUserRole?: 'super_admin' | 'adm
   return (
     <div>
       <TeamPoliciesCard canManage={canManage} />
+      <PortalAccountsCard canManage={canManage} />
       <div className="settings-row" style={{ alignItems: 'flex-start' }}>
         <div>
           <div className="label">Team members</div>

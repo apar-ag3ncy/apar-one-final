@@ -1,5 +1,7 @@
 import { sql } from 'drizzle-orm';
-import { jsonb, pgTable, text, timestamp, uniqueIndex } from 'drizzle-orm/pg-core';
+import { index, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
+
+import { employees } from './employees';
 
 /**
  * Server-backed OS user accounts (the /os lock-screen login).
@@ -27,6 +29,15 @@ export const osUsers = pgTable(
     role: text().notNull().default('admin'), // 'super_admin' | 'admin' | 'user'
     tone: text().notNull().default('#B5391E'),
     permissions: jsonb().notNull().default({}),
+    /**
+     * Employee portal linkage (0082). NULL ⇒ a staff/OS account (the /os lock
+     * screen). Non-NULL ⇒ an employee portal account, and the row IS the
+     * answer to "which employee is this session?". One live account per
+     * employee (partial-unique index). Deliberately not `employees.userId`,
+     * which is a uuid FK to auth.users for the unbuilt Supabase Auth path —
+     * os_users.id is TEXT.
+     */
+    employeeId: uuid().references(() => employees.id, { onDelete: 'set null' }),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp({ withTimezone: true })
       .notNull()
@@ -39,6 +50,11 @@ export const osUsers = pgTable(
     uniqueIndex('os_users_username_lower_unique')
       .on(sql`lower(${t.username})`)
       .where(sql`${t.deletedAt} is null`),
+    // One live portal account per employee.
+    uniqueIndex('os_users_employee_id_unique')
+      .on(t.employeeId)
+      .where(sql`${t.employeeId} is not null and ${t.deletedAt} is null`),
+    index('os_users_employee_id_idx').on(t.employeeId),
   ],
 );
 

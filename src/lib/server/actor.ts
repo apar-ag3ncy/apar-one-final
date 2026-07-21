@@ -1,84 +1,172 @@
 import 'server-only';
 
-import { sql } from 'drizzle-orm';
+import { cache } from 'react';
+import { and, eq, isNull, sql } from 'drizzle-orm';
 
-import { CAPABILITY_SET, type CurrentUserContext } from '@/lib/rbac';
+import { CAPABILITY_SET, type Capability, type CurrentUserContext, type Role } from '@/lib/rbac';
 import { maybeCurrentUser } from '@/lib/auth';
 import { db } from '@/lib/db/client';
+import { employees, osUsers, roleCapabilities } from '@/lib/db/schema';
+import { readOsSessionUserId } from '@/lib/server/os-session';
 
 /**
- * Server actions call this at the top to get an actor context. Until the
- * Supabase Auth UI is wired up (P1.11 consumer), we fall back to a dev
- * "admin" context with full capabilities so the rest of the system is
- * exercisable end-to-end. In production this MUST be replaced with strict
- * `currentUser()` — see TODO below.
+ * Resolve the actor for a server action, in priority order:
  *
- * Once the login flow + middleware land, delete this file and have every
- * server action call `currentUser()` from `@/lib/auth` directly.
+ *   1. A real Supabase Auth session (`currentUser()`).
+ *   2. The OS session (`apar_os_uid`) — the login that actually works today:
+ *        - an EMPLOYEE portal account (os_users.employee_id set) resolves to a
+ *          least-privileged `employee` context;
+ *        - a STAFF/OS account resolves to full capabilities, exactly matching
+ *          the behaviour those users have today.
+ *   3. The dev-admin fallback (see below).
+ *   4. Otherwise: unauthenticated.
+ *
+ * ── The dev-admin fallback ──────────────────────────────────────────────────
+ * Historically this returned a FULL-capability admin for anyone with no
+ * session, and the switch is opt-OUT (`ALLOW_DEV_ADMIN !== 'false'`), so an
+ * anonymous caller could invoke any server action as an admin — server actions
+ * are plain HTTP POSTs, so the UI never gated this.
+ *
+ * Step 2 is what makes closing that hole possible. The fallback is deliberately
+ * left in place here so this change is backward-compatible on its own; it is
+ * closed by setting `ALLOW_DEV_ADMIN='false'` on the deployment, which is safe
+ * only once OS/portal logins are in use (they now are, via step 2).
+ *
+ * NOTE: the employee portal does NOT rely on this function for identity — see
+ * `server/portal/session.ts`, which never falls back to anything.
  */
 
-const DEV_ADMIN_USER_ID = '00000000-0000-0000-0000-000000000000';
+/**
+ * Sentinel `users.id` used as the actor id for OS-authenticated requests.
+ *
+ * `os_users.id` is TEXT ('super-admin' / 'u-<hex>') and can never be written to
+ * a uuid actor column (`created_by`, `posted_by`, `audit_log.actor_id`, …), and
+ * there is no `users` row per OS account. Reusing the existing sentinel keeps
+ * attribution continuous with every row already written this way.
+ *
+ * Portal writes additionally record the REAL actor as an employee uuid in
+ * purpose-built columns (e.g. `leaves.decided_by_employee_id`).
+ */
+const SYSTEM_USER_ID = '00000000-0000-0000-0000-000000000000';
 
-// Whether the dev admin row has been ensured in this server process.
-// Reset on every cold start; cheap one-shot upsert per process. Without
-// this, transactions.posted_by (and any other column that FK's to
-// users.id) blows up when the dev fallback hands the sentinel id to a
-// fresh / un-migrated DB.
-let devAdminEnsured = false;
+// Whether the sentinel user row has been ensured in this server process.
+// Reset on every cold start; cheap one-shot upsert per process. Without this,
+// transactions.posted_by (and any other column that FK's to users.id) blows up
+// when the sentinel id is handed to a fresh / un-migrated DB.
+let systemUserEnsured = false;
 
-async function ensureDevAdmin(): Promise<void> {
-  if (devAdminEnsured) return;
+async function ensureSystemUser(): Promise<void> {
+  if (systemUserEnsured) return;
   try {
     await db.execute(sql`
       INSERT INTO "users" (id, role, full_name, email)
       VALUES (
-        ${DEV_ADMIN_USER_ID},
+        ${SYSTEM_USER_ID},
         'admin',
         'Dev Admin (system)',
         'dev-admin@apar.local'
       )
       ON CONFLICT (id) DO NOTHING
     `);
-    devAdminEnsured = true;
+    systemUserEnsured = true;
   } catch {
     // Best-effort: if the upsert itself fails (network blip, RLS in some
     // future config), still mark ensured so we don't hammer it on every
     // call. The downstream FK violation will surface a clear message.
-    devAdminEnsured = true;
+    systemUserEnsured = true;
   }
 }
 
-export async function getActorContext(): Promise<CurrentUserContext> {
+/** Capabilities granted to a role, read from the live role_capabilities table. */
+async function capabilitiesForRole(role: Role): Promise<ReadonlySet<Capability>> {
+  const rows = await db
+    .select({ capability: roleCapabilities.capability, granted: roleCapabilities.granted })
+    .from(roleCapabilities)
+    .where(eq(roleCapabilities.role, role));
+
+  const granted = new Set<Capability>();
+  for (const row of rows) {
+    if (row.granted && CAPABILITY_SET.has(row.capability as Capability)) {
+      granted.add(row.capability as Capability);
+    }
+  }
+  return granted;
+}
+
+/**
+ * Resolve an actor from the OS session cookie, or null when there isn't a
+ * usable one.
+ *
+ * Security-critical branch: an account WITH an employee link that no longer
+ * resolves to a live, active employee returns null — it must never fall through
+ * to the staff branch, which would hand a separated employee full capabilities.
+ */
+async function resolveOsActor(): Promise<CurrentUserContext | null> {
+  const osUserId = await readOsSessionUserId();
+  if (!osUserId) return null;
+
+  const [row] = await db
+    .select({
+      employeeId: osUsers.employeeId,
+      employeeStatus: employees.status,
+      employeeArchived: employees.isArchived,
+      employeeDeletedAt: employees.deletedAt,
+    })
+    .from(osUsers)
+    .leftJoin(employees, eq(employees.id, osUsers.employeeId))
+    .where(and(eq(osUsers.id, osUserId), isNull(osUsers.deletedAt)))
+    .limit(1);
+
+  if (!row) return null;
+
+  if (row.employeeId) {
+    // Employee portal account — least privilege.
+    const stillEmployed =
+      row.employeeDeletedAt === null &&
+      row.employeeArchived === false &&
+      row.employeeStatus !== 'separated';
+    if (!stillEmployed) return null;
+
+    await ensureSystemUser();
+    return {
+      userId: SYSTEM_USER_ID,
+      role: 'employee',
+      capabilities: await capabilitiesForRole('employee'),
+    };
+  }
+
+  // Staff / OS account — unchanged behaviour: full capabilities, gated in the
+  // OS UI by the client-side `can()` permission map.
+  await ensureSystemUser();
+  return {
+    userId: SYSTEM_USER_ID,
+    role: 'admin',
+    capabilities: CAPABILITY_SET,
+  };
+}
+
+/**
+ * Memoised per request: ~89 modules call this, and some call it more than once
+ * per action, so without this the session lookup would re-run each time.
+ */
+export const getActorContext = cache(async (): Promise<CurrentUserContext> => {
   const real = await maybeCurrentUser();
   if (real) return real;
 
-  // TODO(human): remove this dev fallback once Supabase Auth UI is wired.
-  // The fallback returns a fully-capable admin context so server actions
-  // remain exercisable from the dev browser session that does not yet
-  // carry a real auth cookie.
-  //
-  // In production the fallback is OFF by default. Set ALLOW_DEV_ADMIN=true
-  // on the deployment to opt-in (e.g. internal demo of apar-one-final
-  // before the Supabase Auth login flow is wired up). Anyone hitting the
-  // app gets admin capabilities, so only enable on private deployments.
-  // TEMPORARY (no login flow yet): fall back to the dev-admin in ALL
-  // environments so the deployed app is usable without a session. Opt OUT by
-  // setting ALLOW_DEV_ADMIN='false' once a real Supabase Auth login lands — at
-  // which point this whole dev fallback should be deleted (see file header).
-  const allowDevAdmin = process.env.ALLOW_DEV_ADMIN !== 'false';
+  const osActor = await resolveOsActor();
+  if (osActor) return osActor;
 
+  // Opt-OUT dev fallback — see the file header. Set ALLOW_DEV_ADMIN='false' on
+  // the deployment to require a real session everywhere.
+  const allowDevAdmin = process.env.ALLOW_DEV_ADMIN !== 'false';
   if (allowDevAdmin) {
-    // Self-heal: if migration 0014 hasn't been applied for any reason
-    // (fresh clone, devs forgot npm run db:migrate), insert the sentinel
-    // user row on-demand so transactions.posted_by FKs resolve.
-    await ensureDevAdmin();
+    await ensureSystemUser();
     return {
-      userId: DEV_ADMIN_USER_ID,
+      userId: SYSTEM_USER_ID,
       role: 'admin',
       capabilities: CAPABILITY_SET,
     };
   }
 
-  // In production, require a real session.
   throw new (await import('@/lib/errors')).AppError('unauthenticated', 'No active session.');
-}
+});

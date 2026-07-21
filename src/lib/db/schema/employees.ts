@@ -67,6 +67,15 @@ export const employees = pgTable(
     // Values are validated by the zod enum in create/updateEmployee.
     payrollGrade: text(),
     reportsToEmployeeId: uuid(), // self-FK, added in migration
+    /**
+     * Employee-portal role (0082): 'member' | 'manager'. DB CHECK-constrained.
+     * Managers get the pending-leave queue over their reporting SUBTREE
+     * (transitive `reportsToEmployeeId`); members only ever see themselves.
+     * Defaults to 'member' so everyone is least-privileged until promoted.
+     * Not derived from `designation` — a job-title rename must never silently
+     * grant approval rights.
+     */
+    portalRole: text().notNull().default('member'),
     joinedOn: date().notNull(),
     // Optional date of birth (no time component). Nullable for legacy rows
     // and employees who haven't supplied it.
