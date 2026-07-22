@@ -9,8 +9,8 @@ export const metadata: Metadata = {
 };
 
 export default async function LoginPage() {
-  // Already signed in → straight to the portal.
-  if (await currentEmployee()) redirect('/me');
+  // Already signed in → straight to the employee workspace.
+  if (await currentEmployee()) redirect('/os');
 
   return (
     <Card>

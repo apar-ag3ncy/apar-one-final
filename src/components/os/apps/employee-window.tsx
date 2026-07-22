@@ -157,7 +157,7 @@ export function EmployeeWindow({ employeeId, onClose }: EmployeeWindowProps) {
     { value: 'attendance', label: 'Attendance & leaves' },
     { value: 'achievements', label: 'Achievements', count: achievements.length },
     { value: 'activity', label: 'Activity' },
-    { value: 'portal', label: 'Portal access' },
+    { value: 'portal', label: 'OS access' },
     { value: 'settings', label: 'Settings' },
   ];
 
@@ -1063,10 +1063,11 @@ function PortalAccessBody({ employeeId, canEdit }: { employeeId: string; canEdit
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14, maxWidth: 460 }}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-        <SubHeading>Employee self-service portal</SubHeading>
+        <SubHeading>Employee OS access</SubHeading>
         <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0 }}>
-          Lets this employee sign in at <code>/login</code> to see their own leaves, reimbursements,
-          payslips and documents. Their sign-in id is their work email.
+          Lets this employee sign in at <code>/login</code> to their own restricted workspace —
+          tasks, team and attendance. No accounting or admin surfaces are shown. Their sign-in id is
+          their work email.
         </p>
       </div>
 
