@@ -134,6 +134,26 @@ async function requireOsOperator(): Promise<string | null> {
   return currentOsUserId();
 }
 
+// One-shot per server process: ensure the portal password column exists.
+// Mirrors ensureDevAdmin / ensureOsSuperAdmin in this codebase — a self-heal
+// for when a migration (here 0082) hasn't been applied to the target database
+// (this project's deploy does not run drizzle-kit migrate). `ADD COLUMN IF NOT
+// EXISTS` is idempotent and safe to race across cold starts.
+let portalColumnEnsured = false;
+async function ensureEmployeePortalColumn(): Promise<void> {
+  if (portalColumnEnsured) return;
+  try {
+    await db.execute(sql`ALTER TABLE "employees" ADD COLUMN IF NOT EXISTS "password_hash" text`);
+    portalColumnEnsured = true;
+  } catch (e) {
+    // Best-effort. Mark ensured so we don't hammer DDL on every request; if the
+    // column genuinely can't be added (e.g. missing privilege) the caller's
+    // query surfaces a clean error and we fall back to applying 0082 manually.
+    console.error('[employee-auth] ensureEmployeePortalColumn failed', e);
+    portalColumnEnsured = true;
+  }
+}
+
 /* -------------------------------------------------------------------------- */
 /* Employee-facing actions                                                    */
 /* -------------------------------------------------------------------------- */
@@ -146,6 +166,8 @@ export async function signInEmployee(
   if (!normalized || !password) {
     return { ok: false, error: 'Enter your work email and password.' };
   }
+
+  await ensureEmployeePortalColumn();
 
   let row: typeof employees.$inferSelect | undefined;
   try {
@@ -194,6 +216,8 @@ export async function currentEmployee(): Promise<SafeEmployee | null> {
   const id = verifySignedSession(store.get(SESSION_COOKIE)?.value);
   if (!id) return null;
 
+  await ensureEmployeePortalColumn();
+
   const [row] = await db
     .select()
     .from(employees)
@@ -214,6 +238,8 @@ export async function changeMyPassword(
   if (newPassword.length < MIN_PASSWORD_LENGTH) {
     return { ok: false, error: `Password must be at least ${MIN_PASSWORD_LENGTH} characters.` };
   }
+
+  await ensureEmployeePortalColumn();
 
   const [row] = await db
     .select()
@@ -244,6 +270,8 @@ export async function getEmployeePortalAccess(
 > {
   if (!(await requireOsOperator())) return { ok: false, error: 'Not authorized.' };
 
+  await ensureEmployeePortalColumn();
+
   const [row] = await db
     .select({ workEmail: employees.workEmail, passwordHash: employees.passwordHash })
     .from(employees)
@@ -264,6 +292,8 @@ export async function setEmployeePassword(
   if (newPassword.length < MIN_PASSWORD_LENGTH) {
     return { ok: false, error: `Password must be at least ${MIN_PASSWORD_LENGTH} characters.` };
   }
+
+  await ensureEmployeePortalColumn();
 
   const [row] = await db
     .select({ id: employees.id, workEmail: employees.workEmail })
@@ -286,6 +316,7 @@ export async function setEmployeePassword(
 /** HR revokes portal access (clears the password). Operator-only. */
 export async function revokeEmployeePortalAccess(employeeId: string): Promise<Result> {
   if (!(await requireOsOperator())) return { ok: false, error: 'Not authorized.' };
+  await ensureEmployeePortalColumn();
   await db
     .update(employees)
     .set({ passwordHash: null })
