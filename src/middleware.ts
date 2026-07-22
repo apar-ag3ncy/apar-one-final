@@ -1,33 +1,30 @@
 import { NextResponse, type NextRequest } from 'next/server';
 
 /**
- * Role-aware routing per AUDIT-GAPS §3 + SPEC-AMENDMENT-001 §8.
+ * Employee-portal gate.
  *
- *   - role = 'employee' → only /me/* and /(auth) are accessible. Any other
- *     path 302s to /me. /os/* explicitly redirects (the OS surface is
- *     non-employee territory; SPEC §8.2).
- *   - role != 'employee' → /me/* is currently allowed for debugging; gate
- *     strictly once dev can issue mismatched roles.
+ * `/me/*` requires an employee session. This is a fast, edge-safe pre-check on
+ * the presence of the signed session cookie (`apar_emp_uid`) — no crypto here.
+ * The authoritative verification (signature + live/active employee) happens in
+ * the (portal) layout via `currentEmployee()`, which redirects to /login if the
+ * cookie is forged or stale. A missing cookie short-circuits to /login here so
+ * we don't even render the portal shell.
  *
- * Until Backend ships full auth, the middleware reads an `apar_role`
- * cookie set by the demo bootstrap. Swap the cookie read for a real
- * session lookup once it lands — no other changes needed.
+ * The old `apar_role` demo cookie is gone — auth is now the real employee
+ * session (see src/lib/server/employee-auth.ts).
  */
+const EMP_SESSION_COOKIE = 'apar_emp_uid';
+
 export function middleware(request: NextRequest) {
-  const role = request.cookies.get('apar_role')?.value ?? 'admin';
   const pathname = request.nextUrl.pathname;
 
   if (pathname.startsWith('/me')) {
-    return NextResponse.next();
-  }
-
-  // Employees never reach the OS. /os/* is the explicit case but the
-  // condition below also covers the home page and every legacy dashboard
-  // route for portal-only users.
-  if (role === 'employee' && !pathname.startsWith('/api') && pathname !== '/login') {
-    const url = request.nextUrl.clone();
-    url.pathname = '/me';
-    return NextResponse.redirect(url);
+    const hasSession = Boolean(request.cookies.get(EMP_SESSION_COOKIE)?.value);
+    if (!hasSession) {
+      const url = request.nextUrl.clone();
+      url.pathname = '/login';
+      return NextResponse.redirect(url);
+    }
   }
 
   return NextResponse.next();

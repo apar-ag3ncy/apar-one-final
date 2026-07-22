@@ -153,6 +153,19 @@ async function currentSuperAdmin(users: OsUserRow[]): Promise<boolean> {
   return me?.role === 'super_admin';
 }
 
+/**
+ * The signed-in OS operator's id, or null. Verifies the session signature AND
+ * that the id still maps to a live account. Exported so other server modules
+ * (e.g. employee-auth's HR password management) can gate on "an authenticated
+ * operator is present" — the one real auth boundary in the app today.
+ */
+export async function currentOsUserId(): Promise<string | null> {
+  const id = await sessionUserId();
+  if (!id) return null;
+  const rows = await liveUsers();
+  return rows.some((u) => u.id === id) ? id : null;
+}
+
 /* -------------------------------------------------------------------------- */
 /* Actions                                                                    */
 /* -------------------------------------------------------------------------- */

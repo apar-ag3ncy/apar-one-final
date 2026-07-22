@@ -1,35 +1,41 @@
 'use client';
 
 import { useState, useTransition } from 'react';
+import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Separator } from '@/components/ui/separator';
+import { signInEmployee } from '@/lib/server/employee-auth';
 
 export function LoginForm() {
+  const router = useRouter();
   const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
-  // TODO(backend): replace with magic-link server action that calls Supabase Auth.
-  const handleMagicLink = (event: React.FormEvent<HTMLFormElement>) => {
+  const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!email) {
-      toast.error('Enter your work email.');
+    setError(null);
+    if (!email || !password) {
+      setError('Enter your work email and password.');
       return;
     }
-    startTransition(() => {
-      toast.info('Magic-link wiring pending (Backend agent).');
+    startTransition(async () => {
+      const result = await signInEmployee(email, password);
+      if (result.ok) {
+        toast.success(`Welcome, ${result.employee.fullName.split(' ')[0]}`);
+        router.replace('/me');
+      } else {
+        setError(result.error);
+        setPassword('');
+      }
     });
   };
 
-  // TODO(backend): replace with Google OAuth redirect via Supabase Auth.
-  const handleGoogle = () => {
-    toast.info('Google sign-in wiring pending (Backend agent).');
-  };
-
   return (
-    <form onSubmit={handleMagicLink} className="flex flex-col gap-4" noValidate>
+    <form onSubmit={handleSubmit} className="flex flex-col gap-4" noValidate>
       <div className="flex flex-col gap-2">
         <Label htmlFor="email">Work email</Label>
         <Input
@@ -40,22 +46,41 @@ export function LoginForm() {
           required
           placeholder="you@apar.example"
           value={email}
-          onChange={(event) => setEmail(event.target.value)}
+          onChange={(event) => {
+            setEmail(event.target.value);
+            if (error) setError(null);
+          }}
           disabled={isPending}
         />
       </div>
-      <Button type="submit" className="w-full" disabled={isPending}>
-        {isPending ? 'Sending link…' : 'Email me a magic link'}
-      </Button>
-      <div className="relative my-2">
-        <Separator />
-        <span className="bg-background text-muted-foreground absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 px-2 text-xs tracking-wide uppercase">
-          or
-        </span>
+      <div className="flex flex-col gap-2">
+        <Label htmlFor="password">Password</Label>
+        <Input
+          id="password"
+          name="password"
+          type="password"
+          autoComplete="current-password"
+          required
+          placeholder="Enter your password"
+          value={password}
+          onChange={(event) => {
+            setPassword(event.target.value);
+            if (error) setError(null);
+          }}
+          disabled={isPending}
+        />
       </div>
-      <Button type="button" variant="outline" className="w-full" onClick={handleGoogle}>
-        Continue with Google
+      {error ? (
+        <p role="alert" className="text-destructive text-sm">
+          {error}
+        </p>
+      ) : null}
+      <Button type="submit" className="w-full" disabled={isPending}>
+        {isPending ? 'Signing in…' : 'Sign in'}
       </Button>
+      <p className="text-muted-foreground text-center text-xs">
+        Forgot your password? Ask HR to reset it.
+      </p>
     </form>
   );
 }

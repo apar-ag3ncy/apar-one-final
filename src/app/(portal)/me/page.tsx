@@ -13,13 +13,15 @@ import { Button } from '@/components/ui/button';
 import { StatusBadge } from '@/components/shared/status-badge';
 import { formatINR } from '@/components/shared/format-inr';
 
+import { currentEmployee } from '@/lib/server/employee-auth';
+
 export const metadata: Metadata = { title: 'Apar self-service · Home' };
 
-// TODO(backend): replace with the logged-in employee + their KPIs.
-const ME = {
-  fullName: 'Anjali Mehta',
-  designation: 'Senior Designer',
-  joinedAt: '2024-04-01',
+// Identity comes from the signed-in employee (below). The figures here are
+// still sample data — the per-employee leave / reimbursement / earnings /
+// attendance aggregates are wired in a follow-up. Labelled as sample in the UI
+// so a real teammate is never shown fabricated numbers as their own.
+const SAMPLE = {
   leaveBalance: { casual: 6, earned: 12, sick: 7 },
   reimbursementsPendingPaise: 4_250_00n,
   earningsYtdPaise: 5_85_000_00n,
@@ -37,40 +39,50 @@ const PROJECTS = [
   { code: 'PRJ-26-019', name: 'Atlas brand refresh', role: 'Designer' },
 ];
 
-export default function MeHomePage() {
+export default async function MeHomePage() {
+  const employee = await currentEmployee();
+  // The (portal) layout already gates on the session; this is a safety net.
+  const fullName = employee?.fullName ?? 'there';
+  const designation = employee?.designation ?? 'Team member';
+  const joinedOn = employee?.joinedOn ?? null;
+
   return (
     <div className="space-y-6">
       <header>
-        <h1 className="text-2xl font-semibold tracking-tight">
-          Hello, {ME.fullName.split(' ')[0]}
-        </h1>
+        <h1 className="text-2xl font-semibold tracking-tight">Hello, {fullName.split(' ')[0]}</h1>
         <p className="text-muted-foreground text-sm">
-          {ME.designation} · Joined {ME.joinedAt}
+          {designation}
+          {joinedOn ? ` · Joined ${joinedOn}` : ''}
         </p>
       </header>
+
+      <p className="text-muted-foreground rounded-md border border-dashed px-3 py-2 text-xs">
+        Sample figures — your live leave, reimbursement, earnings and attendance numbers are being
+        wired next.
+      </p>
 
       <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <Kpi
           label="Attendance MTD"
-          value={`${ME.attendancePctMtd}%`}
+          value={`${SAMPLE.attendancePctMtd}%`}
           icon={CheckCircle2Icon}
           href="#"
         />
         <Kpi
           label="Leave balance"
-          value={`${ME.leaveBalance.casual + ME.leaveBalance.earned + ME.leaveBalance.sick} days`}
+          value={`${SAMPLE.leaveBalance.casual + SAMPLE.leaveBalance.earned + SAMPLE.leaveBalance.sick} days`}
           icon={CalendarDaysIcon}
           href="/me/leaves"
         />
         <Kpi
           label="Pending reimbursements"
-          value={formatINR(ME.reimbursementsPendingPaise)}
+          value={formatINR(SAMPLE.reimbursementsPendingPaise)}
           icon={ReceiptIcon}
           href="/me/reimbursements"
         />
         <Kpi
           label="Earnings YTD"
-          value={formatINR(ME.earningsYtdPaise)}
+          value={formatINR(SAMPLE.earningsYtdPaise)}
           icon={AwardIcon}
           href="/me/payslips"
         />

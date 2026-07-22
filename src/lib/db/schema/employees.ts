@@ -47,6 +47,10 @@ export const employees = pgTable(
     // auth.users is not Drizzle-enforceable; the invite trigger in
     // Phase 3 keeps this in sync.
     userId: uuid(),
+    // Employee portal login (Supabase-free). scrypt hash 'scrypt$salt$hash'
+    // set by src/lib/server/employee-auth.ts; NULL = no portal access yet.
+    // Login identifier is `workEmail`. Never returned to the client.
+    passwordHash: text(),
 
     // Identity (free of KYC)
     employeeCode: text().notNull().unique(), // 'APAR-001'; immutable once issued

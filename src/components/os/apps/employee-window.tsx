@@ -34,6 +34,11 @@ import { isNewJoiner, probationDaysLeft } from '@/lib/employee-badges';
 import { TASK_PRIORITY_EMOJI } from '@/lib/project-status';
 import { addEmployeeAchievement } from '@/lib/server/entities/employee-achievements';
 import {
+  getEmployeePortalAccess,
+  setEmployeePassword,
+  revokeEmployeePortalAccess,
+} from '@/lib/server/employee-auth';
+import {
   listEmployeeProjects,
   listEmployeeProjectTasks,
   type EmployeeProjectMembershipRow,
@@ -152,6 +157,7 @@ export function EmployeeWindow({ employeeId, onClose }: EmployeeWindowProps) {
     { value: 'attendance', label: 'Attendance & leaves' },
     { value: 'achievements', label: 'Achievements', count: achievements.length },
     { value: 'activity', label: 'Activity' },
+    { value: 'portal', label: 'Portal access' },
     { value: 'settings', label: 'Settings' },
   ];
 
@@ -251,6 +257,7 @@ export function EmployeeWindow({ employeeId, onClose }: EmployeeWindowProps) {
           />
         ) : null}
         {tab === 'activity' ? <ActivityBody employeeId={employee.id} /> : null}
+        {tab === 'portal' ? <PortalAccessBody employeeId={employee.id} canEdit={canEdit} /> : null}
         {tab === 'settings' ? (
           <EntitySettingsSection
             kind="employee"
@@ -972,6 +979,180 @@ function SubHeading({ children }: { children: React.ReactNode }) {
     >
       {children}
     </h3>
+  );
+}
+
+function PortalAccessBody({ employeeId, canEdit }: { employeeId: string; canEdit: boolean }) {
+  const [state, setState] = useState<
+    | { kind: 'loading' }
+    | { kind: 'error'; message: string }
+    | { kind: 'ready'; workEmail: string | null; hasPassword: boolean }
+  >({ kind: 'loading' });
+  const [pw, setPw] = useState('');
+  const [pw2, setPw2] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    getEmployeePortalAccess(employeeId)
+      .then((r) => {
+        if (cancelled) return;
+        if (r.ok) setState({ kind: 'ready', workEmail: r.workEmail, hasPassword: r.hasPassword });
+        else setState({ kind: 'error', message: r.error });
+      })
+      .catch((e: unknown) => {
+        if (cancelled) return;
+        setState({ kind: 'error', message: e instanceof Error ? e.message : 'Failed to load' });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [employeeId]);
+
+  async function submit() {
+    setMsg(null);
+    if (pw.length < 6) {
+      setMsg({ kind: 'err', text: 'Password must be at least 6 characters.' });
+      return;
+    }
+    if (pw !== pw2) {
+      setMsg({ kind: 'err', text: 'Passwords do not match.' });
+      return;
+    }
+    setBusy(true);
+    try {
+      const r = await setEmployeePassword(employeeId, pw);
+      if (r.ok) {
+        setMsg({ kind: 'ok', text: 'Portal password set. Share it with the employee to sign in.' });
+        setPw('');
+        setPw2('');
+        setState((s) => (s.kind === 'ready' ? { ...s, hasPassword: true } : s));
+      } else {
+        setMsg({ kind: 'err', text: r.error });
+      }
+    } catch (e: unknown) {
+      setMsg({ kind: 'err', text: e instanceof Error ? e.message : 'Something went wrong.' });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function revoke() {
+    setBusy(true);
+    setMsg(null);
+    try {
+      const r = await revokeEmployeePortalAccess(employeeId);
+      if (r.ok) {
+        setMsg({ kind: 'ok', text: 'Portal access revoked.' });
+        setState((s) => (s.kind === 'ready' ? { ...s, hasPassword: false } : s));
+      } else {
+        setMsg({ kind: 'err', text: r.error });
+      }
+    } catch (e: unknown) {
+      setMsg({ kind: 'err', text: e instanceof Error ? e.message : 'Something went wrong.' });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (state.kind === 'loading') return <p style={{ color: 'var(--text-muted)' }}>Loading…</p>;
+  if (state.kind === 'error')
+    return <p style={{ color: 'var(--text-error, #c33)' }}>{state.message}</p>;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14, maxWidth: 460 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <SubHeading>Employee self-service portal</SubHeading>
+        <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0 }}>
+          Lets this employee sign in at <code>/login</code> to see their own leaves, reimbursements,
+          payslips and documents. Their sign-in id is their work email.
+        </p>
+      </div>
+
+      <div
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 4,
+          padding: 12,
+          borderRadius: 10,
+          border: '1px solid var(--border)',
+          background: 'var(--content-2)',
+        }}
+      >
+        <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Login (work email)</div>
+        <div style={{ fontSize: 13 }}>
+          {state.workEmail ?? (
+            <span style={{ color: 'var(--text-error, #c33)' }}>
+              No work email set — add one on the profile first.
+            </span>
+          )}
+        </div>
+        <div style={{ marginTop: 6, fontSize: 12 }}>
+          Status:{' '}
+          <strong
+            style={{ color: state.hasPassword ? 'var(--accent, #2a7)' : 'var(--text-muted)' }}
+          >
+            {state.hasPassword ? 'Portal access enabled' : 'No portal access yet'}
+          </strong>
+        </div>
+      </div>
+
+      {!canEdit ? (
+        <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+          You do not have edit permission for employees.
+        </p>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <SubHeading>{state.hasPassword ? 'Reset password' : 'Set password'}</SubHeading>
+          <input
+            className="input"
+            type="password"
+            autoComplete="new-password"
+            value={pw}
+            onChange={(e) => setPw(e.target.value)}
+            placeholder="New password (min 6 characters)"
+            disabled={busy || !state.workEmail}
+          />
+          <input
+            className="input"
+            type="password"
+            autoComplete="new-password"
+            value={pw2}
+            onChange={(e) => setPw2(e.target.value)}
+            placeholder="Confirm password"
+            disabled={busy || !state.workEmail}
+          />
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <button
+              className="btn primary"
+              type="button"
+              onClick={() => void submit()}
+              disabled={busy || !state.workEmail || pw.length === 0}
+            >
+              {busy ? 'Saving…' : state.hasPassword ? 'Reset password' : 'Set password'}
+            </button>
+            {state.hasPassword ? (
+              <button className="btn" type="button" onClick={() => void revoke()} disabled={busy}>
+                Revoke access
+              </button>
+            ) : null}
+          </div>
+        </div>
+      )}
+
+      {msg ? (
+        <div
+          style={{
+            fontSize: 12,
+            color: msg.kind === 'ok' ? 'var(--accent, #2a7)' : 'var(--text-error, #c33)',
+          }}
+        >
+          {msg.text}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
