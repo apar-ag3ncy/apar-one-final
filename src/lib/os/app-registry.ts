@@ -36,7 +36,8 @@ export type AppCapability =
   | 'app.admin_console.view'
   | 'app.my_tasks.view'
   | 'app.my_team.view'
-  | 'app.my_attendance.view';
+  | 'app.my_attendance.view'
+  | 'app.my_leaves.view';
 
 export type AppRegistryEntry = {
   id: AppId;
@@ -165,6 +166,12 @@ export const APP_REGISTRY: Readonly<Record<AppId, AppRegistryEntry>> = {
     showInDock: true,
     minimumCapability: 'app.my_attendance.view',
     defaultSize: { width: 760, height: 560 },
+  },
+  my_leaves: {
+    id: 'my_leaves',
+    showInDock: true,
+    minimumCapability: 'app.my_leaves.view',
+    defaultSize: { width: 820, height: 620 },
   },
 };
 

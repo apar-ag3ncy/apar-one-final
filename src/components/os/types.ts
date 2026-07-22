@@ -40,7 +40,8 @@ export type AppId =
   // restricted OS user). Self-scoped, non-financial. See EMPLOYEE_APP_IDS.
   | 'my_tasks'
   | 'my_team'
-  | 'my_attendance';
+  | 'my_attendance'
+  | 'my_leaves';
 
 export type AppDef = {
   id: AppId;

@@ -5,15 +5,25 @@ import type { SafeEmployee } from '@/lib/server/employee-auth';
 // The employee workspace reads must be self-scoped: no employee session ⇒ no
 // data and no query at all. Mock the session resolver + db.select/update chains.
 // `vi.hoisted` so the mocks exist when the hoisted vi.mock factory runs.
-const { selectMock, updateMock } = vi.hoisted(() => ({ selectMock: vi.fn(), updateMock: vi.fn() }));
+const { selectMock, updateMock, insertMock } = vi.hoisted(() => ({
+  selectMock: vi.fn(),
+  updateMock: vi.fn(),
+  insertMock: vi.fn(),
+}));
 vi.mock('@/lib/server/employee-auth', () => ({ currentEmployee: vi.fn() }));
-vi.mock('@/lib/db/client', () => ({ db: { select: selectMock, update: updateMock } }));
+vi.mock('@/lib/db/client', () => ({
+  db: { select: selectMock, update: updateMock, insert: insertMock },
+}));
 
 import {
   listMyTeam,
   listMyTasks,
   updateMyTaskStatus,
   getMyAttendance,
+  applyMyLeave,
+  listMyLeaves,
+  cancelMyLeave,
+  decideMyReportLeave,
 } from '@/lib/server/employee-portal';
 import { currentEmployee } from '@/lib/server/employee-auth';
 
@@ -52,6 +62,11 @@ function updateChain() {
     where: vi.fn(() => Promise.resolve(undefined)),
   };
   return chain;
+}
+
+// insert().values() resolves.
+function insertChain() {
+  return { values: vi.fn(() => Promise.resolve(undefined)) };
 }
 
 describe('employee-portal — self-scoped reads', () => {
@@ -216,5 +231,102 @@ describe('getMyAttendance — self-scoped, default-filled', () => {
     expect(res?.summary.workFromHome).toBe(1);
     expect(res?.summary.absent).toBe(0);
     expect(res?.summary.present).toBeGreaterThan(0); // default present days exist
+  });
+});
+
+describe('leaves — self-scoped apply/cancel + manager decide', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('applyMyLeave rejects with no session (no insert)', async () => {
+    mockEmployee.mockResolvedValue(null);
+    const r = await applyMyLeave({
+      fromDate: '2026-08-01',
+      toDate: '2026-08-02',
+      kind: 'casual',
+      reason: 'x',
+    });
+    expect(r.ok).toBe(false);
+    expect(insertMock).not.toHaveBeenCalled();
+  });
+
+  it('applyMyLeave rejects to-before-from and empty reason', async () => {
+    mockEmployee.mockResolvedValue(EMPLOYEE);
+    expect(
+      (
+        await applyMyLeave({
+          fromDate: '2026-08-05',
+          toDate: '2026-08-01',
+          kind: 'casual',
+          reason: 'trip',
+        })
+      ).ok,
+    ).toBe(false);
+    expect(
+      (
+        await applyMyLeave({
+          fromDate: '2026-08-01',
+          toDate: '2026-08-02',
+          kind: 'casual',
+          reason: '  ',
+        })
+      ).ok,
+    ).toBe(false);
+    expect(insertMock).not.toHaveBeenCalled();
+  });
+
+  it('applyMyLeave inserts a valid request', async () => {
+    mockEmployee.mockResolvedValue(EMPLOYEE);
+    insertMock.mockReturnValue(insertChain());
+    const r = await applyMyLeave({
+      fromDate: '2026-08-01',
+      toDate: '2026-08-03',
+      kind: 'sick',
+      reason: 'fever',
+    });
+    expect(r).toEqual({ ok: true });
+    expect(insertMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('listMyLeaves returns [] with no session', async () => {
+    mockEmployee.mockResolvedValue(null);
+    expect(await listMyLeaves()).toEqual([]);
+    expect(selectMock).not.toHaveBeenCalled();
+  });
+
+  it('cancelMyLeave refuses a non-pending leave', async () => {
+    mockEmployee.mockResolvedValue(EMPLOYEE);
+    selectMock.mockReturnValue(chainResolving([{ status: 'approved' }]));
+    updateMock.mockReturnValue(updateChain());
+    const r = await cancelMyLeave('leave-1');
+    expect(r.ok).toBe(false);
+    expect(updateMock).not.toHaveBeenCalled();
+  });
+
+  it('cancelMyLeave cancels a pending leave', async () => {
+    mockEmployee.mockResolvedValue(EMPLOYEE);
+    selectMock.mockReturnValue(chainResolving([{ status: 'applied' }]));
+    updateMock.mockReturnValue(updateChain());
+    const r = await cancelMyLeave('leave-1');
+    expect(r).toEqual({ ok: true });
+    expect(updateMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('decideMyReportLeave rejects a leave not from a direct report', async () => {
+    mockEmployee.mockResolvedValue(EMPLOYEE);
+    selectMock.mockReturnValue(chainResolving([])); // join matched nothing
+    const r = await decideMyReportLeave('leave-x', true);
+    expect(r.ok).toBe(false);
+    expect(updateMock).not.toHaveBeenCalled();
+  });
+
+  it('decideMyReportLeave approves a pending report leave', async () => {
+    mockEmployee.mockResolvedValue(EMPLOYEE);
+    selectMock.mockReturnValue(chainResolving([{ status: 'applied' }]));
+    updateMock.mockReturnValue(updateChain());
+    const r = await decideMyReportLeave('leave-1', true);
+    expect(r).toEqual({ ok: true });
+    expect(updateMock).toHaveBeenCalledTimes(1);
   });
 });

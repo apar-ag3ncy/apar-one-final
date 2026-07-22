@@ -82,6 +82,13 @@ export const APPS: readonly AppDef[] = [
     size: { w: 760, h: 560 },
     accent: '#C46A28',
   },
+  {
+    id: 'my_leaves',
+    name: 'Leaves',
+    icon: 'filetext',
+    size: { w: 820, h: 620 },
+    accent: '#7A2D4E',
+  },
 ] as const;
 
 export const CLIENTS: readonly Client[] = [

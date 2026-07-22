@@ -68,7 +68,12 @@ import { VendorLedgerWindow } from './apps/vendor-ledger-window';
 import { UniversalLedgerWindow } from './apps/universal-ledger-window';
 import { DashboardWindow } from './apps/dashboard-window';
 import { OfficeApp } from './apps/office-app';
-import { MyTasksWindow, MyTeamWindow, MyAttendanceWindow } from './apps/employee-apps';
+import {
+  MyTasksWindow,
+  MyTeamWindow,
+  MyAttendanceWindow,
+  MyLeavesWindow,
+} from './apps/employee-apps';
 import { signOutEmployee, type SafeEmployee } from '@/lib/server/employee-auth';
 import {
   getMyPreferences,
@@ -921,6 +926,8 @@ function Desktop({
               return <MyTeamWindow />;
             case 'my_attendance':
               return <MyAttendanceWindow />;
+            case 'my_leaves':
+              return <MyLeavesWindow />;
             case 'trash':
               return (
                 <div className="main">

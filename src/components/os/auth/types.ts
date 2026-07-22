@@ -18,6 +18,7 @@ export const EMPLOYEE_APP_IDS: ReadonlySet<AppId> = new Set<AppId>([
   'my_tasks',
   'my_team',
   'my_attendance',
+  'my_leaves',
 ]);
 
 export type AppPermission = {

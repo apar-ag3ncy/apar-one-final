@@ -9,7 +9,7 @@
 import { and, asc, desc, eq, isNull, sql } from 'drizzle-orm';
 
 import { db } from '@/lib/db/client';
-import { attendanceRecords, employees, projectTasks, projects } from '@/lib/db/schema';
+import { attendanceRecords, employees, leaves, projectTasks, projects } from '@/lib/db/schema';
 import { defaultStatusForDate } from '@/lib/attendance-defaults';
 import { currentEmployee } from './employee-auth';
 import type { AttendanceStatus } from './entities/attendance';
@@ -371,5 +371,184 @@ export async function resetMyPreferences(): Promise<void> {
     await db.update(employees).set({ uiPrefs: null }).where(eq(employees.id, me.id));
   } catch (e) {
     console.error('[resetMyPreferences] failed', e);
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Leaves — employee apply/list/cancel + manager review/decide (self-scoped)  */
+/* -------------------------------------------------------------------------- */
+
+export type LeaveKind =
+  | 'earned'
+  | 'casual'
+  | 'sick'
+  | 'unpaid'
+  | 'comp_off'
+  | 'maternity'
+  | 'paternity';
+export type LeaveStatus = 'applied' | 'approved' | 'rejected' | 'cancelled';
+
+export type MyLeave = {
+  id: string;
+  kind: LeaveKind;
+  fromDate: string;
+  toDate: string;
+  days: string;
+  status: LeaveStatus;
+  reason: string | null;
+};
+export type TeamLeaveRequest = MyLeave & { employeeId: string; employeeName: string };
+
+const LEAVE_KINDS: ReadonlySet<string> = new Set([
+  'earned',
+  'casual',
+  'sick',
+  'unpaid',
+  'comp_off',
+  'maternity',
+  'paternity',
+]);
+
+const leaveCols = {
+  id: leaves.id,
+  kind: leaves.kind,
+  fromDate: leaves.fromDate,
+  toDate: leaves.toDate,
+  days: leaves.days,
+  status: leaves.status,
+  reason: leaves.notes,
+};
+
+/** Apply for leave — from/to dates + kind + reason. Files it as 'applied' for
+ * the signed-in employee. Self-scoped. */
+export async function applyMyLeave(input: {
+  fromDate: string;
+  toDate: string;
+  kind: string;
+  reason: string;
+}): Promise<EmployeeActionResult> {
+  const me = await currentEmployee();
+  if (!me) return { ok: false, error: 'Your session has expired. Sign in again.' };
+
+  const { fromDate, toDate, kind } = input;
+  const reason = (input.reason ?? '').trim();
+  if (!DATE_RE.test(fromDate) || !DATE_RE.test(toDate)) {
+    return { ok: false, error: 'Pick valid from and to dates.' };
+  }
+  if (toDate < fromDate) {
+    return { ok: false, error: 'The “to” date can’t be before the “from” date.' };
+  }
+  if (!LEAVE_KINDS.has(kind)) return { ok: false, error: 'Pick a leave type.' };
+  if (!reason) return { ok: false, error: 'Please add a short reason.' };
+
+  const days =
+    Math.round(
+      (new Date(`${toDate}T00:00:00Z`).getTime() - new Date(`${fromDate}T00:00:00Z`).getTime()) /
+        86_400_000,
+    ) + 1;
+  if (days < 1 || days > 90)
+    return { ok: false, error: 'Leave length looks off — check the dates.' };
+
+  try {
+    await db.insert(leaves).values({
+      employeeId: me.id,
+      kind: kind as LeaveKind,
+      fromDate,
+      toDate,
+      days: String(days),
+      status: 'applied',
+      notes: reason,
+    });
+    return { ok: true };
+  } catch (e) {
+    console.error('[applyMyLeave] failed', e);
+    return { ok: false, error: 'Couldn’t submit your leave. Please try again.' };
+  }
+}
+
+/** The signed-in employee's own leaves (most recent first). Self-scoped. */
+export async function listMyLeaves(): Promise<MyLeave[]> {
+  const me = await currentEmployee();
+  if (!me) return [];
+  const rows = await db
+    .select(leaveCols)
+    .from(leaves)
+    .where(and(eq(leaves.employeeId, me.id), isNull(leaves.deletedAt)))
+    .orderBy(desc(leaves.fromDate))
+    .limit(60);
+  return rows.map((r) => ({ ...r, kind: r.kind as LeaveKind, status: r.status as LeaveStatus }));
+}
+
+/** Withdraw a still-pending leave. Self-scoped. */
+export async function cancelMyLeave(id: string): Promise<EmployeeActionResult> {
+  const me = await currentEmployee();
+  if (!me) return { ok: false, error: 'Your session has expired. Sign in again.' };
+  try {
+    const [row] = await db
+      .select({ status: leaves.status })
+      .from(leaves)
+      .where(and(eq(leaves.id, id), eq(leaves.employeeId, me.id), isNull(leaves.deletedAt)))
+      .limit(1);
+    if (!row) return { ok: false, error: 'Leave not found.' };
+    if (row.status !== 'applied')
+      return { ok: false, error: 'Only a pending leave can be cancelled.' };
+    await db.update(leaves).set({ status: 'cancelled' }).where(eq(leaves.id, id));
+    return { ok: true };
+  } catch (e) {
+    console.error('[cancelMyLeave] failed', e);
+    return { ok: false, error: 'Couldn’t cancel the leave. Please try again.' };
+  }
+}
+
+/** Pending leaves filed by the signed-in employee's DIRECT reports (manager
+ * view). Empty for non-managers. Self-scoped. */
+export async function listMyTeamLeaveRequests(): Promise<TeamLeaveRequest[]> {
+  const me = await currentEmployee();
+  if (!me) return [];
+  const rows = await db
+    .select({ ...leaveCols, employeeId: leaves.employeeId, employeeName: employees.fullName })
+    .from(leaves)
+    .innerJoin(employees, eq(employees.id, leaves.employeeId))
+    .where(
+      and(
+        eq(employees.reportsToEmployeeId, me.id),
+        eq(leaves.status, 'applied'),
+        isNull(leaves.deletedAt),
+      ),
+    )
+    .orderBy(desc(leaves.appliedAt))
+    .limit(60);
+  return rows.map((r) => ({ ...r, kind: r.kind as LeaveKind, status: r.status as LeaveStatus }));
+}
+
+/** Approve/reject a leave filed by one of the signed-in employee's direct
+ * reports (manager decision). Verifies the report relationship. Self-scoped. */
+export async function decideMyReportLeave(
+  id: string,
+  accept: boolean,
+): Promise<EmployeeActionResult> {
+  const me = await currentEmployee();
+  if (!me) return { ok: false, error: 'Your session has expired. Sign in again.' };
+  try {
+    const [row] = await db
+      .select({ status: leaves.status })
+      .from(leaves)
+      .innerJoin(employees, eq(employees.id, leaves.employeeId))
+      .where(
+        and(eq(leaves.id, id), eq(employees.reportsToEmployeeId, me.id), isNull(leaves.deletedAt)),
+      )
+      .limit(1);
+    if (!row) return { ok: false, error: 'Request not found or not one of your reports’.' };
+    if (row.status !== 'applied') return { ok: false, error: 'This request was already decided.' };
+    // approvedBy is a users FK; a manager is an employee, so we record the
+    // decision + timestamp only (not a users id).
+    await db
+      .update(leaves)
+      .set({ status: accept ? 'approved' : 'rejected', approvedAt: new Date() })
+      .where(eq(leaves.id, id));
+    return { ok: true };
+  } catch (e) {
+    console.error('[decideMyReportLeave] failed', e);
+    return { ok: false, error: 'Couldn’t update the request. Please try again.' };
   }
 }

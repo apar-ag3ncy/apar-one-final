@@ -504,6 +504,55 @@ export async function listEmployeeLeaves(employeeId: string): Promise<readonly L
   }));
 }
 
+export type LeaveReviewRow = {
+  id: string;
+  employeeId: string;
+  employeeName: string;
+  kind: LeaveRow['kind'];
+  fromDate: string;
+  toDate: string;
+  days: string;
+  status: LeaveRow['status'];
+  notes: string | null;
+  appliedAt: string;
+};
+
+/** Every leave across employees for the admin Attendance review panel —
+ * pending first, then most-recently applied. */
+export async function listLeavesForReview(): Promise<readonly LeaveReviewRow[]> {
+  await getActorContext();
+  const rows = await db
+    .select({
+      id: leaves.id,
+      employeeId: leaves.employeeId,
+      employeeName: employees.fullName,
+      kind: leaves.kind,
+      fromDate: leaves.fromDate,
+      toDate: leaves.toDate,
+      days: leaves.days,
+      status: leaves.status,
+      notes: leaves.notes,
+      appliedAt: leaves.appliedAt,
+    })
+    .from(leaves)
+    .innerJoin(employees, eq(employees.id, leaves.employeeId))
+    .where(isNull(leaves.deletedAt))
+    .orderBy(sql`case when ${leaves.status} = 'applied' then 0 else 1 end`, desc(leaves.appliedAt))
+    .limit(100);
+  return rows.map((r) => ({
+    id: r.id,
+    employeeId: r.employeeId,
+    employeeName: r.employeeName,
+    kind: r.kind,
+    fromDate: r.fromDate,
+    toDate: r.toDate,
+    days: r.days,
+    status: r.status,
+    notes: r.notes,
+    appliedAt: r.appliedAt instanceof Date ? r.appliedAt.toISOString() : String(r.appliedAt),
+  }));
+}
+
 /* -------------------------------------------------------------------------- */
 /* Salary structures                                                           */
 /* -------------------------------------------------------------------------- */

@@ -18,6 +18,11 @@ import {
   type EmployeeAttendanceMatrixRow,
 } from '@/lib/server/entities/attendance';
 import { defaultStatusForDate } from '@/lib/attendance-defaults';
+import {
+  approveLeave,
+  listLeavesForReview,
+  type LeaveReviewRow,
+} from '@/lib/server/entities/payroll';
 import { todayIST } from '@/lib/ist-date';
 import { osActions } from '@/lib/os/store';
 import { ExportAttendanceDialog } from '@/components/attendance/export-attendance-dialog';
@@ -438,6 +443,8 @@ export function AttendanceApp({ canEdit = false }: { canEdit?: boolean }) {
         <Legend />
       </div>
 
+      <LeavesReviewPanel canEdit={canEdit} />
+
       {/* Matrix */}
       <div style={{ flex: 1, overflow: 'auto', padding: 12 }}>
         {rows === null ? (
@@ -746,6 +753,160 @@ function Legend() {
       <span style={{ marginLeft: 6, color: 'var(--text-dim, var(--text-muted))' }}>
         Faded = default · solid = override · click to pick status · right-click to reset
       </span>
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Leaves review — pending leave requests surfaced in the Attendance app.     */
+/* -------------------------------------------------------------------------- */
+
+const LEAVE_STATUS_ADMIN: Record<string, { label: string; color: string; bg: string }> = {
+  applied: { label: 'Pending', color: '#d97706', bg: '#d9770622' },
+  approved: { label: 'Approved', color: '#16a34a', bg: '#16a34a22' },
+  rejected: { label: 'Rejected', color: '#dc2626', bg: '#dc262622' },
+  cancelled: { label: 'Cancelled', color: 'var(--text-muted)', bg: 'var(--content-2)' },
+};
+
+function LeavesReviewPanel({ canEdit }: { canEdit: boolean }) {
+  const [rows, setRows] = useState<readonly LeaveReviewRow[] | null>(null);
+  const [open, setOpen] = useState(false);
+  const [busyId, setBusyId] = useState<string | null>(null);
+
+  const load = () => {
+    listLeavesForReview()
+      .then(setRows)
+      .catch(() => setRows([]));
+  };
+  useEffect(() => {
+    load();
+  }, []);
+
+  const decide = async (id: string, accept: boolean) => {
+    setBusyId(id);
+    try {
+      await approveLeave({ id, accept });
+      load();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Couldn’t update the leave.');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  if (rows === null || rows.length === 0) return null;
+  const pendingCount = rows.filter((r) => r.status === 'applied').length;
+
+  return (
+    <div style={{ borderBottom: '1px solid var(--border)', background: 'var(--content-2)' }}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          width: '100%',
+          padding: '8px 20px',
+          background: 'transparent',
+          border: 'none',
+          cursor: 'pointer',
+          color: 'var(--text)',
+          fontSize: 12,
+          fontWeight: 600,
+        }}
+      >
+        <span style={{ color: 'var(--text-muted)' }}>{open ? '▾' : '▸'}</span>
+        Leave requests
+        {pendingCount > 0 ? (
+          <span
+            style={{
+              fontSize: 11,
+              fontWeight: 600,
+              padding: '1px 8px',
+              borderRadius: 999,
+              background: '#d9770622',
+              color: '#d97706',
+            }}
+          >
+            {pendingCount} pending
+          </span>
+        ) : (
+          <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 400 }}>
+            none pending
+          </span>
+        )}
+      </button>
+      {open ? (
+        <div style={{ maxHeight: 220, overflow: 'auto', padding: '0 20px 12px' }}>
+          {rows.map((r) => {
+            const st = LEAVE_STATUS_ADMIN[r.status] ?? {
+              label: r.status,
+              color: 'var(--text-muted)',
+              bg: 'var(--content-2)',
+            };
+            return (
+              <div
+                key={r.id}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 10,
+                  padding: '8px 0',
+                  borderTop: '1px solid var(--border)',
+                }}
+              >
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 500 }}>
+                    {r.employeeName}
+                    <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>
+                      {' · '}
+                      {r.fromDate === r.toDate ? r.fromDate : `${r.fromDate} → ${r.toDate}`} ·{' '}
+                      {r.days}d · {r.kind}
+                    </span>
+                  </div>
+                  {r.notes ? (
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{r.notes}</div>
+                  ) : null}
+                </div>
+                <span
+                  style={{
+                    flexShrink: 0,
+                    fontSize: 11,
+                    fontWeight: 600,
+                    padding: '2px 8px',
+                    borderRadius: 999,
+                    color: st.color,
+                    background: st.bg,
+                  }}
+                >
+                  {st.label}
+                </span>
+                {canEdit && r.status === 'applied' ? (
+                  <>
+                    <button
+                      className="btn"
+                      type="button"
+                      disabled={busyId === r.id}
+                      onClick={() => void decide(r.id, false)}
+                    >
+                      Reject
+                    </button>
+                    <button
+                      className="btn primary"
+                      type="button"
+                      disabled={busyId === r.id}
+                      onClick={() => void decide(r.id, true)}
+                    >
+                      Approve
+                    </button>
+                  </>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
     </div>
   );
 }

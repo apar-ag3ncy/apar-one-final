@@ -9,11 +9,18 @@ import { useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 
 import {
+  applyMyLeave,
+  cancelMyLeave,
+  decideMyReportLeave,
   getMyAttendance,
+  listMyLeaves,
   listMyTasks,
   listMyTeam,
+  listMyTeamLeaveRequests,
   updateMyTaskStatus,
   type MyAttendance,
+  type MyLeave,
+  type TeamLeaveRequest,
   type TeamMember,
 } from '@/lib/server/employee-portal';
 import type {
@@ -666,5 +673,302 @@ function Chip({ label, n, status }: { label: string; n: number; status: string }
       <span>{n}</span>
       <span style={{ opacity: 0.85 }}>{label}</span>
     </div>
+  );
+}
+
+/* ------------------------------- My Leaves -------------------------------- */
+
+const LEAVE_KIND_LABEL: Record<string, string> = {
+  earned: 'Earned',
+  casual: 'Casual',
+  sick: 'Sick',
+  unpaid: 'Unpaid',
+  comp_off: 'Comp-off',
+  maternity: 'Maternity',
+  paternity: 'Paternity',
+};
+const LEAVE_KIND_OPTIONS = [
+  'casual',
+  'sick',
+  'earned',
+  'comp_off',
+  'unpaid',
+  'maternity',
+  'paternity',
+] as const;
+const LEAVE_STATUS: Record<string, { label: string; color: string; bg: string }> = {
+  applied: { label: 'Pending', color: '#d97706', bg: '#d9770622' },
+  approved: { label: 'Approved', color: '#16a34a', bg: '#16a34a22' },
+  rejected: { label: 'Rejected', color: '#dc2626', bg: '#dc262622' },
+  cancelled: { label: 'Cancelled', color: 'var(--text-muted)', bg: 'var(--content-2)' },
+};
+
+function fmtRange(from: string, to: string): string {
+  return from === to ? formatDay(from) : `${formatDay(from)} → ${formatDay(to)}`;
+}
+
+function SubHead({ children }: { children: React.ReactNode }) {
+  return (
+    <div
+      style={{
+        fontSize: 11,
+        textTransform: 'uppercase',
+        letterSpacing: '0.06em',
+        color: 'var(--text-muted)',
+        fontWeight: 600,
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+const fieldLabel: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 3,
+  fontSize: 11,
+  color: 'var(--text-muted)',
+};
+
+export function MyLeavesWindow() {
+  const today = useMemo(() => {
+    const n = new Date();
+    return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-${String(
+      n.getDate(),
+    ).padStart(2, '0')}`;
+  }, []);
+
+  const [mine, setMine] = useState<MyLeave[] | null>(null);
+  const [team, setTeam] = useState<TeamLeaveRequest[]>([]);
+  const [from, setFrom] = useState(today);
+  const [to, setTo] = useState(today);
+  const [kind, setKind] = useState<string>('casual');
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const reload = async () => {
+    const [m, t] = await Promise.all([listMyLeaves(), listMyTeamLeaveRequests()]);
+    setMine(m);
+    setTeam(t);
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([listMyLeaves(), listMyTeamLeaveRequests()])
+      .then(([m, t]) => {
+        if (cancelled) return;
+        setMine(m);
+        setTeam(t);
+      })
+      .catch(() => {
+        if (!cancelled) setMine([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const submit = async () => {
+    setBusy(true);
+    const r = await applyMyLeave({ fromDate: from, toDate: to, kind, reason });
+    setBusy(false);
+    if (r.ok) {
+      toast.success('Leave submitted for approval.');
+      setReason('');
+      void reload();
+    } else {
+      toast.error(r.error);
+    }
+  };
+
+  const cancel = async (id: string) => {
+    const r = await cancelMyLeave(id);
+    if (r.ok) {
+      setMine(
+        (cur) => cur?.map((l) => (l.id === id ? { ...l, status: 'cancelled' as const } : l)) ?? cur,
+      );
+    } else {
+      toast.error(r.error);
+    }
+  };
+
+  const decide = async (id: string, accept: boolean) => {
+    const r = await decideMyReportLeave(id, accept);
+    if (r.ok) {
+      setTeam((cur) => cur.filter((t) => t.id !== id));
+    } else {
+      toast.error(r.error);
+    }
+  };
+
+  return (
+    <WindowShell title="Leaves" sub="apply for leave and track approvals">
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 18, maxWidth: 640 }}>
+        <section
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 10,
+            padding: 14,
+            border: '1px solid var(--border)',
+            borderRadius: 12,
+            background: 'var(--content-2)',
+          }}
+        >
+          <div style={{ fontSize: 13, fontWeight: 600 }}>Apply for leave</div>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+            <label style={fieldLabel}>
+              From
+              <input
+                className="input"
+                type="date"
+                value={from}
+                max={to}
+                onChange={(e) => setFrom(e.target.value)}
+              />
+            </label>
+            <label style={fieldLabel}>
+              To
+              <input
+                className="input"
+                type="date"
+                value={to}
+                min={from}
+                onChange={(e) => setTo(e.target.value)}
+              />
+            </label>
+            <label style={fieldLabel}>
+              Type
+              <select className="input" value={kind} onChange={(e) => setKind(e.target.value)}>
+                {LEAVE_KIND_OPTIONS.map((k) => (
+                  <option key={k} value={k}>
+                    {LEAVE_KIND_LABEL[k]}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <input
+            className="input"
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="Reason (e.g. family function, medical…)"
+          />
+          <div>
+            <button
+              className="btn primary"
+              type="button"
+              onClick={() => void submit()}
+              disabled={busy || !reason.trim()}
+            >
+              {busy ? 'Submitting…' : 'Submit request'}
+            </button>
+          </div>
+        </section>
+
+        {team.length > 0 ? (
+          <section style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <SubHead>Requests to review ({team.length})</SubHead>
+            <div
+              style={{ border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}
+            >
+              {team.map((t, i) => (
+                <div
+                  key={t.id}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 10,
+                    padding: '10px 12px',
+                    borderTop: i === 0 ? 'none' : '1px solid var(--border)',
+                  }}
+                >
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 500 }}>{t.employeeName}</div>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                      {fmtRange(t.fromDate, t.toDate)} · {t.days}d ·{' '}
+                      {LEAVE_KIND_LABEL[t.kind] ?? t.kind}
+                      {t.reason ? ` · ${t.reason}` : ''}
+                    </div>
+                  </div>
+                  <button className="btn" type="button" onClick={() => void decide(t.id, false)}>
+                    Reject
+                  </button>
+                  <button
+                    className="btn primary"
+                    type="button"
+                    onClick={() => void decide(t.id, true)}
+                  >
+                    Approve
+                  </button>
+                </div>
+              ))}
+            </div>
+          </section>
+        ) : null}
+
+        <section style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <SubHead>My leaves</SubHead>
+          {mine === null ? (
+            <Muted>Loading…</Muted>
+          ) : mine.length === 0 ? (
+            <Muted>No leave requests yet.</Muted>
+          ) : (
+            <div
+              style={{ border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}
+            >
+              {mine.map((l, i) => {
+                const st = LEAVE_STATUS[l.status] ?? {
+                  label: l.status,
+                  color: 'var(--text-muted)',
+                  bg: 'var(--content-2)',
+                };
+                return (
+                  <div
+                    key={l.id}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 10,
+                      padding: '10px 12px',
+                      borderTop: i === 0 ? 'none' : '1px solid var(--border)',
+                    }}
+                  >
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 500 }}>
+                        {fmtRange(l.fromDate, l.toDate)}
+                      </div>
+                      <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                        {l.days}d · {LEAVE_KIND_LABEL[l.kind] ?? l.kind}
+                        {l.reason ? ` · ${l.reason}` : ''}
+                      </div>
+                    </div>
+                    <span
+                      style={{
+                        flexShrink: 0,
+                        fontSize: 11,
+                        fontWeight: 600,
+                        padding: '2px 8px',
+                        borderRadius: 999,
+                        color: st.color,
+                        background: st.bg,
+                      }}
+                    >
+                      {st.label}
+                    </span>
+                    {l.status === 'applied' ? (
+                      <button className="btn" type="button" onClick={() => void cancel(l.id)}>
+                        Cancel
+                      </button>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </section>
+      </div>
+    </WindowShell>
   );
 }
