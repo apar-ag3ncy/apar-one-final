@@ -6,12 +6,17 @@
 // returns that employee's own data or explicitly-safe, non-financial fields.
 // Nothing here exposes compensation, KYC, ledgers, or any accounting surface.
 
-import { and, asc, eq, isNull, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, isNull, sql } from 'drizzle-orm';
 
 import { db } from '@/lib/db/client';
-import { employees } from '@/lib/db/schema';
+import { employees, projectTasks, projects } from '@/lib/db/schema';
 import { currentEmployee } from './employee-auth';
-import { listEmployeeProjectTasks, type EmployeeProjectTaskRow } from './entities/project-tasks';
+import type {
+  EmployeeProjectTaskRow,
+  ProjectTaskPriority,
+  ProjectTaskSource,
+  ProjectTaskStatus,
+} from './entities/project-tasks';
 
 export type TeamMember = {
   id: string;
@@ -55,10 +60,64 @@ export async function listMyTeam(): Promise<TeamMember[]> {
   return rows.map((r) => ({ ...r, isSelf: r.id === me.id }));
 }
 
-/** The signed-in employee's own project tasks. Self-scoped — never another
- * employee's. Returns [] when there is no employee session. */
+/**
+ * The signed-in employee's own project tasks. Self-scoped — never another
+ * employee's. Returns [] when there is no employee session.
+ *
+ * Deliberately SELF-CONTAINED: it queries directly with `me.id` from the
+ * session and does NOT call the admin `listEmployeeProjectTasks`, because that
+ * routes through `getActorContext()` — which now denies employee sessions
+ * (see actor.ts). The employee data layer must never acquire an admin actor.
+ * Shape mirrors EmployeeProjectTaskRow.
+ */
 export async function listMyTasks(): Promise<readonly EmployeeProjectTaskRow[]> {
   const me = await currentEmployee();
   if (!me) return [];
-  return listEmployeeProjectTasks(me.id);
+
+  const statusOrder = sql<number>`case ${projectTasks.status}
+    when 'todo' then 0 when 'in_progress' then 1
+    when 'little_delayed' then 2 when 'delayed' then 3
+    when 'done' then 4 when 'cancelled' then 5 else 6 end`;
+
+  const rows = await db
+    .select({
+      taskId: projectTasks.id,
+      title: projectTasks.title,
+      status: projectTasks.status,
+      priority: projectTasks.priority,
+      source: projectTasks.source,
+      projectId: projectTasks.projectId,
+      projectName: projects.name,
+      projectCode: projects.code,
+      dueOn: projectTasks.dueOn,
+      completedAt: projectTasks.completedAt,
+    })
+    .from(projectTasks)
+    .innerJoin(projects, eq(projects.id, projectTasks.projectId))
+    .where(
+      and(
+        // Multi-assignee (0061): membership lives in project_task_assignees.
+        sql`exists (
+          select 1 from project_task_assignees a
+          where a.task_id = ${projectTasks.id} and a.employee_id = ${me.id}
+        )`,
+        isNull(projectTasks.deletedAt),
+      ),
+    )
+    .orderBy(asc(statusOrder), desc(projectTasks.updatedAt));
+
+  return rows.map(
+    (r): EmployeeProjectTaskRow => ({
+      taskId: r.taskId,
+      title: r.title,
+      status: r.status as ProjectTaskStatus,
+      priority: (r.priority as ProjectTaskPriority | null) ?? null,
+      source: (r.source as ProjectTaskSource | null) ?? null,
+      projectId: r.projectId,
+      projectName: r.projectName,
+      projectCode: r.projectCode,
+      dueOn: r.dueOn,
+      completedAt: r.completedAt ? r.completedAt.toISOString() : null,
+    }),
+  );
 }

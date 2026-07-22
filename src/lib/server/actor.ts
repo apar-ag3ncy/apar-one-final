@@ -52,6 +52,24 @@ export async function getActorContext(): Promise<CurrentUserContext> {
   const real = await maybeCurrentUser();
   if (real) return real;
 
+  // Employees must NEVER receive an admin actor context. The employee workspace
+  // (/os → EmployeeDesktop) is a separate, employee-session surface; every
+  // admin/finance server action authorizes through this function, so an
+  // employee-session request that reaches one — e.g. a hand-crafted POST to a
+  // salary/KYC/ledger action, bypassing the employee UI — is denied here. This
+  // is the SERVER-SIDE enforcement of the "no accounting for employees"
+  // boundary that the UI split alone cannot guarantee. Employee self-service
+  // reads (src/lib/server/employee-portal.ts) are self-contained and never call
+  // getActorContext, so this denial does not affect the employee workspace.
+  // Dynamic import keeps the module graph acyclic and defers to request time.
+  const { currentEmployee } = await import('@/lib/server/employee-auth');
+  if (await currentEmployee()) {
+    throw new (await import('@/lib/errors')).AppError(
+      'forbidden',
+      'Employees do not have access to this resource.',
+    );
+  }
+
   // TODO(human): remove this dev fallback once Supabase Auth UI is wired.
   // The fallback returns a fully-capable admin context so server actions
   // remain exercisable from the dev browser session that does not yet
