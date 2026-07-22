@@ -156,10 +156,10 @@ export async function signInEmployee(
       .limit(1);
     row = rows[0];
   } catch (e) {
-    // TEMP diagnostic: surface the real DB error so we can confirm whether the
-    // 0082 migration (password_hash) reached prod. Reverted after diagnosis.
+    // A DB error here (e.g. the password_hash column not yet migrated) must
+    // surface as a clean, uniform failure — never a raw 500 exposing SQL.
     console.error('[signInEmployee] query failed', e);
-    return { ok: false, error: 'DEBUG ' + (e instanceof Error ? e.message : String(e)) };
+    return { ok: false, error: 'Sign-in is temporarily unavailable. Please try again later.' };
   }
 
   // One uniform message whether the email is unknown, has no portal access, or
