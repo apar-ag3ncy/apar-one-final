@@ -64,11 +64,18 @@ function verifyPassword(password: string, stored: string): boolean {
 }
 
 function sessionSecret(): string {
-  return (
-    process.env.OS_SESSION_SECRET ||
-    process.env.SUPABASE_SERVICE_ROLE_KEY ||
-    'apar-os-fallback-secret'
-  );
+  const secret = process.env.OS_SESSION_SECRET || process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+  if (!secret) {
+    // Fail loudly in production rather than sign operator sessions with a
+    // public source constant — with a guessable super-admin id, a constant
+    // secret would let anyone forge a super-admin cookie. Reached only when a
+    // request carries an OS cookie, so this never breaks anonymous traffic.
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('No session secret configured. Set OS_SESSION_SECRET in production.');
+    }
+    return 'apar-os-dev-only-secret';
+  }
+  return secret;
 }
 
 function signSession(id: string): string {
@@ -164,6 +171,20 @@ export async function currentOsUserId(): Promise<string | null> {
   if (!id) return null;
   const rows = await liveUsers();
   return rows.some((u) => u.id === id) ? id : null;
+}
+
+/**
+ * Whether the signed-in OS operator is an admin / super-admin (not a plain
+ * 'user'). Server-side gate for operator-privileged actions — e.g. setting an
+ * employee's portal password — since the OS RBAC permission map is otherwise
+ * only enforced client-side.
+ */
+export async function isOsAdminOperator(): Promise<boolean> {
+  const id = await sessionUserId();
+  if (!id) return false;
+  const rows = await liveUsers();
+  const me = rows.find((u) => u.id === id);
+  return me?.role === 'super_admin' || me?.role === 'admin';
 }
 
 /* -------------------------------------------------------------------------- */

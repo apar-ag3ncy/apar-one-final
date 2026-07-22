@@ -1,36 +1,46 @@
 'use server';
 
-// Employee portal login — the /me self-service surface.
+// Employee login — the Supabase-free session behind the employee OS workspace
+// (/login → /os → EmployeeDesktop). The old /me portal is deprecated.
 //
-// Deliberately Supabase-free (the platform is moving off Supabase): this
-// mirrors the OS lock-screen auth in `os-auth.ts` — passwords are scrypt-hashed
-// in Postgres (`employees.password_hash`), and a signed, httpOnly cookie carries
-// the session. No `auth.users`, no Supabase client, no `currentUser()`.
+// Mirrors the OS lock-screen auth in `os-auth.ts`: passwords are scrypt-hashed
+// in Postgres (`employees.password_hash`) and a signed, httpOnly cookie carries
+// the session. No `auth.users`, no Supabase client, no `currentUser()`. The
+// session token is BOUND to the current password hash (see session-token.ts),
+// so a password change / reset / revoke invalidates outstanding sessions.
 //
 // Identity: the employee signs in with their **work email**. `password_hash`
-// NULL ⇒ no portal access yet (HR sets an initial password from the OS employee
-// window → Portal access tab). Archived / separated / soft-deleted employees
-// cannot sign in and any live session for them stops resolving.
+// NULL ⇒ no portal access yet (an admin sets an initial password from the OS
+// employee window → OS access tab). Archived / separated / soft-deleted
+// employees cannot sign in and any live session for them stops resolving.
 //
 // Authorization split:
 //   - signInEmployee / signOutEmployee / changeMyPassword → the employee.
-//   - setEmployeePassword / getEmployeePortalAccess → an authenticated OS
-//     operator (verified via the OS session cookie), since HR sets the initial
-//     password. This is the only real auth boundary today (server actions
-//     otherwise run under the dev-admin fallback in actor.ts).
+//   - setEmployeePassword / getEmployeePortalAccess / revoke → an admin OS
+//     operator (isOsAdminOperator), since HR sets/resets the password. Employee
+//     sessions are separately denied an admin actor in actor.ts.
 
-import { randomBytes, scryptSync, timingSafeEqual, createHmac } from 'node:crypto';
+import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 
 import { cookies } from 'next/headers';
 import { and, eq, isNull, sql } from 'drizzle-orm';
 
 import { db } from '@/lib/db/client';
 import { employees } from '@/lib/db/schema';
-import { currentOsUserId } from '@/lib/server/os-auth';
+import { isOsAdminOperator } from '@/lib/server/os-auth';
+import { signToken, splitToken, tokenMatches } from '@/lib/server/session-token';
 
 const SESSION_COOKIE = 'apar_emp_uid';
 const SESSION_MAX_AGE = 60 * 60 * 24 * 30; // 30 days
 const MIN_PASSWORD_LENGTH = 6;
+
+const SESSION_COOKIE_OPTS = {
+  httpOnly: true,
+  sameSite: 'lax' as const,
+  secure: process.env.NODE_ENV === 'production',
+  path: '/',
+  maxAge: SESSION_MAX_AGE,
+};
 
 export type SafeEmployee = {
   id: string;
@@ -69,37 +79,27 @@ function verifyPassword(password: string, stored: string): boolean {
   }
 }
 
-// Dedicated employee-session secret. Falls back to the OS secret, then a
-// constant, so the app still boots in dev without extra env. Set
-// APP_SESSION_SECRET in production (see .env.example).
+// Employee-session HMAC secret. Prefers a dedicated secret, then the OS secret,
+// then the Supabase service-role key so an existing deploy keeps working. In
+// production it refuses to fall through to the public dev constant — fail
+// loudly rather than sign cookies with a source-embedded key anyone could use
+// to forge sessions. (Only reached when a request actually carries a session
+// cookie, so a mis-set env never breaks anonymous/admin traffic.)
 function sessionSecret(): string {
-  return (
+  const secret =
     process.env.APP_SESSION_SECRET ||
     process.env.OS_SESSION_SECRET ||
     process.env.SUPABASE_SERVICE_ROLE_KEY ||
-    'apar-emp-fallback-secret'
-  );
-}
-
-function signSession(id: string): string {
-  const mac = createHmac('sha256', sessionSecret()).update(id).digest('hex');
-  return `${id}.${mac}`;
-}
-
-function verifySignedSession(token: string | undefined): string | null {
-  if (!token) return null;
-  const dot = token.lastIndexOf('.');
-  if (dot <= 0) return null;
-  const id = token.slice(0, dot);
-  const mac = token.slice(dot + 1);
-  const expected = createHmac('sha256', sessionSecret()).update(id).digest('hex');
-  try {
-    const a = Buffer.from(mac, 'hex');
-    const b = Buffer.from(expected, 'hex');
-    return a.length === b.length && timingSafeEqual(a, b) ? id : null;
-  } catch {
-    return null;
+    '';
+  if (!secret) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error(
+        'No session secret configured. Set APP_SESSION_SECRET (or OS_SESSION_SECRET) in production.',
+      );
+    }
+    return 'apar-emp-dev-only-secret';
   }
+  return secret;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -128,10 +128,6 @@ function liveAndActive() {
     eq(employees.isArchived, false),
     sql`${employees.status} <> 'separated'`,
   );
-}
-
-async function requireOsOperator(): Promise<string | null> {
-  return currentOsUserId();
 }
 
 // One-shot per server process: ensure the portal password column exists.
@@ -191,13 +187,11 @@ export async function signInEmployee(
   }
 
   const store = await cookies();
-  store.set(SESSION_COOKIE, signSession(row.id), {
-    httpOnly: true,
-    sameSite: 'lax',
-    secure: process.env.NODE_ENV === 'production',
-    path: '/',
-    maxAge: SESSION_MAX_AGE,
-  });
+  store.set(
+    SESSION_COOKIE,
+    signToken(sessionSecret(), row.id, row.passwordHash),
+    SESSION_COOKIE_OPTS,
+  );
   return { ok: true, employee: sanitize(row) };
 }
 
@@ -213,18 +207,28 @@ export async function signOutEmployee(): Promise<void> {
  */
 export async function currentEmployee(): Promise<SafeEmployee | null> {
   const store = await cookies();
-  const id = verifySignedSession(store.get(SESSION_COOKIE)?.value);
-  if (!id) return null;
+  const parsed = splitToken(store.get(SESSION_COOKIE)?.value);
+  if (!parsed) return null;
 
   await ensureEmployeePortalColumn();
 
   const [row] = await db
     .select()
     .from(employees)
-    .where(and(eq(employees.id, id), liveAndActive()))
+    .where(and(eq(employees.id, parsed.id), liveAndActive()))
     .limit(1);
 
-  return row ? sanitize(row) : null;
+  // Invalid when: no live row, portal access revoked (null hash), or the MAC
+  // doesn't match the CURRENT password hash (password changed/reset since the
+  // token was issued — the token is bound to the hash, so stale ones die).
+  if (
+    !row ||
+    !row.passwordHash ||
+    !tokenMatches(sessionSecret(), parsed.id, row.passwordHash, parsed.mac)
+  ) {
+    return null;
+  }
+  return sanitize(row);
 }
 
 export async function changeMyPassword(
@@ -232,8 +236,8 @@ export async function changeMyPassword(
   newPassword: string,
 ): Promise<Result> {
   const store = await cookies();
-  const id = verifySignedSession(store.get(SESSION_COOKIE)?.value);
-  if (!id) return { ok: false, error: 'Your session has expired. Sign in again.' };
+  const parsed = splitToken(store.get(SESSION_COOKIE)?.value);
+  if (!parsed) return { ok: false, error: 'Your session has expired. Sign in again.' };
 
   if (newPassword.length < MIN_PASSWORD_LENGTH) {
     return { ok: false, error: `Password must be at least ${MIN_PASSWORD_LENGTH} characters.` };
@@ -244,17 +248,26 @@ export async function changeMyPassword(
   const [row] = await db
     .select()
     .from(employees)
-    .where(and(eq(employees.id, id), liveAndActive()))
+    .where(and(eq(employees.id, parsed.id), liveAndActive()))
     .limit(1);
 
-  if (!row || !row.passwordHash || !verifyPassword(currentPassword, row.passwordHash)) {
+  if (
+    !row ||
+    !row.passwordHash ||
+    !tokenMatches(sessionSecret(), parsed.id, row.passwordHash, parsed.mac)
+  ) {
+    return { ok: false, error: 'Your session has expired. Sign in again.' };
+  }
+  if (!verifyPassword(currentPassword, row.passwordHash)) {
     return { ok: false, error: 'Current password is incorrect.' };
   }
 
-  await db
-    .update(employees)
-    .set({ passwordHash: hashPassword(newPassword) })
-    .where(eq(employees.id, id));
+  const newHash = hashPassword(newPassword);
+  await db.update(employees).set({ passwordHash: newHash }).where(eq(employees.id, parsed.id));
+
+  // Re-issue this session bound to the new hash so the user stays signed in;
+  // any OTHER outstanding sessions (bound to the old hash) are now invalid.
+  store.set(SESSION_COOKIE, signToken(sessionSecret(), parsed.id, newHash), SESSION_COOKIE_OPTS);
   return { ok: true };
 }
 
@@ -268,7 +281,7 @@ export async function getEmployeePortalAccess(
 ): Promise<
   { ok: true; workEmail: string | null; hasPassword: boolean } | { ok: false; error: string }
 > {
-  if (!(await requireOsOperator())) return { ok: false, error: 'Not authorized.' };
+  if (!(await isOsAdminOperator())) return { ok: false, error: 'Not authorized.' };
 
   await ensureEmployeePortalColumn();
 
@@ -287,7 +300,7 @@ export async function setEmployeePassword(
   employeeId: string,
   newPassword: string,
 ): Promise<Result> {
-  if (!(await requireOsOperator())) return { ok: false, error: 'Not authorized.' };
+  if (!(await isOsAdminOperator())) return { ok: false, error: 'Not authorized.' };
 
   if (newPassword.length < MIN_PASSWORD_LENGTH) {
     return { ok: false, error: `Password must be at least ${MIN_PASSWORD_LENGTH} characters.` };
@@ -315,7 +328,7 @@ export async function setEmployeePassword(
 
 /** HR revokes portal access (clears the password). Operator-only. */
 export async function revokeEmployeePortalAccess(employeeId: string): Promise<Result> {
-  if (!(await requireOsOperator())) return { ok: false, error: 'Not authorized.' };
+  if (!(await isOsAdminOperator())) return { ok: false, error: 'Not authorized.' };
   await ensureEmployeePortalColumn();
   await db
     .update(employees)

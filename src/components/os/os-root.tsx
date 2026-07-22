@@ -9,7 +9,7 @@ import {
   useSyncExternalStore,
   type CSSProperties,
 } from 'react';
-import { usePathname, useRouter } from 'next/navigation';
+import { usePathname } from 'next/navigation';
 import { APP_REGISTRY, isPortalOnlyRole } from '@/lib/os/app-registry';
 import { osActions, useOsStore, type WindowState } from '@/lib/os/store';
 import { useWindowUrlSync } from '@/lib/url/per-window-nuqs';
@@ -73,18 +73,12 @@ import type { AppDef, AppId, Client, CmdAction, DockBounds, Vendor } from './typ
 export function OsRoot() {
   const { loading, currentUser, signOut } = useAuth();
   const pathname = usePathname();
-  const router = useRouter();
 
-  // SPEC-AMENDMENT-001 §8.2 — employees do NOT get the OS. They live in
-  // Dashboard's `/me` portal. The check is keyed off the user's role
-  // string; today's OS demo role enum only emits super_admin/admin/user
-  // so this is dormant until A's RBAC swap lands `employee`. When the
-  // /me route also exists (B's territory), the redirect actually fires.
-  useEffect(() => {
-    if (currentUser && isPortalOnlyRole(currentUser.role)) {
-      router.replace('/me');
-    }
-  }, [currentUser, router]);
+  // Employee identity is handled at the /os PAGE (a server component), which
+  // renders the separate EmployeeDesktop when an employee session is present
+  // (see src/app/(os)/os/page.tsx). This admin shell only ever renders for
+  // os_users, so the old role==='employee' → /me redirect (removed along with
+  // the /me portal) is no longer needed here.
 
   // Mobile detection works the same whether signed in or not.
   const mobile = useSyncExternalStore(
