@@ -323,3 +323,53 @@ export async function getMyAttendance(month: string, today: string): Promise<MyA
     },
   };
 }
+
+/* -------------------------------------------------------------------------- */
+/* UI preferences (self-scoped) — theme, dock size, accent, …                 */
+/* -------------------------------------------------------------------------- */
+
+/** The signed-in employee's saved OS UI prefs (or null). Self-scoped. */
+export async function getMyPreferences(): Promise<Record<string, unknown> | null> {
+  const me = await currentEmployee();
+  if (!me) return null;
+  try {
+    const [row] = await db
+      .select({ uiPrefs: employees.uiPrefs })
+      .from(employees)
+      .where(eq(employees.id, me.id))
+      .limit(1);
+    const p = row?.uiPrefs;
+    return p && typeof p === 'object' ? (p as Record<string, unknown>) : null;
+  } catch (e) {
+    console.error('[getMyPreferences] failed', e);
+    return null;
+  }
+}
+
+/** Shallow-merge `patch` into the signed-in employee's UI prefs. Self-scoped. */
+export async function saveMyPreferences(patch: Record<string, unknown>): Promise<void> {
+  const me = await currentEmployee();
+  if (!me) return;
+  try {
+    // jsonb `||` is a shallow merge; coalesce covers a first-write NULL.
+    await db
+      .update(employees)
+      .set({
+        uiPrefs: sql`coalesce(${employees.uiPrefs}, '{}'::jsonb) || ${JSON.stringify(patch)}::jsonb`,
+      })
+      .where(eq(employees.id, me.id));
+  } catch (e) {
+    console.error('[saveMyPreferences] failed', e);
+  }
+}
+
+/** Clear the signed-in employee's saved UI prefs (revert to defaults). */
+export async function resetMyPreferences(): Promise<void> {
+  const me = await currentEmployee();
+  if (!me) return;
+  try {
+    await db.update(employees).set({ uiPrefs: null }).where(eq(employees.id, me.id));
+  } catch (e) {
+    console.error('[resetMyPreferences] failed', e);
+  }
+}

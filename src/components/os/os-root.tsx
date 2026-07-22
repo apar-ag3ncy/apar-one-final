@@ -18,7 +18,7 @@ import { EntityMutationGate } from './auth/entity-mutation-gate';
 import { LockScreen } from './auth/lock-screen';
 import { useAuth, SUPER_ADMIN_USER_ID } from './auth/store';
 import { can, emptyPermissions, type User } from './auth/types';
-import { useUserSettings, type UserSettings } from './auth/session-store';
+import { useUserSettings, type PrefsBackend, type UserSettings } from './auth/session-store';
 import { useVendorStore } from './auth/vendor-store';
 import { CommandPalette } from './command-palette';
 import { useBusinessData } from './data-store';
@@ -70,6 +70,11 @@ import { DashboardWindow } from './apps/dashboard-window';
 import { OfficeApp } from './apps/office-app';
 import { MyTasksWindow, MyTeamWindow, MyAttendanceWindow } from './apps/employee-apps';
 import { signOutEmployee, type SafeEmployee } from '@/lib/server/employee-auth';
+import {
+  getMyPreferences,
+  saveMyPreferences,
+  resetMyPreferences,
+} from '@/lib/server/employee-portal';
 import type { AppDef, AppId, Client, CmdAction, DockBounds, Vendor } from './types';
 
 const NOOP_DISPLAY_NAME = () => {};
@@ -223,7 +228,24 @@ function Desktop({
   onDisplayNameChange: (fullName: string) => void;
 }) {
   // Per-user settings (theme, dock size, dock gap, accent, default app).
-  const { settings, setSettings, resetSettings, settingsLoaded } = useUserSettings(user.id);
+  // Employees persist to their own `employees.ui_prefs` (the operator prefs
+  // table denies employee sessions); operators use the default backend. So a
+  // teammate's theme is remembered on their account, applied on next login.
+  const prefsBackend = useMemo<PrefsBackend | undefined>(
+    () =>
+      user.role === 'employee'
+        ? {
+            load: () => getMyPreferences() as Promise<Partial<UserSettings> | null>,
+            save: (patch) => saveMyPreferences(patch as Record<string, unknown>),
+            reset: () => resetMyPreferences(),
+          }
+        : undefined,
+    [user.role],
+  );
+  const { settings, setSettings, resetSettings, settingsLoaded } = useUserSettings(
+    user.id,
+    prefsBackend,
+  );
   // Per-user vendor data (vendors + invoices + documents).
   const vendorStore = useVendorStore(user.id);
   // Business data (clients/projects/employees/...) — looked up by entityId

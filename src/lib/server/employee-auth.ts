@@ -130,21 +130,22 @@ function liveAndActive() {
   );
 }
 
-// One-shot per server process: ensure the portal password column exists.
-// Mirrors ensureDevAdmin / ensureOsSuperAdmin in this codebase — a self-heal
-// for when a migration (here 0082) hasn't been applied to the target database
-// (this project's deploy does not run drizzle-kit migrate). `ADD COLUMN IF NOT
-// EXISTS` is idempotent and safe to race across cold starts.
+// One-shot per server process: ensure the employee-session columns exist
+// (password_hash + ui_prefs). Mirrors ensureDevAdmin / ensureOsSuperAdmin — a
+// self-heal for when a migration (0082/0083) hasn't been applied to the target
+// database (this project's deploy does not run drizzle-kit migrate). `ADD
+// COLUMN IF NOT EXISTS` is idempotent and safe to race across cold starts.
 let portalColumnEnsured = false;
 async function ensureEmployeePortalColumn(): Promise<void> {
   if (portalColumnEnsured) return;
   try {
     await db.execute(sql`ALTER TABLE "employees" ADD COLUMN IF NOT EXISTS "password_hash" text`);
+    await db.execute(sql`ALTER TABLE "employees" ADD COLUMN IF NOT EXISTS "ui_prefs" jsonb`);
     portalColumnEnsured = true;
   } catch (e) {
-    // Best-effort. Mark ensured so we don't hammer DDL on every request; if the
+    // Best-effort. Mark ensured so we don't hammer DDL on every request; if a
     // column genuinely can't be added (e.g. missing privilege) the caller's
-    // query surfaces a clean error and we fall back to applying 0082 manually.
+    // query surfaces a clean error and we fall back to applying 0082/0083 by hand.
     console.error('[employee-auth] ensureEmployeePortalColumn failed', e);
     portalColumnEnsured = true;
   }

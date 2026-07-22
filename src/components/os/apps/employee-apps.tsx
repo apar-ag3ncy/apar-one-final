@@ -256,9 +256,95 @@ function TaskGroup({
 
 /* ---------------------------------- Team ---------------------------------- */
 
+// Deterministic avatar tone keyed by name (matches the OS directory palette).
+const TEAM_TONES = ['#7A4E2D', '#3F4E8E', '#5E7344', '#7A2D4E', '#2D5E7A', '#7A6A2D'] as const;
+function toneForName(name: string): string {
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) | 0;
+  return TEAM_TONES[Math.abs(hash) % TEAM_TONES.length] ?? '#5B6677';
+}
+
+function TeamCard({ member }: { member: TeamMember }) {
+  const name = member.displayName || member.fullName;
+  return (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 12,
+        padding: 12,
+        border: '1px solid var(--border)',
+        borderRadius: 12,
+        background: 'var(--content-2)',
+        boxShadow: member.isSelf ? 'inset 0 0 0 1.5px var(--accent, #e63a1f)' : 'none',
+      }}
+    >
+      <div
+        style={{
+          flexShrink: 0,
+          width: 40,
+          height: 40,
+          borderRadius: 999,
+          background: toneForName(name),
+          color: '#fff',
+          display: 'grid',
+          placeItems: 'center',
+          fontSize: 14,
+          fontWeight: 600,
+          letterSpacing: '0.02em',
+        }}
+      >
+        {initials(name)}
+      </div>
+      <div style={{ minWidth: 0, flex: 1 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span
+            style={{
+              fontSize: 13,
+              fontWeight: 600,
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+            }}
+          >
+            {name}
+          </span>
+          {member.isSelf ? (
+            <span
+              style={{
+                flexShrink: 0,
+                fontSize: 10,
+                fontWeight: 700,
+                padding: '1px 6px',
+                borderRadius: 999,
+                background: 'var(--accent, #e63a1f)',
+                color: '#fff',
+              }}
+            >
+              YOU
+            </span>
+          ) : null}
+        </div>
+        <div
+          style={{
+            fontSize: 12,
+            color: 'var(--text-muted)',
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+          }}
+        >
+          {member.designation ?? '—'}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function MyTeamWindow() {
   const [team, setTeam] = useState<TeamMember[] | null>(null);
   const [error, setError] = useState(false);
+  const [query, setQuery] = useState('');
 
   useEffect(() => {
     let cancelled = false;
@@ -275,80 +361,78 @@ export function MyTeamWindow() {
   else if (team === null) body = <Muted>Loading your team…</Muted>;
   else if (team.length === 0) body = <Muted>No teammates to show.</Muted>;
   else {
+    const q = query.trim().toLowerCase();
+    const filtered = q
+      ? team.filter((m) =>
+          [m.fullName, m.displayName, m.designation, m.department]
+            .filter((v): v is string => Boolean(v))
+            .some((v) => v.toLowerCase().includes(q)),
+        )
+      : team;
+
+    // Group by department; "Other" (no dept) sorts last.
+    const groups = new Map<string, TeamMember[]>();
+    for (const m of filtered) {
+      const dept = m.department?.trim() || 'Other';
+      const arr = groups.get(dept) ?? [];
+      arr.push(m);
+      groups.set(dept, arr);
+    }
+    const deptNames = [...groups.keys()].sort((a, b) =>
+      a === 'Other' ? 1 : b === 'Other' ? -1 : a.localeCompare(b),
+    );
+
     body = (
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
-          gap: 10,
-        }}
-      >
-        {team.map((m) => {
-          const name = m.displayName || m.fullName;
-          return (
-            <div
-              key={m.id}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 10,
-                padding: 10,
-                border: '1px solid var(--border)',
-                borderRadius: 10,
-                background: m.isSelf ? 'var(--content-2)' : 'transparent',
-              }}
-            >
-              <div
-                style={{
-                  flexShrink: 0,
-                  width: 34,
-                  height: 34,
-                  borderRadius: 999,
-                  background: 'var(--content-2)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  fontSize: 12,
-                  fontWeight: 600,
-                }}
-              >
-                {initials(name)}
-              </div>
-              <div style={{ minWidth: 0 }}>
-                <div
-                  style={{
-                    fontSize: 13,
-                    fontWeight: 500,
-                    whiteSpace: 'nowrap',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                  }}
-                >
-                  {name}
-                  {m.isSelf ? ' (you)' : ''}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <input
+          className="input"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search teammates, role, department…"
+          style={{ maxWidth: 320 }}
+        />
+        {filtered.length === 0 ? (
+          <Muted>No teammates match “{query}”.</Muted>
+        ) : (
+          deptNames.map((dept) => {
+            const members = groups.get(dept) ?? [];
+            return (
+              <section key={dept} style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span
+                    style={{
+                      fontSize: 11,
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.06em',
+                      color: 'var(--text-muted)',
+                      fontWeight: 600,
+                    }}
+                  >
+                    {dept}
+                  </span>
+                  <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{members.length}</span>
                 </div>
                 <div
                   style={{
-                    fontSize: 11,
-                    color: 'var(--text-muted)',
-                    whiteSpace: 'nowrap',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))',
+                    gap: 10,
                   }}
                 >
-                  {m.designation ?? '—'}
-                  {m.department ? ` · ${m.department}` : ''}
+                  {members.map((m) => (
+                    <TeamCard key={m.id} member={m} />
+                  ))}
                 </div>
-              </div>
-            </div>
-          );
-        })}
+              </section>
+            );
+          })
+        )}
       </div>
     );
   }
 
   return (
-    <WindowShell title="Team" sub="your teammates — names & roles only">
+    <WindowShell title="Team" sub={team ? `${team.length} teammates` : 'your teammates'}>
       {body}
     </WindowShell>
   );

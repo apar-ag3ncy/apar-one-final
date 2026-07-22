@@ -1,4 +1,14 @@
-import { boolean, date, index, pgEnum, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
+import {
+  boolean,
+  date,
+  index,
+  jsonb,
+  pgEnum,
+  pgTable,
+  text,
+  timestamp,
+  uuid,
+} from 'drizzle-orm/pg-core';
 
 import { auditColumns, timestamps } from './_shared';
 import { contractStatusEnum } from './_polymorphic';
@@ -51,6 +61,9 @@ export const employees = pgTable(
     // set by src/lib/server/employee-auth.ts; NULL = no portal access yet.
     // Login identifier is `workEmail`. Never returned to the client.
     passwordHash: text(),
+    // Per-employee OS UI preferences (theme, dock size, accent…) for the
+    // employee session; read/written by the self-scoped my-preferences actions.
+    uiPrefs: jsonb(),
 
     // Identity (free of KYC)
     employeeCode: text().notNull().unique(), // 'APAR-001'; immutable once issued
