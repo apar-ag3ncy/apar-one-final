@@ -10,15 +10,15 @@ import {
   type CSSProperties,
 } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
-import { APP_REGISTRY } from '@/lib/os/app-registry';
+import { APP_REGISTRY, isPortalOnlyRole } from '@/lib/os/app-registry';
 import { osActions, useOsStore, type WindowState } from '@/lib/os/store';
 import { useWindowUrlSync } from '@/lib/url/per-window-nuqs';
 import { AdminConsole } from './auth/admin-console';
 import { EntityMutationGate } from './auth/entity-mutation-gate';
 import { LockScreen } from './auth/lock-screen';
 import { useAuth, SUPER_ADMIN_USER_ID } from './auth/store';
-import { can, emptyPermissions, type User } from './auth/types';
-import { useUserSettings, type PrefsBackend, type UserSettings } from './auth/session-store';
+import { can } from './auth/types';
+import { useUserSettings, type UserSettings } from './auth/session-store';
 import { useVendorStore } from './auth/vendor-store';
 import { CommandPalette } from './command-palette';
 import { useBusinessData } from './data-store';
@@ -68,47 +68,23 @@ import { VendorLedgerWindow } from './apps/vendor-ledger-window';
 import { UniversalLedgerWindow } from './apps/universal-ledger-window';
 import { DashboardWindow } from './apps/dashboard-window';
 import { OfficeApp } from './apps/office-app';
-import {
-  MyTasksWindow,
-  MyTeamWindow,
-  MyAttendanceWindow,
-  MyLeavesWindow,
-} from './apps/employee-apps';
-import { signOutEmployee, type SafeEmployee } from '@/lib/server/employee-auth';
-import {
-  getMyPreferences,
-  saveMyPreferences,
-  resetMyPreferences,
-} from '@/lib/server/employee-portal';
 import type { AppDef, AppId, Client, CmdAction, DockBounds, Vendor } from './types';
 
-const NOOP_DISPLAY_NAME = () => {};
-
-/** Build a restricted OS `User` from an employee session. role='employee' →
- * `can()` hard-whitelists only the employee apps, so the whole shell (dock,
- * palette, window gating) hides everything else. */
-function employeeToOsUser(e: SafeEmployee): User {
-  return {
-    id: `emp-${e.id}`,
-    username: e.workEmail ?? e.employeeCode,
-    fullName: e.displayName || e.fullName,
-    role: 'employee',
-    tone: '#5B6677',
-    permissions: emptyPermissions(),
-    createdAt: e.joinedOn,
-  };
-}
-
-/**
- * OS entry point. The `/os` server page passes an `employee` when an employee
- * session is present — that renders the SAME desktop shell as operators, but as
- * a restricted `role='employee'` user (only the employee apps in the dock; no
- * accounting/admin surface). Operators (no employee) fall through to the
- * os_users lock-screen flow.
- */
-export function OsRoot({ employee }: { employee?: SafeEmployee | null }) {
+export function OsRoot() {
+  const { loading, currentUser, signOut } = useAuth();
   const pathname = usePathname();
   const router = useRouter();
+
+  // SPEC-AMENDMENT-001 §8.2 — employees do NOT get the OS. They live in
+  // Dashboard's `/me` portal. The check is keyed off the user's role
+  // string; today's OS demo role enum only emits super_admin/admin/user
+  // so this is dormant until A's RBAC swap lands `employee`. When the
+  // /me route also exists (B's territory), the redirect actually fires.
+  useEffect(() => {
+    if (currentUser && isPortalOnlyRole(currentUser.role)) {
+      router.replace('/me');
+    }
+  }, [currentUser, router]);
 
   // Mobile detection works the same whether signed in or not.
   const mobile = useSyncExternalStore(
@@ -120,7 +96,10 @@ export function OsRoot({ employee }: { employee?: SafeEmployee | null }) {
     () => false,
   );
 
-  // Hide page scroll while we're actually under /os.
+  // Hide page scroll while we're actually under /os. The pathname dep
+  // re-runs cleanup if a future sub-route inside the (os) group keeps
+  // OsRoot mounted across navigation, and the explicit guard prevents a
+  // hijack from leaking if anything ever renders this outside /os.
   useEffect(() => {
     if (!pathname?.startsWith('/os')) return;
     const prev = document.body.style.overflow;
@@ -151,41 +130,6 @@ export function OsRoot({ employee }: { employee?: SafeEmployee | null }) {
     );
   }
 
-  // Employee mode — restricted desktop, no lock screen, no os_users bootstrap.
-  if (employee) {
-    const user = employeeToOsUser(employee);
-    const signOut = () => {
-      void signOutEmployee().then(() => router.replace('/login'));
-    };
-    return (
-      <Desktop
-        key={user.id}
-        user={user}
-        signOut={signOut}
-        onDisplayNameChange={NOOP_DISPLAY_NAME}
-      />
-    );
-  }
-
-  return <OperatorShell />;
-}
-
-/** Operator (os_users) shell: lock screen → full admin desktop. */
-function OperatorShell() {
-  const { loading, currentUser, signOut, updateSuperAdmin, updateUser } = useAuth();
-
-  const setDisplayName = useCallback(
-    (fullName: string) => {
-      if (!currentUser) return;
-      if (currentUser.id === SUPER_ADMIN_USER_ID) {
-        void updateSuperAdmin({ fullName });
-      } else {
-        void updateUser(currentUser.id, { fullName });
-      }
-    },
-    [currentUser, updateSuperAdmin, updateUser],
-  );
-
   // While the server-backed accounts hydrate, show a neutral splash rather than
   // flashing the lock screen with a stale/empty user list.
   if (loading) {
@@ -209,48 +153,33 @@ function OperatorShell() {
 
   // Key Desktop on the user id so signing out + back in (or as a different
   // user) cleanly remounts and re-runs lazy init from the right snapshot.
-  return (
-    <Desktop
-      key={currentUser.id}
-      user={currentUser}
-      signOut={signOut}
-      onDisplayNameChange={setDisplayName}
-    />
-  );
+  return <Desktop key={currentUser.id} signOut={signOut} />;
 }
 
 /* -------------------------------------------------------------------------- */
 /* Desktop — only mounted once a user is signed in.                           */
 /* -------------------------------------------------------------------------- */
 
-function Desktop({
-  user,
-  signOut,
-  onDisplayNameChange,
-}: {
-  user: User;
-  signOut: () => void;
-  onDisplayNameChange: (fullName: string) => void;
-}) {
+function Desktop({ signOut }: { signOut: () => void }) {
+  const { currentUser, updateSuperAdmin, updateUser } = useAuth();
+  const user = currentUser!;
+
+  // Keep the OS session's display name in step with an Account save (which
+  // writes the real users table). Super admin's record is edited via its own
+  // path; everyone else through updateUser.
+  const setDisplayName = useCallback(
+    (fullName: string) => {
+      if (user.id === SUPER_ADMIN_USER_ID) {
+        void updateSuperAdmin({ fullName });
+      } else {
+        void updateUser(user.id, { fullName });
+      }
+    },
+    [user.id, updateSuperAdmin, updateUser],
+  );
+
   // Per-user settings (theme, dock size, dock gap, accent, default app).
-  // Employees persist to their own `employees.ui_prefs` (the operator prefs
-  // table denies employee sessions); operators use the default backend. So a
-  // teammate's theme is remembered on their account, applied on next login.
-  const prefsBackend = useMemo<PrefsBackend | undefined>(
-    () =>
-      user.role === 'employee'
-        ? {
-            load: () => getMyPreferences() as Promise<Partial<UserSettings> | null>,
-            save: (patch) => saveMyPreferences(patch as Record<string, unknown>),
-            reset: () => resetMyPreferences(),
-          }
-        : undefined,
-    [user.role],
-  );
-  const { settings, setSettings, resetSettings, settingsLoaded } = useUserSettings(
-    user.id,
-    prefsBackend,
-  );
+  const { settings, setSettings, resetSettings, settingsLoaded } = useUserSettings(user.id);
   // Per-user vendor data (vendors + invoices + documents).
   const vendorStore = useVendorStore(user.id);
   // Business data (clients/projects/employees/...) — looked up by entityId
@@ -325,7 +254,10 @@ function Desktop({
   // redirects them to /me, this is the belt-and-braces hide for the first
   // paint before the redirect lands.
   const visibleApps = useMemo<readonly AppDef[]>(
-    () => APPS.filter((a) => APP_REGISTRY[a.id]?.showInDock && can(user, a.id, 'view')),
+    () =>
+      isPortalOnlyRole(user.role)
+        ? []
+        : APPS.filter((a) => APP_REGISTRY[a.id]?.showInDock && can(user, a.id, 'view')),
     [user],
   );
 
@@ -920,14 +852,6 @@ function Desktop({
             }
             case 'attendance':
               return <AttendanceApp canEdit={can(user, 'attendance', 'edit')} />;
-            case 'my_tasks':
-              return <MyTasksWindow />;
-            case 'my_team':
-              return <MyTeamWindow />;
-            case 'my_attendance':
-              return <MyAttendanceWindow />;
-            case 'my_leaves':
-              return <MyLeavesWindow />;
             case 'trash':
               return (
                 <div className="main">
@@ -1117,12 +1041,10 @@ function Desktop({
                   settings={settings}
                   onSettingsChange={setSettings}
                   onResetSettings={resetSettings}
-                  // Employees never reach Settings (can('settings') is false);
-                  // map to 'user' only to satisfy the narrower prop type.
-                  currentUserRole={user.role === 'employee' ? 'user' : user.role}
+                  currentUserRole={user.role}
                   canEditSettings={can(user, 'settings', 'edit')}
                   onSignOut={signOut}
-                  onDisplayNameChange={onDisplayNameChange}
+                  onDisplayNameChange={setDisplayName}
                   initialSection={w.tab}
                 />
               );

@@ -27,7 +27,7 @@ export function LoginForm() {
         const result = await signInEmployee(email, password);
         if (result.ok) {
           toast.success(`Welcome, ${result.employee.fullName.split(' ')[0]}`);
-          router.replace('/os');
+          router.replace('/employee');
         } else {
           setError(result.error);
           setPassword('');

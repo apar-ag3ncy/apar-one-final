@@ -33,11 +33,7 @@ export type AppCapability =
   | 'app.dashboard.view'
   | 'app.office.view'
   | 'app.settings.view'
-  | 'app.admin_console.view'
-  | 'app.my_tasks.view'
-  | 'app.my_team.view'
-  | 'app.my_attendance.view'
-  | 'app.my_leaves.view';
+  | 'app.admin_console.view';
 
 export type AppRegistryEntry = {
   id: AppId;
@@ -148,31 +144,6 @@ export const APP_REGISTRY: Readonly<Record<AppId, AppRegistryEntry>> = {
     minimumCapability: 'app.ledger.view',
     defaultSize: { width: 1200, height: 800 }, // Wide for two-pane match UX
   },
-  // Employee-mode apps — dock icons for a role='employee' session only.
-  my_tasks: {
-    id: 'my_tasks',
-    showInDock: true,
-    minimumCapability: 'app.my_tasks.view',
-    defaultSize: { width: 760, height: 560 },
-  },
-  my_team: {
-    id: 'my_team',
-    showInDock: true,
-    minimumCapability: 'app.my_team.view',
-    defaultSize: { width: 820, height: 560 },
-  },
-  my_attendance: {
-    id: 'my_attendance',
-    showInDock: true,
-    minimumCapability: 'app.my_attendance.view',
-    defaultSize: { width: 760, height: 560 },
-  },
-  my_leaves: {
-    id: 'my_leaves',
-    showInDock: true,
-    minimumCapability: 'app.my_leaves.view',
-    defaultSize: { width: 820, height: 620 },
-  },
 };
 
 /**
@@ -194,10 +165,7 @@ export const HIDDEN_FOR_PORTAL_ROLES: ReadonlySet<AppId> = new Set();
  * six-role enum, the OS only emits legacy roles (super_admin/admin/user)
  * and this set is effectively empty.
  */
-// Employees are no longer portal-only — they now sign into the OS itself in a
-// restricted "employee mode" (role='employee', a whitelisted app set). Kept as
-// an (empty) set for API symmetry with any future exclusion.
-export const PORTAL_ONLY_ROLES: ReadonlySet<string> = new Set();
+export const PORTAL_ONLY_ROLES: ReadonlySet<string> = new Set(['employee']);
 
 export function isPortalOnlyRole(role: string | null | undefined): boolean {
   if (!role) return false;

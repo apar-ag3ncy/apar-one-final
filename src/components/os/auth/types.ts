@@ -6,20 +6,7 @@
 
 import type { AppId } from '../types';
 
-export type Role = 'super_admin' | 'admin' | 'user' | 'employee';
-
-/**
- * The only apps a role='employee' session may ever see. `can()` hard-whitelists
- * exactly these (view-only) for that role and denies everything else — the
- * client-side half of the employee/accounting boundary (the server-side half is
- * getActorContext() denying employee sessions in src/lib/server/actor.ts).
- */
-export const EMPLOYEE_APP_IDS: ReadonlySet<AppId> = new Set<AppId>([
-  'my_tasks',
-  'my_team',
-  'my_attendance',
-  'my_leaves',
-]);
+export type Role = 'super_admin' | 'admin' | 'user';
 
 export type AppPermission = {
   view: boolean;
@@ -91,9 +78,6 @@ export function fullPermissions(): Permissions {
  */
 export function can(user: User, appId: AppId, action: keyof AppPermission): boolean {
   if (user.role === 'super_admin') return true;
-  // Employees are confined to a fixed, view-only whitelist of employee apps —
-  // no map, no exceptions. Never any accounting/admin/settings surface.
-  if (user.role === 'employee') return EMPLOYEE_APP_IDS.has(appId) && action === 'view';
   if (appId === 'admin_console') return false; // hard rule: only super admin sees Admin Console
   // 'accounts' is a launcher shell (Clients / Vendors / Ledgers / Reports
   // live inside it) — it has no permission row of its own; it is usable

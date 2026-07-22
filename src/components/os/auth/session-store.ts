@@ -8,25 +8,13 @@
 // URL state (see `lib/url/per-window-nuqs.ts`), so refresh / link-paste
 // restores windows from the URL rather than localStorage.
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 import {
   getUserPreferences,
   resetUserPreferences,
   saveUserPreferences,
 } from '@/lib/server/entities/user-preferences';
-
-/**
- * Pluggable persistence backend for useUserSettings. Defaults to the operator
- * `user_preferences` table; the employee OS session passes a self-scoped
- * backend (employee-portal getMyPreferences/saveMyPreferences) because the
- * operator prefs actions deny employee sessions.
- */
-export type PrefsBackend = {
-  load: () => Promise<Partial<UserSettings> | null>;
-  save: (patch: Partial<UserSettings>) => Promise<unknown>;
-  reset: () => Promise<unknown>;
-};
 
 /* -------------------------------------------------------------------------- */
 /* Settings                                                                   */
@@ -167,24 +155,16 @@ function clamp(n: number, lo: number, hi: number): number {
  * - Every patch updates state, refreshes the cache, AND writes through to the
  *   DB (so a change on one device shows up on the next login elsewhere).
  */
-export function useUserSettings(userId: string, backend?: PrefsBackend) {
+export function useUserSettings(userId: string) {
   const [settings, setSettingsState] = useState<UserSettings>(() => readSettings(userId));
   const [settingsLoaded, setSettingsLoaded] = useState(false);
 
-  // Capture the backend once. It's stable per mount (Desktop is keyed by user
-  // id, and the employee backend is memoized on role), so the callbacks can
-  // read it from the ref without listing it in their deps.
-  const backendRef = useRef(backend);
-
-  // Hydrate from the server on login — the source of truth (operator prefs
-  // table, or the employee's own ui_prefs). Falls back to the cache on failure.
+  // Hydrate from the DB on login — the server is the source of truth.
   useEffect(() => {
     let cancelled = false;
-    const load =
-      backendRef.current?.load ?? (() => getUserPreferences() as Promise<Partial<UserSettings>>);
-    load()
+    getUserPreferences()
       .then((prefs) => {
-        if (cancelled || !prefs) return;
+        if (cancelled) return;
         const next = coerceSettings(prefs as Partial<UserSettings>);
         setSettingsState(next);
         writeSettings(userId, next);
@@ -205,21 +185,21 @@ export function useUserSettings(userId: string, backend?: PrefsBackend) {
       setSettingsState((prev) => {
         const next = coerceSettings({ ...prev, ...patch });
         writeSettings(userId, next); // optimistic cache
-        // Write through to the account (fire-and-forget; cache covers failure).
-        const save =
-          backendRef.current?.save ?? ((p: Partial<UserSettings>) => saveUserPreferences(p));
-        void Promise.resolve(save(patch)).catch(() => {});
+        // Write through to the DB (fire-and-forget; cache covers a failure).
+        void saveUserPreferences(patch).catch(() => {});
         return next;
       });
     },
     [userId],
   );
 
+  // Clear the user's saved prefs on the server and revert the UI to defaults.
+  // We set state directly (no write-through) so we don't immediately re-create
+  // the row we just deleted.
   const resetSettings = useCallback(() => {
     setSettingsState(DEFAULT_SETTINGS);
     writeSettings(userId, DEFAULT_SETTINGS);
-    const reset = backendRef.current?.reset ?? (() => resetUserPreferences());
-    void Promise.resolve(reset()).catch(() => {});
+    void resetUserPreferences().catch(() => {});
   }, [userId]);
 
   return { settings, setSettings, resetSettings, settingsLoaded };
