@@ -71,6 +71,17 @@ export const APPS: readonly AppDef[] = [
     size: { w: 980, h: 620 },
     accent: '#E63A1F',
   },
+  // Employee-mode apps — the only apps a role='employee' session ever sees
+  // (can() whitelists exactly these for that role). Non-financial, self-scoped.
+  { id: 'my_tasks', name: 'My Tasks', icon: 'check', size: { w: 760, h: 560 }, accent: '#2E8F5A' },
+  { id: 'my_team', name: 'Team', icon: 'users', size: { w: 820, h: 560 }, accent: '#5B6677' },
+  {
+    id: 'my_attendance',
+    name: 'My Attendance',
+    icon: 'book',
+    size: { w: 760, h: 560 },
+    accent: '#C46A28',
+  },
 ] as const;
 
 export const CLIENTS: readonly Client[] = [

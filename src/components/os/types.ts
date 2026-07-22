@@ -35,7 +35,12 @@ export type AppId =
   // launched stand-alone.
   | 'transactions'
   | 'documents'
-  | 'bank_recon';
+  | 'bank_recon'
+  // Employee-mode apps — only ever visible to a role='employee' session (a
+  // restricted OS user). Self-scoped, non-financial. See EMPLOYEE_APP_IDS.
+  | 'my_tasks'
+  | 'my_team'
+  | 'my_attendance';
 
 export type AppDef = {
   id: AppId;

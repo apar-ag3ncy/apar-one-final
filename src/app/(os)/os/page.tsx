@@ -1,6 +1,5 @@
 import type { Metadata } from 'next';
 import { OsRoot } from '@/components/os/os-root';
-import { EmployeeDesktop } from '@/components/employee-os/employee-desktop';
 import { currentEmployee } from '@/lib/server/employee-auth';
 import './os.css';
 
@@ -18,11 +17,11 @@ export const metadata: Metadata = {
 export const maxDuration = 60;
 
 export default async function OsPage() {
-  // An employee session routes to the restricted employee workspace — a wholly
-  // separate shell from the admin desktop, so no accounting surface is ever
-  // rendered for them. Operators (os_users) have no employee cookie and fall
-  // through to the full OsRoot.
+  // Employees render the SAME OS desktop as operators, but OsRoot puts them in a
+  // restricted role='employee' mode (only the employee apps; no accounting). The
+  // /os UI split is backed by a server-side guard — getActorContext() denies
+  // employee sessions any admin action (src/lib/server/actor.ts). Operators have
+  // no employee cookie and get the os_users lock-screen flow.
   const employee = await currentEmployee();
-  if (employee) return <EmployeeDesktop employee={employee} />;
-  return <OsRoot />;
+  return <OsRoot employee={employee} />;
 }
