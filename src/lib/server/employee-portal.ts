@@ -121,3 +121,71 @@ export async function listMyTasks(): Promise<readonly EmployeeProjectTaskRow[]> 
     }),
   );
 }
+
+export type EmployeeActionResult = { ok: true } | { ok: false; error: string };
+
+const EMPLOYEE_SETTABLE_STATUSES: ReadonlySet<ProjectTaskStatus> = new Set([
+  'todo',
+  'in_progress',
+  'little_delayed',
+  'delayed',
+  'done',
+  'cancelled',
+]);
+
+/**
+ * Move ONE of the signed-in employee's own tasks to a new status. Self-scoped:
+ * the update only fires for a task actually assigned to this employee (checked
+ * against project_task_assignees), so an employee can never touch a colleague's
+ * task. Follows the admin rule: completed_at is set on entry to 'done' and
+ * cleared on exit. Self-contained — never calls getActorContext (employees are
+ * denied an admin actor).
+ */
+export async function updateMyTaskStatus(
+  taskId: string,
+  status: string,
+): Promise<EmployeeActionResult> {
+  const me = await currentEmployee();
+  if (!me) return { ok: false, error: 'Your session has expired. Sign in again.' };
+
+  if (!EMPLOYEE_SETTABLE_STATUSES.has(status as ProjectTaskStatus)) {
+    return { ok: false, error: 'Invalid status.' };
+  }
+  const nextStatus = status as ProjectTaskStatus;
+
+  try {
+    const [row] = await db
+      .select({ status: projectTasks.status })
+      .from(projectTasks)
+      .where(
+        and(
+          eq(projectTasks.id, taskId),
+          isNull(projectTasks.deletedAt),
+          sql`exists (
+            select 1 from project_task_assignees a
+            where a.task_id = ${projectTasks.id} and a.employee_id = ${me.id}
+          )`,
+        ),
+      )
+      .limit(1);
+
+    if (!row) return { ok: false, error: 'Task not found or not assigned to you.' };
+
+    // completed_at follows the 'done' status: set on entry, clear on exit.
+    let completedAtPatch: { completedAt: Date | null } | Record<string, never> = {};
+    if (nextStatus !== row.status) {
+      if (nextStatus === 'done') completedAtPatch = { completedAt: new Date() };
+      else if (row.status === 'done') completedAtPatch = { completedAt: null };
+    }
+
+    await db
+      .update(projectTasks)
+      .set({ status: nextStatus, ...completedAtPatch })
+      .where(eq(projectTasks.id, taskId));
+
+    return { ok: true };
+  } catch (e) {
+    console.error('[updateMyTaskStatus] failed', e);
+    return { ok: false, error: 'Couldn’t update the task. Please try again.' };
+  }
+}

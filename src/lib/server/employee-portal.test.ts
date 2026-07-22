@@ -3,13 +3,13 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { SafeEmployee } from '@/lib/server/employee-auth';
 
 // The employee workspace reads must be self-scoped: no employee session ⇒ no
-// data and no query at all. Mock the session resolver + db.select chain.
-// `vi.hoisted` so selectMock exists when the hoisted vi.mock factory runs.
-const { selectMock } = vi.hoisted(() => ({ selectMock: vi.fn() }));
+// data and no query at all. Mock the session resolver + db.select/update chains.
+// `vi.hoisted` so the mocks exist when the hoisted vi.mock factory runs.
+const { selectMock, updateMock } = vi.hoisted(() => ({ selectMock: vi.fn(), updateMock: vi.fn() }));
 vi.mock('@/lib/server/employee-auth', () => ({ currentEmployee: vi.fn() }));
-vi.mock('@/lib/db/client', () => ({ db: { select: selectMock } }));
+vi.mock('@/lib/db/client', () => ({ db: { select: selectMock, update: updateMock } }));
 
-import { listMyTeam, listMyTasks } from '@/lib/server/employee-portal';
+import { listMyTeam, listMyTasks, updateMyTaskStatus } from '@/lib/server/employee-portal';
 import { currentEmployee } from '@/lib/server/employee-auth';
 
 const mockEmployee = vi.mocked(currentEmployee);
@@ -26,13 +26,24 @@ const EMPLOYEE: SafeEmployee = {
   joinedOn: '2024-01-01',
 };
 
-// A drizzle-like query chain whose terminal orderBy resolves to `rows`.
+// A drizzle-like select chain; both orderBy (list) and limit (single) resolve
+// to `rows`.
 function chainResolving(rows: unknown[]) {
   const chain = {
     from: vi.fn(() => chain),
     innerJoin: vi.fn(() => chain),
     where: vi.fn(() => chain),
     orderBy: vi.fn(() => Promise.resolve(rows)),
+    limit: vi.fn(() => Promise.resolve(rows)),
+  };
+  return chain;
+}
+
+// A drizzle-like update chain: update().set().where() resolves.
+function updateChain() {
+  const chain = {
+    set: vi.fn(() => chain),
+    where: vi.fn(() => Promise.resolve(undefined)),
   };
   return chain;
 }
@@ -110,5 +121,44 @@ describe('employee-portal — self-scoped reads', () => {
     expect(res).toHaveLength(1);
     expect(res[0]?.title).toBe('Do the thing');
     expect(res[0]?.completedAt).toBeNull();
+  });
+});
+
+describe('updateMyTaskStatus — self-scoped writes', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('rejects when there is no employee session (no query)', async () => {
+    mockEmployee.mockResolvedValue(null);
+    const r = await updateMyTaskStatus('task-1', 'done');
+    expect(r.ok).toBe(false);
+    expect(selectMock).not.toHaveBeenCalled();
+    expect(updateMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects an invalid status without touching the db', async () => {
+    mockEmployee.mockResolvedValue(EMPLOYEE);
+    const r = await updateMyTaskStatus('task-1', 'not_a_status');
+    expect(r).toEqual({ ok: false, error: 'Invalid status.' });
+    expect(selectMock).not.toHaveBeenCalled();
+    expect(updateMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects a task not assigned to the caller (self-scope select returns nothing)', async () => {
+    mockEmployee.mockResolvedValue(EMPLOYEE);
+    selectMock.mockReturnValue(chainResolving([])); // no matching assigned task
+    const r = await updateMyTaskStatus('someone-elses-task', 'done');
+    expect(r.ok).toBe(false);
+    expect(updateMock).not.toHaveBeenCalled();
+  });
+
+  it('updates when the task is assigned to the caller', async () => {
+    mockEmployee.mockResolvedValue(EMPLOYEE);
+    selectMock.mockReturnValue(chainResolving([{ status: 'todo' }]));
+    updateMock.mockReturnValue(updateChain());
+    const r = await updateMyTaskStatus('my-task', 'done');
+    expect(r).toEqual({ ok: true });
+    expect(updateMock).toHaveBeenCalledTimes(1);
   });
 });

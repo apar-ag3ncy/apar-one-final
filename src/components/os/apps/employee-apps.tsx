@@ -6,9 +6,18 @@
 // own tasks and a safe teammate directory.
 
 import { useEffect, useState } from 'react';
+import { toast } from 'sonner';
 
-import { listMyTasks, listMyTeam, type TeamMember } from '@/lib/server/employee-portal';
-import type { EmployeeProjectTaskRow } from '@/lib/server/entities/project-tasks';
+import {
+  listMyTasks,
+  listMyTeam,
+  updateMyTaskStatus,
+  type TeamMember,
+} from '@/lib/server/employee-portal';
+import type {
+  EmployeeProjectTaskRow,
+  ProjectTaskStatus,
+} from '@/lib/server/entities/project-tasks';
 
 function WindowShell({
   title,
@@ -66,19 +75,50 @@ const TASK_STATUS: Record<string, { label: string; color: string; bg: string }> 
   cancelled: { label: 'Cancelled', color: 'var(--text-muted)', bg: 'var(--content-2)' },
 };
 
+const STATUS_OPTIONS: readonly ProjectTaskStatus[] = [
+  'todo',
+  'in_progress',
+  'little_delayed',
+  'delayed',
+  'done',
+  'cancelled',
+];
+
+// Optimistic local mirror of the server's completed_at-on-done rule.
+function applyStatus(t: EmployeeProjectTaskRow, next: ProjectTaskStatus): EmployeeProjectTaskRow {
+  const completedAt =
+    next === 'done' ? new Date().toISOString() : t.status === 'done' ? null : t.completedAt;
+  return { ...t, status: next, completedAt };
+}
+
 export function MyTasksWindow() {
-  const [tasks, setTasks] = useState<readonly EmployeeProjectTaskRow[] | null>(null);
+  const [tasks, setTasks] = useState<EmployeeProjectTaskRow[] | null>(null);
   const [error, setError] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     listMyTasks()
-      .then((t) => !cancelled && setTasks(t))
+      .then((t) => !cancelled && setTasks([...t]))
       .catch(() => !cancelled && setError(true));
     return () => {
       cancelled = true;
     };
   }, []);
+
+  const changeStatus = async (taskId: string, next: ProjectTaskStatus) => {
+    // Optimistic — the row re-groups (open/closed) immediately.
+    setTasks((cur) => cur?.map((t) => (t.taskId === taskId ? applyStatus(t, next) : t)) ?? cur);
+    const r = await updateMyTaskStatus(taskId, next);
+    if (!r.ok) {
+      toast.error(r.error || 'Couldn’t update the task.');
+      try {
+        const fresh = await listMyTasks();
+        setTasks([...fresh]); // resync from the server
+      } catch {
+        /* keep optimistic state */
+      }
+    }
+  };
 
   let body: React.ReactNode;
   if (error) body = <Muted>Couldn’t load your tasks. Please try again.</Muted>;
@@ -89,20 +129,69 @@ export function MyTasksWindow() {
     const done = tasks.filter((t) => t.status === 'done' || t.status === 'cancelled');
     body = (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
-        <TaskGroup title={`Open · ${open.length}`} tasks={open} />
-        {done.length > 0 && <TaskGroup title={`Closed · ${done.length}`} tasks={done} />}
+        <TaskGroup title={`Open · ${open.length}`} tasks={open} onChangeStatus={changeStatus} />
+        {done.length > 0 && (
+          <TaskGroup title={`Closed · ${done.length}`} tasks={done} onChangeStatus={changeStatus} />
+        )}
       </div>
     );
   }
 
   return (
-    <WindowShell title="My Tasks" sub="tasks assigned to you across projects">
+    <WindowShell title="My Tasks" sub="tasks assigned to you — set your own status">
       {body}
     </WindowShell>
   );
 }
 
-function TaskGroup({ title, tasks }: { title: string; tasks: readonly EmployeeProjectTaskRow[] }) {
+function StatusSelect({
+  value,
+  onChange,
+}: {
+  value: ProjectTaskStatus;
+  onChange: (s: ProjectTaskStatus) => void;
+}) {
+  const st = TASK_STATUS[value] ?? {
+    label: value,
+    color: 'var(--text-muted)',
+    bg: 'var(--content-2)',
+  };
+  return (
+    <select
+      value={value}
+      onChange={(e) => onChange(e.target.value as ProjectTaskStatus)}
+      title="Change status"
+      style={{
+        flexShrink: 0,
+        fontSize: 11,
+        fontWeight: 600,
+        padding: '4px 10px',
+        borderRadius: 999,
+        color: st.color,
+        background: st.bg,
+        border: '1px solid var(--border)',
+        cursor: 'pointer',
+        appearance: 'none',
+      }}
+    >
+      {STATUS_OPTIONS.map((s) => (
+        <option key={s} value={s} style={{ color: 'var(--text)', background: 'var(--content)' }}>
+          {(TASK_STATUS[s] ?? { label: s }).label}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+function TaskGroup({
+  title,
+  tasks,
+  onChangeStatus,
+}: {
+  title: string;
+  tasks: readonly EmployeeProjectTaskRow[];
+  onChangeStatus: (taskId: string, next: ProjectTaskStatus) => void;
+}) {
   if (tasks.length === 0) return null;
   return (
     <section style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -118,65 +207,46 @@ function TaskGroup({ title, tasks }: { title: string; tasks: readonly EmployeePr
         {title}
       </div>
       <div style={{ border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
-        {tasks.map((t, i) => {
-          const st = TASK_STATUS[t.status] ?? {
-            label: t.status,
-            color: 'var(--text-muted)',
-            bg: 'var(--content-2)',
-          };
-          return (
-            <div
-              key={t.taskId}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 12,
-                padding: '10px 12px',
-                borderTop: i === 0 ? 'none' : '1px solid var(--border)',
-              }}
-            >
-              <div style={{ minWidth: 0, flex: 1 }}>
-                <div
-                  style={{
-                    fontSize: 13,
-                    fontWeight: 500,
-                    whiteSpace: 'nowrap',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                  }}
-                >
-                  {t.title}
-                </div>
-                <div
-                  style={{
-                    fontSize: 11,
-                    color: 'var(--text-muted)',
-                    whiteSpace: 'nowrap',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                  }}
-                >
-                  {t.projectCode ? `${t.projectCode} · ` : ''}
-                  {t.projectName}
-                  {t.dueOn ? ` · due ${t.dueOn}` : ''}
-                </div>
-              </div>
-              <span
+        {tasks.map((t, i) => (
+          <div
+            key={t.taskId}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 12,
+              padding: '10px 12px',
+              borderTop: i === 0 ? 'none' : '1px solid var(--border)',
+            }}
+          >
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <div
                 style={{
-                  flexShrink: 0,
-                  fontSize: 11,
+                  fontSize: 13,
                   fontWeight: 500,
-                  padding: '2px 8px',
-                  borderRadius: 999,
-                  color: st.color,
-                  background: st.bg,
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
                 }}
               >
-                {st.label}
-              </span>
+                {t.title}
+              </div>
+              <div
+                style={{
+                  fontSize: 11,
+                  color: 'var(--text-muted)',
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                }}
+              >
+                {t.projectCode ? `${t.projectCode} · ` : ''}
+                {t.projectName}
+                {t.dueOn ? ` · due ${t.dueOn}` : ''}
+              </div>
             </div>
-          );
-        })}
+            <StatusSelect value={t.status} onChange={(s) => onChangeStatus(t.taskId, s)} />
+          </div>
+        ))}
       </div>
     </section>
   );
