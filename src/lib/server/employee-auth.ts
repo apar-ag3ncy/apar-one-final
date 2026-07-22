@@ -147,11 +147,20 @@ export async function signInEmployee(
     return { ok: false, error: 'Enter your work email and password.' };
   }
 
-  const [row] = await db
-    .select()
-    .from(employees)
-    .where(and(sql`lower(${employees.workEmail}) = ${normalized}`, liveAndActive()))
-    .limit(1);
+  let row: typeof employees.$inferSelect | undefined;
+  try {
+    const rows = await db
+      .select()
+      .from(employees)
+      .where(and(sql`lower(${employees.workEmail}) = ${normalized}`, liveAndActive()))
+      .limit(1);
+    row = rows[0];
+  } catch (e) {
+    // TEMP diagnostic: surface the real DB error so we can confirm whether the
+    // 0082 migration (password_hash) reached prod. Reverted after diagnosis.
+    console.error('[signInEmployee] query failed', e);
+    return { ok: false, error: 'DEBUG ' + (e instanceof Error ? e.message : String(e)) };
+  }
 
   // One uniform message whether the email is unknown, has no portal access, or
   // the password is wrong — so the response never confirms which emails exist.

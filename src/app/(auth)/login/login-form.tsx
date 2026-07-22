@@ -23,12 +23,17 @@ export function LoginForm() {
       return;
     }
     startTransition(async () => {
-      const result = await signInEmployee(email, password);
-      if (result.ok) {
-        toast.success(`Welcome, ${result.employee.fullName.split(' ')[0]}`);
-        router.replace('/me');
-      } else {
-        setError(result.error);
+      try {
+        const result = await signInEmployee(email, password);
+        if (result.ok) {
+          toast.success(`Welcome, ${result.employee.fullName.split(' ')[0]}`);
+          router.replace('/me');
+        } else {
+          setError(result.error);
+          setPassword('');
+        }
+      } catch {
+        setError('Something went wrong. Please try again.');
         setPassword('');
       }
     });
