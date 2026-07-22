@@ -9,7 +9,12 @@ const { selectMock, updateMock } = vi.hoisted(() => ({ selectMock: vi.fn(), upda
 vi.mock('@/lib/server/employee-auth', () => ({ currentEmployee: vi.fn() }));
 vi.mock('@/lib/db/client', () => ({ db: { select: selectMock, update: updateMock } }));
 
-import { listMyTeam, listMyTasks, updateMyTaskStatus } from '@/lib/server/employee-portal';
+import {
+  listMyTeam,
+  listMyTasks,
+  updateMyTaskStatus,
+  getMyAttendance,
+} from '@/lib/server/employee-portal';
 import { currentEmployee } from '@/lib/server/employee-auth';
 
 const mockEmployee = vi.mocked(currentEmployee);
@@ -26,16 +31,17 @@ const EMPLOYEE: SafeEmployee = {
   joinedOn: '2024-01-01',
 };
 
-// A drizzle-like select chain; both orderBy (list) and limit (single) resolve
-// to `rows`.
+// A drizzle-like select chain: every builder method returns the chain, and the
+// chain itself is thenable → `await` at ANY terminal (.where / .orderBy /
+// .limit) resolves to `rows`. Mirrors drizzle's every-stage-thenable queries.
 function chainResolving(rows: unknown[]) {
-  const chain = {
-    from: vi.fn(() => chain),
-    innerJoin: vi.fn(() => chain),
-    where: vi.fn(() => chain),
-    orderBy: vi.fn(() => Promise.resolve(rows)),
-    limit: vi.fn(() => Promise.resolve(rows)),
+  const chain: Record<string, unknown> = {
+    then: (onFulfilled: (v: unknown) => unknown, onRejected?: (e: unknown) => unknown) =>
+      Promise.resolve(rows).then(onFulfilled, onRejected),
   };
+  for (const m of ['from', 'innerJoin', 'where', 'orderBy', 'limit']) {
+    chain[m] = vi.fn(() => chain);
+  }
   return chain;
 }
 
@@ -160,5 +166,55 @@ describe('updateMyTaskStatus — self-scoped writes', () => {
     const r = await updateMyTaskStatus('my-task', 'done');
     expect(r).toEqual({ ok: true });
     expect(updateMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('getMyAttendance — self-scoped, default-filled', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('returns null with no employee session (no query)', async () => {
+    mockEmployee.mockResolvedValue(null);
+    expect(await getMyAttendance('2026-07', '2026-07-31')).toBeNull();
+    expect(selectMock).not.toHaveBeenCalled();
+  });
+
+  it('returns null for a malformed month', async () => {
+    mockEmployee.mockResolvedValue(EMPLOYEE);
+    expect(await getMyAttendance('2026-7', '2026-07-31')).toBeNull();
+    expect(await getMyAttendance('2026-13', '2026-07-31')).toBeNull();
+    expect(selectMock).not.toHaveBeenCalled();
+  });
+
+  it('fills defaults, applies overrides, and counts only non-future days', async () => {
+    mockEmployee.mockResolvedValue(EMPLOYEE);
+    selectMock.mockReturnValue(
+      chainResolving([
+        { date: '2026-07-06', status: 'on_leave' },
+        { date: '2026-07-13', status: 'work_from_home' },
+        { date: '2026-07-20', status: 'absent' },
+      ]),
+    );
+
+    const res = await getMyAttendance('2026-07', '2026-07-15');
+    expect(res).not.toBeNull();
+    expect(res?.month).toBe('2026-07');
+    expect(res?.days).toHaveLength(31); // July has 31 days
+
+    // Override reflected on its day.
+    const jul6 = res?.days.find((d) => d.date === '2026-07-06');
+    expect(jul6?.status).toBe('on_leave');
+    expect(jul6?.isDefault).toBe(false);
+
+    // Days after `today` are future → excluded from the summary.
+    const jul20 = res?.days.find((d) => d.date === '2026-07-20');
+    expect(jul20?.isFuture).toBe(true);
+
+    // on_leave (07-06) + wfh (07-13) are ≤ 07-15 → counted; absent (07-20) future → not.
+    expect(res?.summary.onLeave).toBe(1);
+    expect(res?.summary.workFromHome).toBe(1);
+    expect(res?.summary.absent).toBe(0);
+    expect(res?.summary.present).toBeGreaterThan(0); // default present days exist
   });
 });

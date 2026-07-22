@@ -9,8 +9,10 @@
 import { and, asc, desc, eq, isNull, sql } from 'drizzle-orm';
 
 import { db } from '@/lib/db/client';
-import { employees, projectTasks, projects } from '@/lib/db/schema';
+import { attendanceRecords, employees, projectTasks, projects } from '@/lib/db/schema';
+import { defaultStatusForDate } from '@/lib/attendance-defaults';
 import { currentEmployee } from './employee-auth';
+import type { AttendanceStatus } from './entities/attendance';
 import type {
   EmployeeProjectTaskRow,
   ProjectTaskPriority,
@@ -188,4 +190,136 @@ export async function updateMyTaskStatus(
     console.error('[updateMyTaskStatus] failed', e);
     return { ok: false, error: 'Couldn’t update the task. Please try again.' };
   }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Attendance (self-view, read-only)                                          */
+/* -------------------------------------------------------------------------- */
+
+export type MyAttendanceDay = {
+  date: string; // YYYY-MM-DD
+  status: AttendanceStatus;
+  /** true when this is the implicit default (no stored override). */
+  isDefault: boolean;
+  /** true for dates after `today` (not yet counted in the summary). */
+  isFuture: boolean;
+};
+
+export type MyAttendanceSummary = {
+  present: number;
+  workFromHome: number;
+  halfDay: number;
+  onLeave: number;
+  absent: number;
+  weeklyOff: number;
+  holiday: number;
+  /** present + wfh + half_day + absent + on_leave (i.e. non-off working days). */
+  workingDays: number;
+  /** round((present + wfh + 0.5*half_day) / workingDays * 100); null if none. */
+  attendancePct: number | null;
+};
+
+export type MyAttendance = {
+  month: string; // YYYY-MM
+  monthLabel: string; // "July 2026"
+  days: MyAttendanceDay[];
+  summary: MyAttendanceSummary;
+};
+
+const MONTH_RE = /^\d{4}-\d{2}$/;
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const MONTH_NAMES = [
+  'January',
+  'February',
+  'March',
+  'April',
+  'May',
+  'June',
+  'July',
+  'August',
+  'September',
+  'October',
+  'November',
+  'December',
+];
+
+function pad2(n: number): string {
+  return String(n).padStart(2, '0');
+}
+
+/**
+ * The signed-in employee's own attendance for `month` (YYYY-MM), with `today`
+ * (YYYY-MM-DD) supplied by the client to avoid server-timezone drift. Fills the
+ * implicit default (present Mon–Sat, weekly_off Sun) for any day without a
+ * stored override — the DB only records exceptions. Summary counts non-future
+ * days only. Self-scoped: only this employee's records; returns null with no
+ * session.
+ */
+export async function getMyAttendance(month: string, today: string): Promise<MyAttendance | null> {
+  const me = await currentEmployee();
+  if (!me) return null;
+  if (!MONTH_RE.test(month) || !DATE_RE.test(today)) return null;
+
+  const y = Number(month.slice(0, 4));
+  const m = Number(month.slice(5, 7)); // 1-12
+  if (m < 1 || m > 12) return null;
+
+  const daysInMonth = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  const firstDay = `${month}-01`;
+  const lastDay = `${month}-${pad2(daysInMonth)}`;
+
+  const rows = await db
+    .select({ date: attendanceRecords.date, status: attendanceRecords.status })
+    .from(attendanceRecords)
+    .where(
+      and(
+        eq(attendanceRecords.employeeId, me.id),
+        sql`${attendanceRecords.date} between ${firstDay} and ${lastDay}`,
+        isNull(attendanceRecords.deletedAt),
+      ),
+    );
+
+  const overrides = new Map<string, AttendanceStatus>();
+  for (const r of rows) overrides.set(String(r.date), r.status as AttendanceStatus);
+
+  const counts: Record<AttendanceStatus, number> = {
+    present: 0,
+    work_from_home: 0,
+    absent: 0,
+    half_day: 0,
+    on_leave: 0,
+    weekly_off: 0,
+    holiday: 0,
+  };
+  const days: MyAttendanceDay[] = [];
+  for (let d = 1; d <= daysInMonth; d++) {
+    const date = `${month}-${pad2(d)}`;
+    const isFuture = date > today;
+    const override = overrides.get(date);
+    const status = override ?? defaultStatusForDate(date);
+    days.push({ date, status, isDefault: override === undefined, isFuture });
+    if (!isFuture) counts[status] += 1;
+  }
+
+  const workingDays =
+    counts.present + counts.work_from_home + counts.half_day + counts.absent + counts.on_leave;
+  const attended = counts.present + counts.work_from_home + counts.half_day * 0.5;
+  const attendancePct = workingDays > 0 ? Math.round((attended / workingDays) * 100) : null;
+
+  return {
+    month,
+    monthLabel: `${MONTH_NAMES[m - 1] ?? month} ${y}`,
+    days,
+    summary: {
+      present: counts.present,
+      workFromHome: counts.work_from_home,
+      halfDay: counts.half_day,
+      onLeave: counts.on_leave,
+      absent: counts.absent,
+      weeklyOff: counts.weekly_off,
+      holiday: counts.holiday,
+      workingDays,
+      attendancePct,
+    },
+  };
 }
