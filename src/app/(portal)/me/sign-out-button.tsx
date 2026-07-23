@@ -12,7 +12,7 @@ export function SignOutButton() {
   const signOut = () => {
     startTransition(async () => {
       await signOutEmployee();
-      router.replace('/login');
+      router.replace('/os');
     });
   };
 

@@ -1157,6 +1157,101 @@
 }
 
 /* Welcome hint */
+/* Employee OS home — quick-launch cards on the empty desktop. */
+.os-root .emp-home {
+  position: absolute;
+  top: 30px;
+  left: 0;
+  right: 0;
+  bottom: 96px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 26px;
+  padding: 24px;
+  pointer-events: none;
+}
+.os-root .emp-home__head {
+  text-align: center;
+  color: var(--os-text, #1c1512);
+}
+.os-root .dark .emp-home__head {
+  color: #f4ece6;
+}
+.os-root .emp-home__hello {
+  font-family: var(--os-font);
+  font-weight: 500;
+  font-size: 30px;
+  letter-spacing: -0.02em;
+}
+.os-root .emp-home__sub {
+  font-size: 13.5px;
+  opacity: 0.7;
+  margin-top: 4px;
+}
+.os-root .emp-home__cards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 250px));
+  gap: 14px;
+  pointer-events: auto;
+}
+@media (max-width: 620px) {
+  .os-root .emp-home__cards {
+    grid-template-columns: minmax(0, 300px);
+  }
+}
+.os-root .emp-card {
+  appearance: none;
+  cursor: pointer;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px 16px 18px;
+  border-radius: 16px;
+  color: var(--os-text, #1c1512);
+  background: var(--os-surface, rgba(255, 255, 255, 0.86));
+  border: 1px solid var(--os-border, rgba(0, 0, 0, 0.08));
+  box-shadow: 0 14px 36px -22px rgba(0, 0, 0, 0.5);
+  transition:
+    transform 160ms cubic-bezier(0.2, 0.7, 0.3, 1.4),
+    box-shadow 160ms ease,
+    border-color 160ms ease;
+}
+.os-root .dark .emp-card {
+  color: #f0e8e2;
+  background: rgba(40, 30, 27, 0.72);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+.os-root .emp-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 22px 46px -22px rgba(0, 0, 0, 0.55);
+  border-color: var(--os-accent, #e63a1f);
+}
+.os-root .emp-card:focus-visible {
+  outline: 2px solid var(--os-accent, #e63a1f);
+  outline-offset: 2px;
+}
+.os-root .emp-card__icon {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 11px;
+  color: #fff;
+  background: var(--os-accent, #e63a1f);
+}
+.os-root .emp-card__name {
+  font-size: 14.5px;
+  font-weight: 600;
+}
+.os-root .emp-card__desc {
+  font-size: 12px;
+  line-height: 1.45;
+  opacity: 0.65;
+}
+
 .os-root .welcome-hint {
   position: absolute;
   top: 50%;
@@ -1975,6 +2070,107 @@
   color: rgba(255, 255, 255, 0.55);
   letter-spacing: 0.06em;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+}
+
+/* Account-type picker (choose Admin / Employee before the credential screen). */
+.os-root .lock-screen__pick {
+  align-self: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 22px;
+}
+.os-root .lock-screen__pick-title {
+  font-family: var(--os-font);
+  font-weight: 300;
+  font-size: 26px;
+  letter-spacing: -0.01em;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+}
+.os-root .lock-screen__types {
+  display: flex;
+  gap: 18px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.os-root .lock-screen__type-card {
+  appearance: none;
+  cursor: pointer;
+  width: 220px;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 18px 18px 20px;
+  border-radius: 18px;
+  color: #f4ece6;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  backdrop-filter: blur(14px) saturate(1.2);
+  -webkit-backdrop-filter: blur(14px) saturate(1.2);
+  box-shadow: 0 18px 44px -20px rgba(0, 0, 0, 0.6);
+  transition:
+    background 180ms ease,
+    transform 180ms cubic-bezier(0.2, 0.7, 0.3, 1.4),
+    border-color 180ms ease;
+}
+.os-root .lock-screen__type-card:hover {
+  background: rgba(255, 255, 255, 0.16);
+  border-color: rgba(255, 255, 255, 0.4);
+  transform: translateY(-3px);
+}
+.os-root .lock-screen__type-card:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.85);
+  outline-offset: 3px;
+}
+.os-root .lock-screen__type-icon {
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.14);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: #fff;
+}
+.os-root .lock-screen__type-label {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+.os-root .lock-screen__type-desc {
+  font-size: 12px;
+  line-height: 1.45;
+  color: rgba(255, 255, 255, 0.72);
+}
+
+/* Floating "Back" affordance to return to the account-type picker. */
+.os-root .lock-screen__back {
+  position: absolute;
+  top: 22px;
+  left: 22px;
+  z-index: 11;
+  appearance: none;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px 7px 9px;
+  border-radius: 999px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: #f4ece6;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+.os-root .lock-screen__back:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+/* The arrow icon points right by default; flip it so "Back" reads left. */
+.os-root .lock-screen__back svg {
+  transform: rotate(180deg);
 }
 
 /* -------------------------------------------------------------------------- */

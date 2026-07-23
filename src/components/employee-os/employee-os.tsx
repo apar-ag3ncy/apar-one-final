@@ -15,6 +15,7 @@ import { Icon, type IconName } from '@/components/os/icons';
 import { signOutEmployee, type SafeEmployee } from '@/lib/server/employee-auth';
 import { getMyPreferences, saveMyPreferences } from '@/lib/server/employee-portal';
 import { MyTasksWindow, MyTeamWindow, MyAttendanceWindow, MyLeavesWindow } from './apps';
+import { EmployeeDock } from './employee-dock';
 
 type AppKey = 'tasks' | 'team' | 'attendance' | 'leaves';
 type EmpApp = { key: AppKey; name: string; icon: IconName; w: number; h: number };
@@ -25,6 +26,13 @@ const EMP_APPS: readonly EmpApp[] = [
   { key: 'attendance', name: 'My Attendance', icon: 'book', w: 780, h: 580 },
   { key: 'leaves', name: 'Leaves', icon: 'filetext', w: 860, h: 640 },
 ];
+
+const APP_BLURB: Record<AppKey, string> = {
+  tasks: 'What’s assigned to you, by client and project',
+  team: 'Find a teammate’s contact, birthday and achievements',
+  attendance: 'Your monthly attendance and exceptions',
+  leaves: 'Apply for leave and track your manager’s decision',
+};
 
 // Our window state extends the OS WindowState with which employee app it hosts.
 type EmpWin = WindowState & { empApp: AppKey };
@@ -184,7 +192,7 @@ export function EmployeeOs({ employee }: { employee: SafeEmployee }) {
 
   const signOut = () => {
     setSigningOut(true);
-    void signOutEmployee().then(() => router.replace('/login'));
+    void signOutEmployee().then(() => router.replace('/os'));
   };
 
   const time = now
@@ -243,29 +251,35 @@ export function EmployeeOs({ employee }: { employee: SafeEmployee }) {
       )}
 
       {wins.length === 0 ? (
-        <div className="welcome-hint">
-          <div className="big">Welcome, {displayName.split(' ')[0]}</div>
-          <div>Open an app from the dock — your tasks, team, attendance and leaves.</div>
+        <div className="emp-home">
+          <div className="emp-home__head">
+            <div className="emp-home__hello">Welcome, {displayName.split(' ')[0]}</div>
+            <div className="emp-home__sub">Your self-service workspace. Open an app to begin.</div>
+          </div>
+          <div className="emp-home__cards">
+            {EMP_APPS.map((a) => (
+              <button
+                key={a.key}
+                type="button"
+                className="emp-card"
+                onClick={() => openApp(a.key)}
+              >
+                <span className="emp-card__icon" aria-hidden>
+                  <Icon name={a.icon} size={22} stroke={1.7} />
+                </span>
+                <span className="emp-card__name">{a.name}</span>
+                <span className="emp-card__desc">{APP_BLURB[a.key]}</span>
+              </button>
+            ))}
+          </div>
         </div>
       ) : null}
 
-      <div className="dock">
-        {EMP_APPS.map((a) => {
-          const open = wins.some((w) => w.empApp === a.key);
-          return (
-            <button
-              key={a.key}
-              type="button"
-              className="dock-item"
-              title={a.name}
-              onClick={() => openApp(a.key)}
-            >
-              <Icon name={a.icon} size={26} />
-              {open ? <span className="indicator" /> : null}
-            </button>
-          );
-        })}
-      </div>
+      <EmployeeDock
+        apps={EMP_APPS}
+        openKeys={new Set(wins.map((w) => w.empApp))}
+        onOpen={(k) => openApp(k as AppKey)}
+      />
     </div>
   );
 }

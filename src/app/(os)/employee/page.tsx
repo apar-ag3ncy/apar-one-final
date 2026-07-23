@@ -17,6 +17,6 @@ export default async function EmployeePage() {
   // A forged/absent cookie resolves to null → login. The admin OS is never
   // rendered here (this shell imports none of it).
   const employee = await currentEmployee();
-  if (!employee) redirect('/login');
+  if (!employee) redirect('/os');
   return <EmployeeOs employee={employee} />;
 }
