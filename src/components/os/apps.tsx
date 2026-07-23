@@ -56,6 +56,7 @@ import {
 } from './auth/session-store';
 import { formatINR, initials, parseRupeesToPaise } from './format';
 import { Icon, type IconName } from './icons';
+import { EmployeeAccountsCard } from './employee-accounts-card';
 import type { Client, Project, Vendor } from './types';
 import type { VendorStore } from './auth/vendor-store';
 import {
@@ -3111,6 +3112,15 @@ export function EmployeeProfileEditor({
           toast.error(res.message);
           return;
         }
+        // The new hire was auto-given a portal login — surface the one-time
+        // credentials so the admin can hand them over. It is never shown again
+        // (only a reset issues a new password).
+        if (res.portalUsername && res.portalTempPassword) {
+          toast.success(
+            `Portal login created — username ${res.portalUsername}, temporary password ${res.portalTempPassword}. Shown once; copy it now.`,
+            { duration: 30000 },
+          );
+        }
         await onSaved(res.id, form.fullName.trim());
       } else if (employeeId) {
         const res = await updateEmployee({
@@ -4503,6 +4513,7 @@ function TeamPanel({ currentUserRole }: { currentUserRole?: 'super_admin' | 'adm
   return (
     <div>
       <TeamPoliciesCard canManage={canManage} />
+      <EmployeeAccountsCard canManage={canManage} />
       <div className="settings-row" style={{ alignItems: 'flex-start' }}>
         <div>
           <div className="label">Team members</div>

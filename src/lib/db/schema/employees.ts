@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm';
 import {
   boolean,
   date,
@@ -7,6 +8,7 @@ import {
   pgTable,
   text,
   timestamp,
+  uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core';
 
@@ -59,8 +61,11 @@ export const employees = pgTable(
     userId: uuid(),
     // Employee portal login (Supabase-free). scrypt hash 'scrypt$salt$hash'
     // set by src/lib/server/employee-auth.ts; NULL = no portal access yet.
-    // Login identifier is `workEmail`. Never returned to the client.
+    // Sign-in accepts `loginUsername` OR `workEmail`. Never returned to client.
     passwordHash: text(),
+    // Alternative login id (0084), so employees with no work email can still
+    // get a default account. Auto-derived from the name; unique among live rows.
+    loginUsername: text(),
     // Per-employee OS UI preferences (theme, dock size, accent…) for the
     // employee session; read/written by the self-scoped my-preferences actions.
     uiPrefs: jsonb(),
@@ -117,6 +122,10 @@ export const employees = pgTable(
     index().on(t.status),
     index().on(t.userId),
     index().on(t.workEmail),
+    // Case-insensitive unique login username among live rows (0084).
+    uniqueIndex('employees_login_username_lower_unique')
+      .on(sql`lower(${t.loginUsername})`)
+      .where(sql`${t.loginUsername} is not null and ${t.deletedAt} is null`),
     index().on(t.fullName),
     index().on(t.reportsToEmployeeId),
     index().on(t.isArchived),

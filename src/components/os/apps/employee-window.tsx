@@ -986,7 +986,12 @@ function PortalAccessBody({ employeeId, canEdit }: { employeeId: string; canEdit
   const [state, setState] = useState<
     | { kind: 'loading' }
     | { kind: 'error'; message: string }
-    | { kind: 'ready'; workEmail: string | null; hasPassword: boolean }
+    | {
+        kind: 'ready';
+        workEmail: string | null;
+        loginUsername: string | null;
+        hasPassword: boolean;
+      }
   >({ kind: 'loading' });
   const [pw, setPw] = useState('');
   const [pw2, setPw2] = useState('');
@@ -998,7 +1003,13 @@ function PortalAccessBody({ employeeId, canEdit }: { employeeId: string; canEdit
     getEmployeePortalAccess(employeeId)
       .then((r) => {
         if (cancelled) return;
-        if (r.ok) setState({ kind: 'ready', workEmail: r.workEmail, hasPassword: r.hasPassword });
+        if (r.ok)
+          setState({
+            kind: 'ready',
+            workEmail: r.workEmail,
+            loginUsername: r.loginUsername,
+            hasPassword: r.hasPassword,
+          });
         else setState({ kind: 'error', message: r.error });
       })
       .catch((e: unknown) => {
@@ -1066,8 +1077,8 @@ function PortalAccessBody({ employeeId, canEdit }: { employeeId: string; canEdit
         <SubHeading>Employee OS access</SubHeading>
         <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0 }}>
           Lets this employee sign in at <code>/login</code> to their own restricted workspace —
-          tasks, team and attendance. No accounting or admin surfaces are shown. Their sign-in id is
-          their work email.
+          tasks, team and attendance. No accounting or admin surfaces are shown. They sign in with
+          the username below (or their work email).
         </p>
       </div>
 
@@ -1082,14 +1093,18 @@ function PortalAccessBody({ employeeId, canEdit }: { employeeId: string; canEdit
           background: 'var(--content-2)',
         }}
       >
-        <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Login (work email)</div>
-        <div style={{ fontSize: 13 }}>
-          {state.workEmail ?? (
-            <span style={{ color: 'var(--text-error, #c33)' }}>
-              No work email set — add one on the profile first.
-            </span>
-          )}
+        <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Login</div>
+        <div style={{ fontSize: 13, fontFamily: 'var(--font-mono, monospace)' }}>
+          {state.loginUsername ??
+            state.workEmail ?? (
+              <span style={{ color: 'var(--text-muted)' }}>
+                A username is created when you set a password.
+              </span>
+            )}
         </div>
+        {state.loginUsername && state.workEmail ? (
+          <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>or {state.workEmail}</div>
+        ) : null}
         <div style={{ marginTop: 6, fontSize: 12 }}>
           Status:{' '}
           <strong

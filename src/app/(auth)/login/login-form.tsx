@@ -19,7 +19,7 @@ export function LoginForm() {
     event.preventDefault();
     setError(null);
     if (!email || !password) {
-      setError('Enter your work email and password.');
+      setError('Enter your username and password.');
       return;
     }
     startTransition(async () => {
@@ -42,14 +42,15 @@ export function LoginForm() {
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-4" noValidate>
       <div className="flex flex-col gap-2">
-        <Label htmlFor="email">Work email</Label>
+        <Label htmlFor="email">Username or work email</Label>
         <Input
           id="email"
           name="email"
-          type="email"
-          autoComplete="email"
+          type="text"
+          autoComplete="username"
+          autoCapitalize="none"
           required
-          placeholder="you@apar.example"
+          placeholder="your username"
           value={email}
           onChange={(event) => {
             setEmail(event.target.value);

@@ -27,6 +27,12 @@ import { and, eq, isNull, sql } from 'drizzle-orm';
 
 import { db } from '@/lib/db/client';
 import { employees } from '@/lib/db/schema';
+import {
+  buildEmployeeAccount,
+  takenLoginIds,
+  usernameFor,
+  type IssuedCredential,
+} from '@/lib/server/employee-provision';
 import { isOsAdminOperator } from '@/lib/server/os-auth';
 import { signToken, splitToken, tokenMatches } from '@/lib/server/session-token';
 
@@ -141,6 +147,7 @@ async function ensureEmployeePortalColumn(): Promise<void> {
   try {
     await db.execute(sql`ALTER TABLE "employees" ADD COLUMN IF NOT EXISTS "password_hash" text`);
     await db.execute(sql`ALTER TABLE "employees" ADD COLUMN IF NOT EXISTS "ui_prefs" jsonb`);
+    await db.execute(sql`ALTER TABLE "employees" ADD COLUMN IF NOT EXISTS "login_username" text`);
     portalColumnEnsured = true;
   } catch (e) {
     // Best-effort. Mark ensured so we don't hammer DDL on every request; if a
@@ -156,35 +163,42 @@ async function ensureEmployeePortalColumn(): Promise<void> {
 /* -------------------------------------------------------------------------- */
 
 export async function signInEmployee(
-  email: string,
+  identifier: string,
   password: string,
 ): Promise<Result<{ employee: SafeEmployee }>> {
-  const normalized = email.trim().toLowerCase();
+  const normalized = identifier.trim().toLowerCase();
   if (!normalized || !password) {
-    return { ok: false, error: 'Enter your work email and password.' };
+    return { ok: false, error: 'Enter your username (or work email) and password.' };
   }
 
   await ensureEmployeePortalColumn();
 
   let row: typeof employees.$inferSelect | undefined;
   try {
+    // Login id is the username OR the work email (0084) — most employees have
+    // no work email, so username is the primary route.
     const rows = await db
       .select()
       .from(employees)
-      .where(and(sql`lower(${employees.workEmail}) = ${normalized}`, liveAndActive()))
+      .where(
+        and(
+          sql`(lower(${employees.loginUsername}) = ${normalized} OR lower(${employees.workEmail}) = ${normalized})`,
+          liveAndActive(),
+        ),
+      )
       .limit(1);
     row = rows[0];
   } catch (e) {
-    // A DB error here (e.g. the password_hash column not yet migrated) must
-    // surface as a clean, uniform failure — never a raw 500 exposing SQL.
+    // A DB error here (e.g. a column not yet migrated) must surface as a clean,
+    // uniform failure — never a raw 500 exposing SQL.
     console.error('[signInEmployee] query failed', e);
     return { ok: false, error: 'Sign-in is temporarily unavailable. Please try again later.' };
   }
 
-  // One uniform message whether the email is unknown, has no portal access, or
-  // the password is wrong — so the response never confirms which emails exist.
+  // One uniform message whether the id is unknown, has no portal access, or the
+  // password is wrong — so the response never confirms which ids exist.
   if (!row || !row.passwordHash || !verifyPassword(password, row.passwordHash)) {
-    return { ok: false, error: 'Incorrect email or password.' };
+    return { ok: false, error: 'Incorrect username or password.' };
   }
 
   const store = await cookies();
@@ -280,23 +294,39 @@ export async function changeMyPassword(
 export async function getEmployeePortalAccess(
   employeeId: string,
 ): Promise<
-  { ok: true; workEmail: string | null; hasPassword: boolean } | { ok: false; error: string }
+  | { ok: true; workEmail: string | null; loginUsername: string | null; hasPassword: boolean }
+  | { ok: false; error: string }
 > {
   if (!(await isOsAdminOperator())) return { ok: false, error: 'Not authorized.' };
 
   await ensureEmployeePortalColumn();
 
   const [row] = await db
-    .select({ workEmail: employees.workEmail, passwordHash: employees.passwordHash })
+    .select({
+      workEmail: employees.workEmail,
+      loginUsername: employees.loginUsername,
+      passwordHash: employees.passwordHash,
+    })
     .from(employees)
     .where(and(eq(employees.id, employeeId), isNull(employees.deletedAt)))
     .limit(1);
 
   if (!row) return { ok: false, error: 'Employee not found.' };
-  return { ok: true, workEmail: row.workEmail ?? null, hasPassword: Boolean(row.passwordHash) };
+  return {
+    ok: true,
+    workEmail: row.workEmail ?? null,
+    loginUsername: row.loginUsername ?? null,
+    hasPassword: Boolean(row.passwordHash),
+  };
 }
 
-/** HR sets / resets an employee's portal password. Operator-only. */
+/**
+ * HR sets / resets an employee's portal password. Operator-only.
+ *
+ * If the employee has neither a login username nor a work email, one is derived
+ * now so they have something to sign in with — access no longer requires a work
+ * email first.
+ */
 export async function setEmployeePassword(
   employeeId: string,
   newPassword: string,
@@ -310,21 +340,82 @@ export async function setEmployeePassword(
   await ensureEmployeePortalColumn();
 
   const [row] = await db
-    .select({ id: employees.id, workEmail: employees.workEmail })
+    .select({
+      id: employees.id,
+      fullName: employees.fullName,
+      employeeCode: employees.employeeCode,
+      workEmail: employees.workEmail,
+      loginUsername: employees.loginUsername,
+    })
     .from(employees)
     .where(and(eq(employees.id, employeeId), isNull(employees.deletedAt)))
     .limit(1);
 
   if (!row) return { ok: false, error: 'Employee not found.' };
-  if (!row.workEmail) {
-    return { ok: false, error: 'Set a work email on this employee first — it is the login id.' };
+
+  const patch: { passwordHash: string; loginUsername?: string } = {
+    passwordHash: hashPassword(newPassword),
+  };
+  // Give them a login id if they have none. If they already have a username or
+  // a work email, that stays the login id.
+  if (!row.loginUsername && !row.workEmail) {
+    const taken = await takenLoginIds();
+    patch.loginUsername = usernameFor(row.fullName, row.employeeCode, taken);
   }
 
-  await db
-    .update(employees)
-    .set({ passwordHash: hashPassword(newPassword) })
-    .where(eq(employees.id, employeeId));
+  await db.update(employees).set(patch).where(eq(employees.id, employeeId));
   return { ok: true };
+}
+
+/**
+ * Give every active employee who has no portal access a default account —
+ * a generated username (kept if they already have one) and a temp password —
+ * in one go. Operator-only.
+ *
+ * Returns the issued credentials ONCE for the admin to hand over; they are not
+ * recoverable afterwards, only resettable. Idempotent: employees who already
+ * have a password are skipped, so it is safe to run again after adding people.
+ */
+export async function backfillEmployeeAccounts(): Promise<
+  { ok: true; created: IssuedCredential[]; skipped: number } | { ok: false; error: string }
+> {
+  if (!(await isOsAdminOperator())) return { ok: false, error: 'Not authorized.' };
+
+  await ensureEmployeePortalColumn();
+
+  const active = await db
+    .select({
+      id: employees.id,
+      fullName: employees.fullName,
+      employeeCode: employees.employeeCode,
+      loginUsername: employees.loginUsername,
+      passwordHash: employees.passwordHash,
+    })
+    .from(employees)
+    .where(liveAndActive());
+
+  const todo = active.filter((e) => !e.passwordHash);
+  if (todo.length === 0) return { ok: true, created: [], skipped: active.length };
+
+  const taken = await takenLoginIds();
+  const created: IssuedCredential[] = [];
+
+  // Serial writes keep the unique-username guarantee simple and the batch is
+  // tiny (one org's staff).
+  for (const e of todo) {
+    // Keep an existing username if the row already has one.
+    if (e.loginUsername) taken.delete(e.loginUsername.toLowerCase());
+    const { patch, credential } = buildEmployeeAccount(e, taken);
+    const finalPatch = e.loginUsername
+      ? { passwordHash: patch.passwordHash }
+      : patch;
+    await db.update(employees).set(finalPatch).where(eq(employees.id, e.id));
+    created.push(
+      e.loginUsername ? { ...credential, username: e.loginUsername } : credential,
+    );
+  }
+
+  return { ok: true, created, skipped: active.length - todo.length };
 }
 
 /** HR revokes portal access (clears the password). Operator-only. */
