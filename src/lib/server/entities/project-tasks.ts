@@ -12,6 +12,7 @@ import {
   projectMembers,
   projectTaskAssignees,
   projectTaskFollowups,
+  projectTaskStatusEvents,
   projectTasks,
   projectVendors,
   projects,
@@ -20,6 +21,11 @@ import {
 import { AppError } from '@/lib/errors';
 import { requireCapability } from '@/lib/rbac';
 import { getActorContext } from '@/lib/server/actor';
+import {
+  computeCompletionOutcome,
+  recordTaskStatusEvent,
+  statusTransitionPatch,
+} from './task-status-log';
 
 /**
  * Project members + project tasks — the collaboration surface layered on top
@@ -403,6 +409,8 @@ export type ProjectTaskRow = {
   dueOn: string | null;
   position: number;
   completedAt: string | null;
+  /** How it landed vs the due date (0085), stamped on completion. */
+  completionOutcome: 'on_time' | 'slightly_delayed' | 'delayed' | null;
   createdAt: string;
 };
 
@@ -425,6 +433,7 @@ export async function listProjectTasks(projectId: string): Promise<readonly Proj
       dueOn: projectTasks.dueOn,
       position: projectTasks.position,
       completedAt: projectTasks.completedAt,
+      completionOutcome: projectTasks.completionOutcome,
       createdAt: projectTasks.createdAt,
     })
     .from(projectTasks)
@@ -468,6 +477,7 @@ export async function createProjectTask(input: {
   const assigneeIds = [...new Set(parsed.assigneeEmployeeIds ?? [])];
   const vendorAssigneeIds = [...new Set(parsed.assigneeVendorIds ?? [])];
 
+  const createdNow = new Date();
   const [inserted] = await db
     .insert(projectTasks)
     .values({
@@ -480,7 +490,9 @@ export async function createProjectTask(input: {
       // New deliverables default to 'apar' unless the caller says otherwise.
       source: parsed.source === undefined ? 'apar' : parsed.source,
       dueOn: parsed.dueOn ?? null,
-      completedAt: status === 'done' ? new Date() : null,
+      completedAt: status === 'done' ? createdNow : null,
+      completionOutcome:
+        status === 'done' ? computeCompletionOutcome(createdNow, parsed.dueOn ?? null) : null,
       createdBy: ctx.userId,
       updatedBy: ctx.userId,
     })
@@ -537,6 +549,14 @@ export async function createProjectTask(input: {
     },
   });
 
+  // Seed the deliverable's status history with its creation status (null → X).
+  await recordTaskStatusEvent({
+    taskId: inserted.id,
+    fromStatus: null,
+    toStatus: status,
+    actor: { kind: 'admin' },
+  });
+
   return await getTaskRow(inserted.id);
 }
 
@@ -570,7 +590,12 @@ export async function updateProjectTask(input: {
   const parsed = UpdateProjectTaskSchema.parse(input);
 
   const [existing] = await db
-    .select({ status: projectTasks.status, projectId: projectTasks.projectId })
+    .select({
+      status: projectTasks.status,
+      projectId: projectTasks.projectId,
+      dueOn: projectTasks.dueOn,
+      completedAt: projectTasks.completedAt,
+    })
     .from(projectTasks)
     .where(and(eq(projectTasks.id, parsed.id), isNull(projectTasks.deletedAt)))
     .limit(1);
@@ -579,14 +604,27 @@ export async function updateProjectTask(input: {
     throw new AppError('not_found', 'Task not found.', { detail: { id: parsed.id } });
   }
 
-  // completed_at follows the 'done' status: set on entry, clear on exit.
-  let completedAtPatch: { completedAt: Date | null } | Record<string, never> = {};
-  if (parsed.status !== undefined && parsed.status !== existing.status) {
-    if (parsed.status === 'done') {
-      completedAtPatch = { completedAt: new Date() };
-    } else if (existing.status === 'done') {
-      completedAtPatch = { completedAt: null };
-    }
+  // completed_at + completion_outcome follow the 'done' status (set on entry,
+  // cleared on exit). The outcome uses the EFFECTIVE due date — the new one if
+  // this same call is changing it, else the stored one.
+  const statusChanged = parsed.status !== undefined && parsed.status !== existing.status;
+  const effectiveDueOn = parsed.dueOn !== undefined ? parsed.dueOn : existing.dueOn;
+  let completionPatch: { completedAt?: Date | null; completionOutcome?: string | null } =
+    statusChanged
+      ? statusTransitionPatch(existing.status, parsed.status as string, effectiveDueOn, new Date())
+      : {};
+  // A due-date-only correction on an already-completed task must re-stamp the
+  // outcome — it's derived from the (now changed) due date, so leaving it would
+  // show a stale on-time/delayed badge and mis-tally the employee overview.
+  if (
+    !statusChanged &&
+    parsed.dueOn !== undefined &&
+    existing.status === 'done' &&
+    existing.completedAt
+  ) {
+    completionPatch = {
+      completionOutcome: computeCompletionOutcome(existing.completedAt, effectiveDueOn),
+    };
   }
 
   await db
@@ -599,7 +637,7 @@ export async function updateProjectTask(input: {
       ...(parsed.source !== undefined ? { source: parsed.source } : {}),
       ...(parsed.dueOn !== undefined ? { dueOn: parsed.dueOn } : {}),
       ...(parsed.status !== undefined ? { status: parsed.status } : {}),
-      ...completedAtPatch,
+      ...completionPatch,
       updatedBy: ctx.userId,
     })
     .where(and(eq(projectTasks.id, parsed.id), isNull(projectTasks.deletedAt)));
@@ -681,6 +719,17 @@ export async function updateProjectTask(input: {
     action: 'update',
     changes: { task_updated: { id: parsed.id, ...(changes as Record<string, unknown>) } },
   });
+
+  // Append to the deliverable's status history (admin actor). No-op unless the
+  // status actually moved.
+  if (statusChanged) {
+    await recordTaskStatusEvent({
+      taskId: parsed.id,
+      fromStatus: existing.status,
+      toStatus: parsed.status as string,
+      actor: { kind: 'admin' },
+    });
+  }
 
   return await getTaskRow(parsed.id);
 }
@@ -931,6 +980,51 @@ export async function listTaskFollowups(taskId: string): Promise<readonly TaskFo
   );
 }
 
+/* -------------------------------------------------------------------------- */
+/* Deliverable status history (table: project_task_status_events, 0085)       */
+/* -------------------------------------------------------------------------- */
+
+/** One status transition in a deliverable's history, ordered oldest → newest. */
+export type TaskStatusEventRow = {
+  id: string;
+  fromStatus: string | null;
+  toStatus: string;
+  actorKind: string;
+  actorLabel: string | null;
+  createdAt: string; // ISO
+};
+
+export async function listTaskStatusEvents(
+  taskId: string,
+): Promise<readonly TaskStatusEventRow[]> {
+  await getActorContext();
+  const parsedTaskId = ProjectTaskIdSchema.parse(taskId);
+
+  const rows = await db
+    .select({
+      id: projectTaskStatusEvents.id,
+      fromStatus: projectTaskStatusEvents.fromStatus,
+      toStatus: projectTaskStatusEvents.toStatus,
+      actorKind: projectTaskStatusEvents.actorKind,
+      actorLabel: projectTaskStatusEvents.actorLabel,
+      createdAt: projectTaskStatusEvents.createdAt,
+    })
+    .from(projectTaskStatusEvents)
+    .where(eq(projectTaskStatusEvents.taskId, parsedTaskId))
+    .orderBy(asc(projectTaskStatusEvents.createdAt));
+
+  return rows.map(
+    (r): TaskStatusEventRow => ({
+      id: r.id,
+      fromStatus: r.fromStatus,
+      toStatus: r.toStatus,
+      actorKind: r.actorKind,
+      actorLabel: r.actorLabel,
+      createdAt: r.createdAt.toISOString(),
+    }),
+  );
+}
+
 const AddTaskFollowupSchema = z.object({
   taskId: z.string().uuid(),
   note: z.string().trim().min(1).max(4000),
@@ -988,6 +1082,7 @@ type TaskSelectRow = {
   dueOn: string | null;
   position: number;
   completedAt: Date | null;
+  completionOutcome: string | null;
   createdAt: Date;
 };
 
@@ -1007,6 +1102,8 @@ function mapTaskRow(r: TaskSelectRow, assignees: readonly ProjectTaskAssignee[])
     dueOn: r.dueOn,
     position: r.position,
     completedAt: r.completedAt ? r.completedAt.toISOString() : null,
+    completionOutcome:
+      (r.completionOutcome as 'on_time' | 'slightly_delayed' | 'delayed' | null) ?? null,
     createdAt: r.createdAt.toISOString(),
   };
 }
@@ -1074,6 +1171,7 @@ async function getTaskRow(id: string): Promise<ProjectTaskRow> {
       dueOn: projectTasks.dueOn,
       position: projectTasks.position,
       completedAt: projectTasks.completedAt,
+      completionOutcome: projectTasks.completionOutcome,
       createdAt: projectTasks.createdAt,
     })
     .from(projectTasks)

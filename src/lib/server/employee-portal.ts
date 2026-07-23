@@ -9,16 +9,23 @@
 import { and, asc, desc, eq, isNull, sql } from 'drizzle-orm';
 
 import { db } from '@/lib/db/client';
-import { attendanceRecords, employees, leaves, projectTasks, projects } from '@/lib/db/schema';
+import {
+  attendanceRecords,
+  clients,
+  employees,
+  leaves,
+  projectTasks,
+  projects,
+} from '@/lib/db/schema';
 import { defaultStatusForDate } from '@/lib/attendance-defaults';
 import { currentEmployee } from './employee-auth';
 import type { AttendanceStatus } from './entities/attendance';
 import type {
-  EmployeeProjectTaskRow,
   ProjectTaskPriority,
   ProjectTaskSource,
   ProjectTaskStatus,
 } from './entities/project-tasks';
+import { statusTransitionPatch, recordTaskStatusEvent } from './entities/task-status-log';
 
 export type TeamMember = {
   id: string;
@@ -31,10 +38,12 @@ export type TeamMember = {
 };
 
 /**
- * Safe teammate directory for the employee workspace. Active, non-separated,
- * non-archived employees; only non-sensitive identity fields — never
- * compensation, KYC, contact details, or anything financial. Returns [] when
- * there is no employee session.
+ * Safe teammate directory for the employee workspace. ONLY currently-active
+ * employees appear — status = 'active', not archived, not deleted — so people
+ * who are on leave, serving notice, not-yet-joined, or separated are hidden
+ * (the directory is "who's on the team right now"). Only non-sensitive identity
+ * fields — never compensation, KYC, contact details, or anything financial.
+ * Returns [] when there is no employee session.
  */
 export async function listMyTeam(): Promise<TeamMember[]> {
   const me = await currentEmployee();
@@ -54,7 +63,9 @@ export async function listMyTeam(): Promise<TeamMember[]> {
       and(
         isNull(employees.deletedAt),
         eq(employees.isArchived, false),
-        sql`${employees.status} <> 'separated'`,
+        // Active only — but the signed-in employee always sees their own card,
+        // even if they happen to be on leave / serving notice right now.
+        sql`(${employees.status} = 'active' OR ${employees.id} = ${me.id})`,
       ),
     )
     .orderBy(asc(employees.fullName));
@@ -62,17 +73,44 @@ export async function listMyTeam(): Promise<TeamMember[]> {
   return rows.map((r) => ({ ...r, isSelf: r.id === me.id }));
 }
 
+/** How a completed task landed vs its due date (0085). */
+export type TaskOutcome = 'on_time' | 'slightly_delayed' | 'delayed';
+
 /**
- * The signed-in employee's own project tasks. Self-scoped — never another
- * employee's. Returns [] when there is no employee session.
+ * One of the signed-in employee's tasks, with the client it belongs to (so the
+ * workspace can filter by client) and the stored completion outcome (so the
+ * overview can tally on-time / delayed). Self-scoped shape.
+ */
+export type MyTaskRow = {
+  taskId: string;
+  title: string;
+  status: ProjectTaskStatus;
+  priority: ProjectTaskPriority | null;
+  source: ProjectTaskSource | null;
+  projectId: string;
+  projectName: string;
+  projectCode: string | null;
+  clientId: string;
+  clientName: string;
+  dueOn: string | null;
+  completedAt: string | null;
+  completionOutcome: TaskOutcome | null;
+};
+
+/**
+ * The signed-in employee's own project tasks — every one assigned to them, with
+ * the owning project + client and the completion outcome. Self-scoped: never
+ * another employee's. Returns [] when there is no employee session.
  *
  * Deliberately SELF-CONTAINED: it queries directly with `me.id` from the
  * session and does NOT call the admin `listEmployeeProjectTasks`, because that
  * routes through `getActorContext()` — which now denies employee sessions
  * (see actor.ts). The employee data layer must never acquire an admin actor.
- * Shape mirrors EmployeeProjectTaskRow.
+ * The client join stays scoped to the employee's own projects, so the client
+ * filter only ever exposes clients the employee actually works with — never the
+ * full client list.
  */
-export async function listMyTasks(): Promise<readonly EmployeeProjectTaskRow[]> {
+export async function listMyTasks(): Promise<readonly MyTaskRow[]> {
   const me = await currentEmployee();
   if (!me) return [];
 
@@ -91,11 +129,15 @@ export async function listMyTasks(): Promise<readonly EmployeeProjectTaskRow[]> 
       projectId: projectTasks.projectId,
       projectName: projects.name,
       projectCode: projects.code,
+      clientId: clients.id,
+      clientName: clients.name,
       dueOn: projectTasks.dueOn,
       completedAt: projectTasks.completedAt,
+      completionOutcome: projectTasks.completionOutcome,
     })
     .from(projectTasks)
     .innerJoin(projects, eq(projects.id, projectTasks.projectId))
+    .innerJoin(clients, eq(clients.id, projects.clientId))
     .where(
       and(
         // Multi-assignee (0061): membership lives in project_task_assignees.
@@ -109,7 +151,7 @@ export async function listMyTasks(): Promise<readonly EmployeeProjectTaskRow[]> 
     .orderBy(asc(statusOrder), desc(projectTasks.updatedAt));
 
   return rows.map(
-    (r): EmployeeProjectTaskRow => ({
+    (r): MyTaskRow => ({
       taskId: r.taskId,
       title: r.title,
       status: r.status as ProjectTaskStatus,
@@ -118,8 +160,11 @@ export async function listMyTasks(): Promise<readonly EmployeeProjectTaskRow[]> 
       projectId: r.projectId,
       projectName: r.projectName,
       projectCode: r.projectCode,
+      clientId: r.clientId,
+      clientName: r.clientName,
       dueOn: r.dueOn,
       completedAt: r.completedAt ? r.completedAt.toISOString() : null,
+      completionOutcome: (r.completionOutcome as TaskOutcome | null) ?? null,
     }),
   );
 }
@@ -157,7 +202,7 @@ export async function updateMyTaskStatus(
 
   try {
     const [row] = await db
-      .select({ status: projectTasks.status })
+      .select({ status: projectTasks.status, dueOn: projectTasks.dueOn })
       .from(projectTasks)
       .where(
         and(
@@ -173,17 +218,24 @@ export async function updateMyTaskStatus(
 
     if (!row) return { ok: false, error: 'Task not found or not assigned to you.' };
 
-    // completed_at follows the 'done' status: set on entry, clear on exit.
-    let completedAtPatch: { completedAt: Date | null } | Record<string, never> = {};
-    if (nextStatus !== row.status) {
-      if (nextStatus === 'done') completedAtPatch = { completedAt: new Date() };
-      else if (row.status === 'done') completedAtPatch = { completedAt: null };
-    }
+    // completed_at + completion_outcome follow the 'done' status; the outcome is
+    // auto-computed from the completion date vs the due date (shared with the
+    // admin path so both surfaces agree).
+    const completionPatch = statusTransitionPatch(row.status, nextStatus, row.dueOn, new Date());
 
     await db
       .update(projectTasks)
-      .set({ status: nextStatus, ...completedAtPatch })
+      .set({ status: nextStatus, ...completionPatch })
       .where(eq(projectTasks.id, taskId));
+
+    // Append to the deliverable's status history (employee actor). No-op unless
+    // the status actually moved.
+    await recordTaskStatusEvent({
+      taskId,
+      fromStatus: row.status,
+      toStatus: nextStatus,
+      actor: { kind: 'employee', employeeId: me.id, label: me.displayName || me.fullName },
+    });
 
     return { ok: true };
   } catch (e) {
