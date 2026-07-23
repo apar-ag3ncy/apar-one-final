@@ -4,10 +4,9 @@
  * confirmed_on, status, designation).
  *
  *   - "New"        — joined within the last 30 days.
- *   - "Probation"  — first 6 months from joined_on for full-time/part-time
- *                    employees who have no confirmed_on yet; shows days left
- *                    and disappears once confirmed_on is set or the window
- *                    passes.
+ *   - "Probation"  — ONLY when an admin has set an explicit probation end
+ *                    date on the employee; shows days left and disappears once
+ *                    that date passes or confirmed_on is set. Never derived.
  *   - TL / Manager — designation-derived chip styling for leadership roles.
  *
  * Sync client-safe module (used by the OS Team cards and the employee
@@ -17,7 +16,6 @@
 import { todayIST } from './ist-date';
 
 export const NEW_JOINER_WINDOW_DAYS = 30;
-export const PROBATION_MONTHS = 6;
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
@@ -44,13 +42,6 @@ export function isNewJoiner(joinedOn: string | Date, today: string = todayIST())
   if (!joined) return false;
   const diffDays = Math.floor((dayMs(today) - dayMs(joined)) / MS_PER_DAY);
   return diffDays >= 0 && diffDays <= NEW_JOINER_WINDOW_DAYS;
-}
-
-/** joined_on + {@link PROBATION_MONTHS} calendar months, as YYYY-MM-DD. */
-export function probationEndsOn(joinedOn: string | Date): string | null {
-  const joined = toIsoDay(joinedOn);
-  if (!joined) return null;
-  return addMonthsDays(joined, PROBATION_MONTHS, 0);
 }
 
 /**
@@ -98,19 +89,15 @@ export function splitMonthsDays(
   return { months, days };
 }
 
-/** Employment types that serve a probation period — interns included, since
- *  the founder treats them as probationary. Contractors/consultants are not. */
-const PROBATION_EMPLOYMENT_TYPES = new Set(['full_time', 'part_time', 'intern']);
-
 export type ProbationInput = {
   joinedOn: string | Date;
-  /** DB or UI employment type — the DERIVED window applies to full/part-time/intern. */
+  /** Kept for callers' convenience; no longer affects whether probation shows. */
   employmentType: string;
   confirmedOn?: string | null;
   /**
-   * Explicit custom probation end date (0081). When set, it wins over the derived
-   * 6-month window and applies regardless of employment type — the founder set it
-   * deliberately. Cleared to null when the employee is confirmed / marked fixed.
+   * Explicit probation end date (0081). This is now the ONLY thing that puts
+   * someone on probation — set deliberately by an admin, and cleared to null
+   * when the employee is confirmed. There is no implicit window.
    */
   probationEndsOn?: string | null;
   /** Employee status; separated/prospective people never show the chip. */
@@ -118,9 +105,17 @@ export type ProbationInput = {
 };
 
 /**
- * The effective probation end date, or null if the person isn't on probation:
- * confirmed, separated/prospective, a future join date, or (no explicit end and
- * not an eligible type). Explicit `probationEndsOn` overrides the derived window.
+ * The effective probation end date, or null when the person isn't on probation.
+ *
+ * PROBATION IS ADMIN-DECIDED. It is shown only where an explicit
+ * `probationEndsOn` has been set on the employee record.
+ *
+ * This used to FALL BACK to a derived 6-month-from-joining window for
+ * full-time / part-time / intern employees, so people carried a probation
+ * badge nobody had actually put them on (an intern with no probation date on
+ * record still showed "Probation · N days left"). Now that employees can see
+ * their own record, a status nobody set must not be shown. Clearing the date
+ * ends probation; there is no implicit window.
  */
 export function effectiveProbationEnd(
   input: ProbationInput,
@@ -130,17 +125,15 @@ export function effectiveProbationEnd(
   if (input.status === 'separated' || input.status === 'prospective') return null;
   const joined = toIsoDay(input.joinedOn);
   if (!joined || joined > today) return null;
-  const custom = input.probationEndsOn ? toIsoDay(input.probationEndsOn) : null;
-  const endsOn =
-    custom ?? (PROBATION_EMPLOYMENT_TYPES.has(input.employmentType) ? probationEndsOn(joined) : null);
+  const endsOn = input.probationEndsOn ? toIsoDay(input.probationEndsOn) : null;
   if (!endsOn || endsOn <= today) return null;
   return endsOn;
 }
 
 /**
  * Days remaining in the probation window, or null when the chip should be
- * hidden (confirmed, not on probation, window passed, separated, or a future
- * join date). Prefers an explicit `probationEndsOn` over the derived window.
+ * hidden (confirmed, no probation date set, window passed, separated, or a
+ * future join date).
  */
 export function probationDaysLeft(
   input: ProbationInput,
