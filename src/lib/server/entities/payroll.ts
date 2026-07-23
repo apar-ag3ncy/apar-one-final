@@ -415,10 +415,25 @@ const PAID_LEAVE_KINDS = new Set(['earned', 'casual', 'sick', 'comp_off']);
 export async function approveLeave(args: {
   id: string;
   accept: boolean;
-  notes?: string | null;
 }): Promise<void> {
   const ctx = await getActorContext();
   requireCapability(ctx, 'approve_leave');
+
+  // Guard: a soft-deleted leave must not be decidable, and an already-decided
+  // one must not be silently re-decided (which would overwrite approvedBy /
+  // approvedAt on a settled request).
+  const [current] = await db
+    .select({ id: leaves.id, status: leaves.status })
+    .from(leaves)
+    .where(and(eq(leaves.id, args.id), isNull(leaves.deletedAt)))
+    .limit(1);
+  if (!current) throw new AppError('not_found', `leave ${args.id} not found`);
+  if (current.status !== 'applied') {
+    throw new AppError(
+      'validation',
+      `This leave is already ${current.status}. Only a pending request can be decided.`,
+    );
+  }
 
   // Monthly paid-leave cap (Settings → Team → Team policies). Approving a
   // paid-kind leave that would push the employee past the allowance for the
@@ -469,10 +484,13 @@ export async function approveLeave(args: {
       status: args.accept ? 'approved' : 'rejected',
       approvedBy: ctx.userId,
       approvedAt: new Date(),
-      notes: args.notes ?? null,
+      // `notes` is deliberately NOT written — it holds the APPLICANT's reason.
+      // This used to be `notes: args.notes ?? null`, which erased that reason
+      // on every decision (no caller ever passed a note, so it was always
+      // nulled). A manager reply, if ever added, needs its own column.
       updatedBy: ctx.userId,
     })
-    .where(eq(leaves.id, args.id));
+    .where(and(eq(leaves.id, args.id), isNull(leaves.deletedAt)));
 }
 
 export type LeaveRow = {
