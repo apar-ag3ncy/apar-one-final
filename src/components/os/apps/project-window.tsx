@@ -41,6 +41,7 @@ import {
   createProjectTask,
   updateProjectTask,
   deleteProjectTask,
+  listTaskStatusEvents,
   type ProjectMemberRow,
   type ProjectVendorRow,
   type ProjectTaskAssignee,
@@ -48,6 +49,7 @@ import {
   type ProjectTaskRow,
   type ProjectTaskSource,
   type ProjectTaskStatus,
+  type TaskStatusEventRow,
 } from '@/lib/server/entities/project-tasks';
 import {
   archiveDeliverableCategory,
@@ -2197,6 +2199,127 @@ function compareTasks(a: ProjectTaskRow, b: ProjectTaskRow): number {
   return taskPriorityRank(a.priority) - taskPriorityRank(b.priority) || a.position - b.position;
 }
 
+// Deliverable completion outcome (0085) — how it landed vs its due date.
+const TASK_OUTCOME_META: Record<
+  'on_time' | 'slightly_delayed' | 'delayed',
+  { label: string; color: string; bg: string }
+> = {
+  on_time: { label: 'On time', color: '#16a34a', bg: '#16a34a22' },
+  slightly_delayed: { label: 'Slightly late', color: '#d97706', bg: '#d9770622' },
+  delayed: { label: 'Delayed', color: '#dc2626', bg: '#dc262622' },
+};
+
+function OutcomeBadge({ outcome }: { outcome: 'on_time' | 'slightly_delayed' | 'delayed' }) {
+  const m = TASK_OUTCOME_META[outcome];
+  return (
+    <span
+      style={{
+        flexShrink: 0,
+        fontSize: 10,
+        fontWeight: 700,
+        padding: '2px 8px',
+        borderRadius: 999,
+        color: m.color,
+        background: m.bg,
+      }}
+    >
+      {m.label}
+    </span>
+  );
+}
+
+function statusLabel(s: string | null): string {
+  if (!s) return 'Created';
+  return TASK_STATUSES.find((x) => x.value === s)?.label ?? s;
+}
+
+// Expandable status-change history for one deliverable (0085). Lazy-loads on
+// mount (only rendered when the row's "History" is toggled open), mirroring the
+// vendor-window follow-ups panel.
+function TaskStatusHistory({
+  taskId,
+  completedAt,
+}: {
+  taskId: string;
+  completedAt: string | null;
+}) {
+  const [events, setEvents] = useState<readonly TaskStatusEventRow[] | null>(null);
+  const [err, setErr] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    listTaskStatusEvents(taskId)
+      .then((e) => !cancelled && setEvents(e))
+      .catch(() => !cancelled && setErr(true));
+    return () => {
+      cancelled = true;
+    };
+  }, [taskId]);
+
+  return (
+    <div
+      style={{
+        borderTop: '1px dashed var(--border)',
+        paddingTop: 8,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 6,
+      }}
+    >
+      {completedAt ? (
+        <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+          Completed{' '}
+          {new Date(completedAt).toLocaleString('en-IN', {
+            day: '2-digit',
+            month: 'short',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+          })}
+        </div>
+      ) : null}
+      {err ? (
+        <div style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>Couldn’t load the history.</div>
+      ) : events === null ? (
+        <div style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>Loading history…</div>
+      ) : events.length === 0 ? (
+        <div style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>
+          No status changes recorded yet.
+        </div>
+      ) : (
+        events.map((e) => (
+          <div
+            key={e.id}
+            style={{
+              display: 'flex',
+              gap: 8,
+              fontSize: 11.5,
+              borderLeft: '2px solid var(--border)',
+              paddingLeft: 8,
+            }}
+          >
+            <span style={{ minWidth: 0, flex: 1 }}>
+              {statusLabel(e.fromStatus)} → <strong>{statusLabel(e.toStatus)}</strong>
+              {' · '}
+              <span style={{ color: 'var(--text-muted)' }}>
+                {e.actorKind === 'employee' ? (e.actorLabel ?? 'Employee') : 'Admin'}
+              </span>
+            </span>
+            <span style={{ flexShrink: 0, color: 'var(--text-muted)' }}>
+              {new Date(e.createdAt).toLocaleString('en-IN', {
+                day: '2-digit',
+                month: 'short',
+                hour: '2-digit',
+                minute: '2-digit',
+              })}
+            </span>
+          </div>
+        ))
+      )}
+    </div>
+  );
+}
+
 function TasksBody({
   projectId,
   canEdit,
@@ -2232,6 +2355,8 @@ function TasksBody({
   const [draftSource, setDraftSource] = useState<ProjectTaskSource>('apar');
   const [dueOn, setDueOn] = useState(todayISODate());
   const [pickerFor, setPickerFor] = useState<'draft' | string | null>(null);
+  // Which deliverable's status-history panel is expanded (0085), or null.
+  const [historyFor, setHistoryFor] = useState<string | null>(null);
 
   // Grouping: when the project has sub-projects, show a heading per project
   // (this project first, then each sub-project) and let new deliverables target
@@ -2473,8 +2598,8 @@ function TasksBody({
         key={t.id}
         style={{
           display: 'flex',
-          alignItems: 'center',
-          gap: 10,
+          flexDirection: 'column',
+          gap: 8,
           padding: '7px 10px',
           borderRadius: 8,
           border: '1px solid var(--border)',
@@ -2482,6 +2607,7 @@ function TasksBody({
           opacity: done ? 0.7 : 1,
         }}
       >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
         <span
           style={{
             flex: 1,
@@ -2660,6 +2786,20 @@ function TasksBody({
             </span>
           </>
         )}
+          {done && t.completionOutcome ? <OutcomeBadge outcome={t.completionOutcome} /> : null}
+          <button
+            className="btn"
+            type="button"
+            title="Status history"
+            onClick={() => setHistoryFor((cur) => (cur === t.id ? null : t.id))}
+            style={{ fontSize: 11, flexShrink: 0 }}
+          >
+            {historyFor === t.id ? 'Hide' : 'History'}
+          </button>
+        </div>
+        {historyFor === t.id ? (
+          <TaskStatusHistory taskId={t.id} completedAt={t.completedAt} />
+        ) : null}
       </li>
     );
   };

@@ -61,6 +61,13 @@ export const projectTasks = pgTable(
     dueOn: date(),
     position: integer().notNull().default(0),
     completedAt: timestamp({ withTimezone: true }),
+    /**
+     * How the task landed relative to its due date, stamped when it enters
+     * 'done' (0085): 'on_time' | 'slightly_delayed' | 'delayed'. Auto-computed
+     * from completedAt vs dueOn (a task with no dueOn counts as on_time); NULL
+     * while the task is not completed. Cleared when the task leaves 'done'.
+     */
+    completionOutcome: text(),
   },
   (t) => [
     index().on(t.projectId),

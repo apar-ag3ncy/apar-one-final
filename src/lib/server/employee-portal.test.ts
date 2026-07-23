@@ -131,8 +131,11 @@ describe('employee-portal — self-scoped reads', () => {
           projectId: 'p1',
           projectName: 'Project One',
           projectCode: 'PRJ-1',
+          clientId: 'c1',
+          clientName: 'Acme Co',
           dueOn: '2026-08-01',
           completedAt: null,
+          completionOutcome: null,
         },
       ]),
     );
@@ -142,6 +145,8 @@ describe('employee-portal — self-scoped reads', () => {
     expect(res).toHaveLength(1);
     expect(res[0]?.title).toBe('Do the thing');
     expect(res[0]?.completedAt).toBeNull();
+    expect(res[0]?.clientName).toBe('Acme Co');
+    expect(res[0]?.completionOutcome).toBeNull();
   });
 });
 

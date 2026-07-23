@@ -20,13 +20,12 @@ import {
   updateMyTaskStatus,
   type MyAttendance,
   type MyLeave,
+  type MyTaskRow,
+  type TaskOutcome,
   type TeamLeaveRequest,
   type TeamMember,
 } from '@/lib/server/employee-portal';
-import type {
-  EmployeeProjectTaskRow,
-  ProjectTaskStatus,
-} from '@/lib/server/entities/project-tasks';
+import type { ProjectTaskStatus } from '@/lib/server/entities/project-tasks';
 
 function WindowShell({
   title,
@@ -80,7 +79,7 @@ const TASK_STATUS: Record<string, { label: string; color: string; bg: string }> 
   in_progress: { label: 'In progress', color: '#2563eb', bg: '#2563eb22' },
   little_delayed: { label: 'Slightly delayed', color: '#d97706', bg: '#d9770622' },
   delayed: { label: 'Delayed', color: '#dc2626', bg: '#dc262622' },
-  done: { label: 'Done', color: '#16a34a', bg: '#16a34a22' },
+  done: { label: 'Completed', color: '#16a34a', bg: '#16a34a22' },
   cancelled: { label: 'Cancelled', color: 'var(--text-muted)', bg: 'var(--content-2)' },
 };
 
@@ -93,16 +92,78 @@ const STATUS_OPTIONS: readonly ProjectTaskStatus[] = [
   'cancelled',
 ];
 
-// Optimistic local mirror of the server's completed_at-on-done rule.
-function applyStatus(t: EmployeeProjectTaskRow, next: ProjectTaskStatus): EmployeeProjectTaskRow {
-  const completedAt =
-    next === 'done' ? new Date().toISOString() : t.status === 'done' ? null : t.completedAt;
-  return { ...t, status: next, completedAt };
+// Sections shown top→bottom in the task list (each its own group).
+const SECTION_ORDER: readonly ProjectTaskStatus[] = [
+  'todo',
+  'in_progress',
+  'little_delayed',
+  'delayed',
+  'done',
+  'cancelled',
+];
+
+const OUTCOME_META: Record<TaskOutcome, { label: string; color: string; bg: string }> = {
+  on_time: { label: 'On time', color: '#16a34a', bg: '#16a34a22' },
+  slightly_delayed: { label: 'Slightly late', color: '#d97706', bg: '#d9770622' },
+  delayed: { label: 'Delayed', color: '#dc2626', bg: '#dc262622' },
+};
+
+// Client-side mirror of the server's outcome rule (task-status-log.ts): compare
+// the completion's Asia/Kolkata date to the due date; ≤ due = on time, ≤ 3 days
+// late = slightly, beyond = delayed; no due date = on time. Used only for
+// optimistic display — the server value is authoritative on the next load.
+function outcomeFor(dueOn: string | null, completedAtISO: string): TaskOutcome {
+  if (!dueOn) return 'on_time';
+  const istDate = new Date(new Date(completedAtISO).getTime() + 5.5 * 3600 * 1000)
+    .toISOString()
+    .slice(0, 10);
+  const lateDays = Math.round(
+    (Date.parse(`${istDate}T00:00:00Z`) - Date.parse(`${dueOn}T00:00:00Z`)) / 86_400_000,
+  );
+  if (lateDays <= 0) return 'on_time';
+  if (lateDays <= 3) return 'slightly_delayed';
+  return 'delayed';
+}
+
+// Optimistic local mirror of the server's completed_at + outcome rules on 'done'.
+function applyStatus(t: MyTaskRow, next: ProjectTaskStatus): MyTaskRow {
+  if (next === 'done') {
+    const completedAt = new Date().toISOString();
+    return { ...t, status: next, completedAt, completionOutcome: outcomeFor(t.dueOn, completedAt) };
+  }
+  if (t.status === 'done') {
+    return { ...t, status: next, completedAt: null, completionOutcome: null };
+  }
+  return { ...t, status: next };
+}
+
+type TaskStats = {
+  onTime: number;
+  slightly: number;
+  delayed: number;
+  cancelled: number;
+  completed: number;
+  open: number;
+};
+
+function computeStats(tasks: readonly MyTaskRow[]): TaskStats {
+  const s: TaskStats = { onTime: 0, slightly: 0, delayed: 0, cancelled: 0, completed: 0, open: 0 };
+  for (const t of tasks) {
+    if (t.status === 'cancelled') s.cancelled += 1;
+    else if (t.status === 'done') {
+      s.completed += 1;
+      if (t.completionOutcome === 'delayed') s.delayed += 1;
+      else if (t.completionOutcome === 'slightly_delayed') s.slightly += 1;
+      else s.onTime += 1; // 'on_time' or null (legacy) both count as on time
+    } else s.open += 1;
+  }
+  return s;
 }
 
 export function MyTasksWindow() {
-  const [tasks, setTasks] = useState<EmployeeProjectTaskRow[] | null>(null);
+  const [tasks, setTasks] = useState<MyTaskRow[] | null>(null);
   const [error, setError] = useState(false);
+  const [client, setClient] = useState<string>('all');
 
   useEffect(() => {
     let cancelled = false;
@@ -115,7 +176,7 @@ export function MyTasksWindow() {
   }, []);
 
   const changeStatus = async (taskId: string, next: ProjectTaskStatus) => {
-    // Optimistic — the row re-groups (open/closed) immediately.
+    // Optimistic — the row moves to its new section + the overview re-tallies.
     setTasks((cur) => cur?.map((t) => (t.taskId === taskId ? applyStatus(t, next) : t)) ?? cur);
     const r = await updateMyTaskStatus(taskId, next);
     if (!r.ok) {
@@ -129,27 +190,139 @@ export function MyTasksWindow() {
     }
   };
 
+  // Clients the employee actually works with (built from their own tasks only).
+  const clientOptions = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const t of tasks ?? []) map.set(t.clientId, t.clientName);
+    return [...map.entries()]
+      .map(([id, name]) => ({ id, name }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [tasks]);
+
+  const visible = useMemo(
+    () => (tasks ?? []).filter((t) => client === 'all' || t.clientId === client),
+    [tasks, client],
+  );
+  const stats = useMemo(() => computeStats(visible), [visible]);
+
   let body: React.ReactNode;
   if (error) body = <Muted>Couldn’t load your tasks. Please try again.</Muted>;
   else if (tasks === null) body = <Muted>Loading your tasks…</Muted>;
   else if (tasks.length === 0) body = <Muted>You have no assigned tasks right now.</Muted>;
   else {
-    const open = tasks.filter((t) => t.status !== 'done' && t.status !== 'cancelled');
-    const done = tasks.filter((t) => t.status === 'done' || t.status === 'cancelled');
+    const sections = SECTION_ORDER.map((s) => ({
+      status: s,
+      rows: visible.filter((t) => t.status === s),
+    })).filter((g) => g.rows.length > 0);
+
     body = (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
-        <TaskGroup title={`Open · ${open.length}`} tasks={open} onChangeStatus={changeStatus} />
-        {done.length > 0 && (
-          <TaskGroup title={`Closed · ${done.length}`} tasks={done} onChangeStatus={changeStatus} />
+        <TaskOverview stats={stats} />
+
+        {clientOptions.length > 1 ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Client</span>
+            <select
+              className="input"
+              value={client}
+              onChange={(e) => setClient(e.target.value)}
+              style={{ maxWidth: 260 }}
+            >
+              <option value="all">All clients</option>
+              {clientOptions.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        ) : null}
+
+        {sections.length === 0 ? (
+          <Muted>No tasks for this client.</Muted>
+        ) : (
+          sections.map((g) => (
+            <TaskGroup
+              key={g.status}
+              title={`${TASK_STATUS[g.status]?.label ?? g.status} · ${g.rows.length}`}
+              tasks={g.rows}
+              onChangeStatus={changeStatus}
+            />
+          ))
         )}
       </div>
     );
   }
 
   return (
-    <WindowShell title="My Tasks" sub="tasks assigned to you — set your own status">
+    <WindowShell title="My Tasks" sub="your work, tracked from to-do to done">
       {body}
     </WindowShell>
+  );
+}
+
+function StatCard({
+  label,
+  n,
+  color,
+  bg,
+}: {
+  label: string;
+  n: number;
+  color: string;
+  bg: string;
+}) {
+  return (
+    <div
+      style={{
+        flex: '1 1 130px',
+        minWidth: 120,
+        padding: '12px 14px',
+        borderRadius: 12,
+        border: '1px solid var(--border)',
+        background: bg,
+      }}
+    >
+      <div style={{ fontSize: 24, fontWeight: 700, color, lineHeight: 1.1 }}>{n}</div>
+      <div style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 2 }}>{label}</div>
+    </div>
+  );
+}
+
+function TaskOverview({ stats }: { stats: TaskStats }) {
+  return (
+    <section style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div
+        style={{
+          fontSize: 11,
+          textTransform: 'uppercase',
+          letterSpacing: '0.06em',
+          color: 'var(--text-muted)',
+          fontWeight: 600,
+        }}
+      >
+        Overview · till date
+      </div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+        <StatCard label="Completed on time" n={stats.onTime} color="#16a34a" bg="#16a34a14" />
+        <StatCard
+          label="Slightly delayed"
+          n={stats.slightly}
+          color="#d97706"
+          bg="#d9770614"
+        />
+        <StatCard label="Delayed" n={stats.delayed} color="#dc2626" bg="#dc262614" />
+        <StatCard
+          label="Cancelled"
+          n={stats.cancelled}
+          color="var(--text-muted)"
+          bg="var(--content-2)"
+        />
+      </div>
+      <div style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>
+        {stats.completed} completed · {stats.open} open
+      </div>
+    </section>
   );
 }
 
@@ -198,7 +371,7 @@ function TaskGroup({
   onChangeStatus,
 }: {
   title: string;
-  tasks: readonly EmployeeProjectTaskRow[];
+  tasks: readonly MyTaskRow[];
   onChangeStatus: (taskId: string, next: ProjectTaskStatus) => void;
 }) {
   if (tasks.length === 0) return null;
@@ -216,46 +389,64 @@ function TaskGroup({
         {title}
       </div>
       <div style={{ border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
-        {tasks.map((t, i) => (
-          <div
-            key={t.taskId}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 12,
-              padding: '10px 12px',
-              borderTop: i === 0 ? 'none' : '1px solid var(--border)',
-            }}
-          >
-            <div style={{ minWidth: 0, flex: 1 }}>
-              <div
-                style={{
-                  fontSize: 13,
-                  fontWeight: 500,
-                  whiteSpace: 'nowrap',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                }}
-              >
-                {t.title}
+        {tasks.map((t, i) => {
+          const outcome = t.status === 'done' && t.completionOutcome ? t.completionOutcome : null;
+          const om = outcome ? OUTCOME_META[outcome] : null;
+          return (
+            <div
+              key={t.taskId}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 12,
+                padding: '10px 12px',
+                borderTop: i === 0 ? 'none' : '1px solid var(--border)',
+              }}
+            >
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div
+                  style={{
+                    fontSize: 13,
+                    fontWeight: 500,
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                  }}
+                >
+                  {t.title}
+                </div>
+                <div
+                  style={{
+                    fontSize: 11,
+                    color: 'var(--text-muted)',
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                  }}
+                >
+                  {t.clientName} · {t.projectName}
+                  {t.dueOn ? ` · due ${t.dueOn}` : ''}
+                </div>
               </div>
-              <div
-                style={{
-                  fontSize: 11,
-                  color: 'var(--text-muted)',
-                  whiteSpace: 'nowrap',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                }}
-              >
-                {t.projectCode ? `${t.projectCode} · ` : ''}
-                {t.projectName}
-                {t.dueOn ? ` · due ${t.dueOn}` : ''}
-              </div>
+              {om ? (
+                <span
+                  style={{
+                    flexShrink: 0,
+                    fontSize: 10.5,
+                    fontWeight: 700,
+                    padding: '2px 8px',
+                    borderRadius: 999,
+                    color: om.color,
+                    background: om.bg,
+                  }}
+                >
+                  {om.label}
+                </span>
+              ) : null}
+              <StatusSelect value={t.status} onChange={(s) => onChangeStatus(t.taskId, s)} />
             </div>
-            <StatusSelect value={t.status} onChange={(s) => onChangeStatus(t.taskId, s)} />
-          </div>
-        ))}
+          );
+        })}
       </div>
     </section>
   );
