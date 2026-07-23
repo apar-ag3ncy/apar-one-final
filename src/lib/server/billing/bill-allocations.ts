@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { logActivity } from '@/lib/activity';
 import { logAudit } from '@/lib/audit';
 import { db } from '@/lib/db/client';
-import { billAllocations, postings, transactions } from '@/lib/db/schema';
+import { billAllocations, transactions } from '@/lib/db/schema';
 import { AppError } from '@/lib/errors';
 import { requireCapability } from '@/lib/rbac';
 import { getActorContext } from '@/lib/server/actor';

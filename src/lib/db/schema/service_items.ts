@@ -6,7 +6,6 @@ import {
   pgTable,
   text,
   uniqueIndex,
-  uuid,
 } from 'drizzle-orm/pg-core';
 
 import { auditColumns, timestamps } from './_shared';
