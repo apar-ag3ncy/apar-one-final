@@ -594,6 +594,7 @@ export async function updateProjectTask(input: {
       status: projectTasks.status,
       projectId: projectTasks.projectId,
       dueOn: projectTasks.dueOn,
+      completedAt: projectTasks.completedAt,
     })
     .from(projectTasks)
     .where(and(eq(projectTasks.id, parsed.id), isNull(projectTasks.deletedAt)))
@@ -608,9 +609,23 @@ export async function updateProjectTask(input: {
   // this same call is changing it, else the stored one.
   const statusChanged = parsed.status !== undefined && parsed.status !== existing.status;
   const effectiveDueOn = parsed.dueOn !== undefined ? parsed.dueOn : existing.dueOn;
-  const completionPatch = statusChanged
-    ? statusTransitionPatch(existing.status, parsed.status as string, effectiveDueOn, new Date())
-    : {};
+  let completionPatch: { completedAt?: Date | null; completionOutcome?: string | null } =
+    statusChanged
+      ? statusTransitionPatch(existing.status, parsed.status as string, effectiveDueOn, new Date())
+      : {};
+  // A due-date-only correction on an already-completed task must re-stamp the
+  // outcome — it's derived from the (now changed) due date, so leaving it would
+  // show a stale on-time/delayed badge and mis-tally the employee overview.
+  if (
+    !statusChanged &&
+    parsed.dueOn !== undefined &&
+    existing.status === 'done' &&
+    existing.completedAt
+  ) {
+    completionPatch = {
+      completionOutcome: computeCompletionOutcome(existing.completedAt, effectiveDueOn),
+    };
+  }
 
   await db
     .update(projectTasks)
