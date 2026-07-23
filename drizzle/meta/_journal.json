@@ -589,6 +589,13 @@
       "when": 1785400090000,
       "tag": "0083_employee_ui_prefs",
       "breakpoints": true
+    },
+    {
+      "idx": 84,
+      "version": "7",
+      "when": 1785500090000,
+      "tag": "0084_employee_login_username",
+      "breakpoints": true
     }
   ]
 }
