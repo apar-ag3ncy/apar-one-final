@@ -15,7 +15,7 @@ import { osActions, useOsStore, type WindowState } from '@/lib/os/store';
 import { useWindowUrlSync } from '@/lib/url/per-window-nuqs';
 import { AdminConsole } from './auth/admin-console';
 import { EntityMutationGate } from './auth/entity-mutation-gate';
-import { LockScreen } from './auth/lock-screen';
+import { AccountGate } from './auth/account-gate';
 import { useAuth, SUPER_ADMIN_USER_ID } from './auth/store';
 import { can } from './auth/types';
 import { useUserSettings, type UserSettings } from './auth/session-store';
@@ -142,11 +142,14 @@ export function OsRoot() {
     );
   }
 
-  // Gate the desktop behind sign-in.
+  // Gate the desktop behind sign-in. The gate first asks which kind of account
+  // is signing in (admin / employee / …), then shows that account's credential
+  // screen. Admin sign-in unlocks this desktop; employee sign-in hands off to
+  // the restricted /employee workspace.
   if (!currentUser) {
     return (
       <div className="os-root">
-        <LockScreen />
+        <AccountGate />
       </div>
     );
   }

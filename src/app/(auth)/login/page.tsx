@@ -1,26 +1,20 @@
 import type { Metadata } from 'next';
 import { redirect } from 'next/navigation';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+
 import { currentEmployee } from '@/lib/server/employee-auth';
-import { LoginForm } from './login-form';
 
 export const metadata: Metadata = {
-  title: 'Sign in · Apar Self-service',
+  title: 'Sign in · Apar',
 };
 
+/**
+ * Sign-in is unified at /os now — one entry that first asks which kind of
+ * account is signing in (admin / employee / …) and then shows that account's
+ * credential screen. This route just forwards there (or straight to the
+ * employee workspace when a session already exists), so old /login links and
+ * the sign-out redirect keep working.
+ */
 export default async function LoginPage() {
-  // Already signed in → straight to the employee workspace.
   if (await currentEmployee()) redirect('/employee');
-
-  return (
-    <Card>
-      <CardHeader className="space-y-1.5 text-center">
-        <CardTitle className="text-2xl">Apar Self-service</CardTitle>
-        <CardDescription>Sign in with your work email to view your portal.</CardDescription>
-      </CardHeader>
-      <CardContent>
-        <LoginForm />
-      </CardContent>
-    </Card>
-  );
+  redirect('/os');
 }

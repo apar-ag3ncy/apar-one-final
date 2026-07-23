@@ -7,7 +7,7 @@ import { currentEmployee } from '@/lib/server/employee-auth';
  * now lives at `/employee` (its own OS shell). This layout just forwards:
  * signed-in employees → `/employee`, everyone else → `/login`.
  */
-export default async function PortalLayout({ children: _children }: { children: React.ReactNode }) {
+export default async function PortalLayout() {
   const employee = await currentEmployee();
-  redirect(employee ? '/employee' : '/login');
+  redirect(employee ? '/employee' : '/os');
 }
