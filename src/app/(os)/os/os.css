@@ -1176,7 +1176,7 @@
   text-align: center;
   color: var(--os-text, #1c1512);
 }
-.os-root .dark .emp-home__head {
+.os-root[data-theme='dark'] .emp-home__head {
   color: #f4ece6;
 }
 .os-root .emp-home__hello {
@@ -1219,7 +1219,7 @@
     box-shadow 160ms ease,
     border-color 160ms ease;
 }
-.os-root .dark .emp-card {
+.os-root[data-theme='dark'] .emp-card {
   color: #f0e8e2;
   background: rgba(40, 30, 27, 0.72);
   border-color: rgba(255, 255, 255, 0.1);

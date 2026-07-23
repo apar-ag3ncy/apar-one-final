@@ -6,7 +6,7 @@
 // so it can never affect or reach the admin OS. Rendered at /employee for a
 // signed-in employee session only.
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, type CSSProperties } from 'react';
 import { useRouter } from 'next/navigation';
 
 import type { WindowState } from '@/lib/os/store';
@@ -204,6 +204,11 @@ export function EmployeeOs({ employee }: { employee: SafeEmployee }) {
     <div
       className={`os-root ${theme === 'dark' ? 'dark' : ''}`}
       data-theme={theme}
+      // Pin the brand accent on the root exactly as the admin shell does
+      // (os-root.tsx). Without it, `--accent` falls through to the app-wide
+      // shadcn token (a light neutral), so `--apar-red` — and the dock icons
+      // that use it — render near-white on the light desktop.
+      style={{ '--accent': '#e63a1f' } as CSSProperties}
       suppressHydrationWarning
     >
       <div className="menubar">
