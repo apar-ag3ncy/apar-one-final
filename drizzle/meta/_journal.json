@@ -603,6 +603,13 @@
       "when": 1785600090000,
       "tag": "0085_project_task_status_events",
       "breakpoints": true
+    },
+    {
+      "idx": 86,
+      "version": "7",
+      "when": 1785700090000,
+      "tag": "0086_production_clean_slate",
+      "breakpoints": true
     }
   ]
 }
