@@ -29,6 +29,7 @@ import {
   createOfficeExpenseCategory,
   deleteOfficeExpense,
   getOfficeExpenseSummary,
+  getOfficeExpenseFilteredTotal,
   importOfficeExpenses,
   deleteOfficeExpenseCategory,
   getOfficeExpenseCategoryUsage,
@@ -580,8 +581,9 @@ export function OfficeApp({
   let combinedBucketTotalPaise = 0n;
   for (const v of bucketAggs.values()) combinedBucketTotalPaise += v.totalPaise;
 
-  // Sums over the rows currently in view — feeds the subheader, the export
-  // TOTAL row, and the table's footer total line.
+  // Sums over the rows currently loaded (capped at 500 by listOfficeExpenses)
+  // — an instant, optimistic figure shown while the true total below loads,
+  // and the only figure available if that fetch fails.
   const filteredTotals = useMemo(
     () =>
       filtered.reduce(
@@ -594,6 +596,60 @@ export function OfficeApp({
       ),
     [filtered],
   );
+
+  // The REAL total — summed in Postgres over every matching row, not just
+  // the newest 500 that happen to be loaded. Feeds the subheader, the
+  // export TOTAL row, and the table's footer total line. Falls back to
+  // filteredTotals (above) while in flight or on error, so the UI never
+  // shows a blank/zero total.
+  const [trueTotal, setTrueTotal] = useState<{
+    amount: bigint;
+    gst: bigint;
+    total: bigint;
+    count: number;
+  } | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const params: Parameters<typeof getOfficeExpenseFilteredTotal>[0] = {};
+    if (activeCategory === 'all') {
+      // no category filter
+    } else if (activeCategory.startsWith(CUSTOM_PREFIX)) {
+      params.customCategoryId = activeCategory.slice(CUSTOM_PREFIX.length);
+    } else if (activeCategory.startsWith(BUCKET_PREFIX)) {
+      const bucket = BUCKET_INDEX[activeCategory.slice(BUCKET_PREFIX.length)];
+      if (bucket) {
+        params.categories = [...bucket.categories];
+        if (bucket.categories.includes('other')) params.excludeCustomTaggedOther = true;
+      }
+    } else {
+      params.category = activeCategory as OfficeExpenseCategory;
+    }
+    if (statusFilter !== 'all') params.status = statusFilter;
+    if (dateRange.from) params.fromDate = dateRange.from;
+    if (dateRange.to) params.toDate = dateRange.to;
+    const q = search.trim();
+    if (q) params.search = q;
+
+    getOfficeExpenseFilteredTotal(params)
+      .then((res) => {
+        if (cancelled) return;
+        setTrueTotal({
+          amount: res.amountPaise,
+          gst: res.gstPaise,
+          total: res.totalPaise,
+          count: res.count,
+        });
+      })
+      .catch(() => {
+        if (!cancelled) setTrueTotal(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeCategory, statusFilter, dateRange, search]);
+
+  const displayTotals = trueTotal ?? filteredTotals;
 
   async function handleCreate(values: ExpenseFormValues) {
     setBusy(true);
@@ -718,12 +774,17 @@ export function OfficeApp({
       'Vendor / Employee': '',
       Payment: '',
       Status: '',
-      Amount: paiseToRupees(filteredTotals.amount),
-      GST: paiseToRupees(filteredTotals.gst),
-      Total: paiseToRupees(filteredTotals.total),
+      Amount: paiseToRupees(displayTotals.amount),
+      GST: paiseToRupees(displayTotals.gst),
+      Total: paiseToRupees(displayTotals.total),
     });
     exportRows(data, headers, `office-expenses-${todayIso()}`, format, 'Office Expenses');
   }
+
+  // rows is capped at 500 by listOfficeExpenses; trueTotal.count is the real,
+  // unbounded match count. When they diverge, the row list (and this export)
+  // is missing older rows even though the total above is correct.
+  const isTruncated = !!(rows && trueTotal && trueTotal.count > rows.length);
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
@@ -731,7 +792,9 @@ export function OfficeApp({
         <h2>Office</h2>
         <span className="sub">
           {rows
-            ? `${rows.length} entries · ${formatINR(filteredTotals.total)} in view`
+            ? isTruncated
+              ? `showing ${rows.length} of ${trueTotal!.count} entries · ${formatINR(displayTotals.total)} total`
+              : `${rows.length} entries · ${formatINR(displayTotals.total)} in view`
             : 'Loading…'}
         </span>
         <div className="grow" />
@@ -1496,7 +1559,10 @@ export function OfficeApp({
                     color: 'var(--text-muted)',
                   }}
                 >
-                  Total · {filtered.length} {filtered.length === 1 ? 'entry' : 'entries'}
+                  Total ·{' '}
+                  {isTruncated
+                    ? `${trueTotal!.count} entries (${filtered.length} shown)`
+                    : `${filtered.length} ${filtered.length === 1 ? 'entry' : 'entries'}`}
                 </td>
                 <td
                   style={{
@@ -1510,7 +1576,7 @@ export function OfficeApp({
                     fontVariantNumeric: 'tabular-nums',
                   }}
                 >
-                  {formatINR(filteredTotals.amount)}
+                  {formatINR(displayTotals.amount)}
                 </td>
                 <td
                   style={{
@@ -1524,7 +1590,7 @@ export function OfficeApp({
                     fontVariantNumeric: 'tabular-nums',
                   }}
                 >
-                  {formatINR(filteredTotals.gst)}
+                  {formatINR(displayTotals.gst)}
                 </td>
                 <td
                   style={{
@@ -1538,7 +1604,7 @@ export function OfficeApp({
                     fontVariantNumeric: 'tabular-nums',
                   }}
                 >
-                  {formatINR(filteredTotals.total)}
+                  {formatINR(displayTotals.total)}
                 </td>
                 <td
                   style={{

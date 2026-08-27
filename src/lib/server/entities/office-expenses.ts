@@ -213,6 +213,97 @@ export async function listOfficeExpenses(
   );
 }
 
+const FilteredTotalSchema = z.object({
+  category: CategoryEnum.optional(),
+  categories: z.array(CategoryEnum).optional(),
+  customCategoryId: z.string().uuid().optional(),
+  /** MISC bucket includes 'other', but 'other' rows tagged with a custom
+   * category belong to their own custom card — exclude them here to match
+   * bucketAggs' client-side arithmetic (office-app.tsx). */
+  excludeCustomTaggedOther: z.boolean().optional(),
+  status: StatusEnum.optional(),
+  employeeId: z.string().uuid().optional(),
+  fromDate: z.string().regex(dateRegex).optional(),
+  toDate: z.string().regex(dateRegex).optional(),
+  search: z.string().max(120).optional(),
+});
+
+export type OfficeExpenseFilteredTotalInput = z.infer<typeof FilteredTotalSchema>;
+
+export type OfficeExpenseFilteredTotal = {
+  amountPaise: bigint;
+  gstPaise: bigint;
+  totalPaise: bigint;
+  count: number;
+};
+
+/**
+ * True unbounded total for whatever filter combination the Office table
+ * view currently has active. listOfficeExpenses() caps rows at 500 for
+ * display — summing that capped array (as the UI used to) silently drops
+ * older rows from the total once a book passes 500 entries, even though
+ * every individual displayed row is correct. This always sums in Postgres,
+ * so the subheader/table-footer/export total stays correct at any row
+ * count. Mirrors listOfficeExpenses' filter conditions, plus bucket/custom
+ * grouping support the UI needs.
+ */
+export async function getOfficeExpenseFilteredTotal(
+  input: OfficeExpenseFilteredTotalInput = {},
+): Promise<OfficeExpenseFilteredTotal> {
+  await getActorContext();
+  const parsed = FilteredTotalSchema.parse(input);
+
+  const conds = [isNull(officeExpenses.deletedAt)];
+  if (parsed.category) conds.push(eq(officeExpenses.category, parsed.category));
+  if (parsed.categories && parsed.categories.length > 0) {
+    conds.push(inArray(officeExpenses.category, parsed.categories));
+  }
+  if (parsed.customCategoryId) {
+    conds.push(eq(officeExpenses.customCategoryId, parsed.customCategoryId));
+  }
+  if (parsed.excludeCustomTaggedOther) {
+    conds.push(
+      sql`NOT (${officeExpenses.category} = 'other' AND ${officeExpenses.customCategoryId} IS NOT NULL)`,
+    );
+  }
+  if (parsed.status) conds.push(eq(officeExpenses.status, parsed.status));
+  if (parsed.employeeId) conds.push(eq(officeExpenses.employeeId, parsed.employeeId));
+  if (parsed.fromDate && parsed.toDate) {
+    conds.push(between(officeExpenses.expenseDate, parsed.fromDate, parsed.toDate));
+  } else if (parsed.fromDate) {
+    conds.push(sql`${officeExpenses.expenseDate} >= ${parsed.fromDate}`);
+  } else if (parsed.toDate) {
+    conds.push(sql`${officeExpenses.expenseDate} <= ${parsed.toDate}`);
+  }
+  if (parsed.search) {
+    const q = `%${parsed.search}%`;
+    const searchCond = or(
+      ilike(officeExpenses.description, q),
+      ilike(officeExpenses.vendorName, q),
+      ilike(officeExpenses.referenceNumber, q),
+    );
+    if (searchCond) conds.push(searchCond);
+  }
+
+  const [agg] = await db
+    .select({
+      amount: sql<string>`coalesce(sum(${officeExpenses.amountPaise}), 0)::text`,
+      gst: sql<string>`coalesce(sum(${officeExpenses.gstPaise}), 0)::text`,
+      count: sql<string>`count(*)::text`,
+    })
+    .from(officeExpenses)
+    .where(and(...conds));
+
+  const amountPaise = BigInt(agg?.amount ?? '0');
+  const gstPaise = BigInt(agg?.gst ?? '0');
+  return {
+    amountPaise,
+    gstPaise,
+    totalPaise: amountPaise + gstPaise,
+    count: Number(agg?.count ?? '0'),
+  };
+}
+
 export type OfficeExpenseSummary = {
   monthTotalPaise: bigint;
   monthCount: number;
